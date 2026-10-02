@@ -542,6 +542,19 @@ atlasCanvas.width = 128; atlasCanvas.height = 64;
   tile(29, c => { c.fillStyle='#9aa0a8'; c.fillRect(0,0,16,16);
     c.fillStyle='#bcc1c8'; for(let y=0;y<16;y+=4) for(let x=0;x<16;x+=8) c.fillRect(x+((y/4)%2)*4+1, y+1, 6, 2);
     speckle(c,0,['#7e848e'],20); });
+  // puerta 2 bloques: mitad superior (ventana) + mitad inferior (paneles y manija)
+  tile(30, c => { c.fillStyle='#cfa672'; c.fillRect(0,0,16,16);
+    c.fillStyle='#8a5f30'; c.fillRect(0,0,16,1); c.fillRect(0,0,1,16); c.fillRect(15,0,1,16);
+    c.fillStyle='#bfe3ff'; c.fillRect(3,2,4,6); c.fillRect(9,2,4,6);
+    c.fillStyle='#ffffff'; c.fillRect(3,2,4,1); c.fillRect(9,2,4,1);
+    c.fillStyle='#8a5f30'; c.fillRect(7,1,2,9); c.fillRect(2,9,12,2);
+    speckle(c,0,['#b78d55','#e0bc85'],14); });
+  tile(31, c => { c.fillStyle='#cfa672'; c.fillRect(0,0,16,16);
+    c.fillStyle='#8a5f30'; c.fillRect(0,15,16,1); c.fillRect(0,0,1,16); c.fillRect(15,0,1,16);
+    c.fillRect(2,1,5,6); c.fillRect(9,1,5,6); c.fillRect(2,9,5,6); c.fillRect(9,9,5,6);
+    c.fillStyle='#b78d55'; c.fillRect(3,2,3,4); c.fillRect(10,2,3,4); c.fillRect(3,10,3,4); c.fillRect(10,10,3,4);
+    c.fillStyle='#5d4126'; c.fillRect(12,7,2,2);
+    speckle(c,0,['#b78d55','#e0bc85'],14); });
 }
 const atlasTex = new THREE.CanvasTexture(atlasCanvas);
 atlasTex.magFilter = THREE.NearestFilter; atlasTex.minFilter = THREE.NearestFilter;
@@ -846,14 +859,16 @@ function refreshAt(x,z){
 const DOOR_OPEN_ANG = -1.75; // ~-100°
 const doorMeshes = new Map(); // "x,y,z" -> pivot Group
 const doorAnims = new Map();  // "x,y,z" -> {p, from, to} (0=cerrada,1=abierta)
-let doorGeo = null, doorMat = null;
-function doorAssets(){
-  if(doorGeo) return;
-  doorGeo = new THREE.BoxGeometry(.94,.98,.1);
-  // llevar todos los UVs al tile 26 de la puerta
-  const [u0,v0,u1,v1] = tileUV(26);
-  const uv = doorGeo.attributes.uv;
+let doorGeoTop = null, doorGeoBot = null, doorMat = null;
+function doorUV(geo,t){
+  const [u0,v0,u1,v1] = tileUV(t);
+  const uv = geo.attributes.uv;
   for(let i=0;i<uv.count;i++) uv.setXY(i, u0+uv.getX(i)*(u1-u0), v0+uv.getY(i)*(v1-v0));
+}
+function doorAssets(){
+  if(doorGeoTop) return;
+  doorGeoTop = new THREE.BoxGeometry(.94,.98,.1); doorUV(doorGeoTop,30); // ventana arriba
+  doorGeoBot = new THREE.BoxGeometry(.94,.98,.1); doorUV(doorGeoBot,31); // paneles abajo
   doorMat = new THREE.MeshLambertMaterial({ map:atlasTex });
 }
 function doorAngle(k, b){
@@ -879,7 +894,9 @@ function buildDoors(){
     const k=x+','+y+','+z, r=doorRight(b);
     const pivot=new THREE.Group();
     pivot.position.set(x+(r?0.97:0.03),y,z+.5); // bisagra al borde externo
-    const m=new THREE.Mesh(doorGeo,doorMat);
+    const below=y>0?world[widx(x,y-1,z)]:-1;
+    const isTop=isDoor(below)&&doorRight(below)===r; // mitad superior = ventana
+    const m=new THREE.Mesh(isTop?doorGeoTop:doorGeoBot,doorMat);
     m.position.set(r?-0.47:0.47,.5,0); m.castShadow=true; m.receiveShadow=true;
     pivot.add(m); pivot.rotation.y=doorAngle(k,b);
     scene.add(pivot); doorMeshes.set(k,pivot);
@@ -911,15 +928,36 @@ function doorIdFor(x,y,z,id){
   }
   return pid;
 }
+// compañera de puerta doble: puerta vecina (eje X) con bisagra opuesta;
+// devuelve su mitad inferior o null
+function doorPair(x,y,z){
+  const b=get(x,y,z);
+  for(const nx of [x-1,x+1]){
+    const w=get(nx,y,z);
+    if(isDoor(w)&&doorRight(w)!==doorRight(b)){
+      if(y>0){ const bw=get(nx,y-1,z);
+        if(isDoor(bw)&&doorRight(bw)===doorRight(w)) return [nx,y-1,z]; }
+      return [nx,y,z];
+    }
+  }
+  return null;
+}
 function toggleDoor(x,y,z){
   const b=get(x,y,z);
   if(!isDoor(b)) return false;
   const toOpen=!doorOpen(b);
-  for(const [cx,cy,cz] of doorCells(x,y,z)){
-    const cb=get(cx,cy,cz), r=doorRight(cb);
-    const nv=!r?(toOpen?DOOR_OPEN:DOOR):(toOpen?DOOR2_OPEN:DOOR2);
-    editBlock(cx,cy,cz,nv);
-    doorAnims.set(cx+','+cy+','+cz,{p:0,from:toOpen?0:1,to:toOpen?1:0});
+  const groups=[doorCells(x,y,z)];
+  const pr=doorPair(x,y,z); // la doble abre/cierra junta
+  if(pr) groups.push(doorCells(pr[0],pr[1],pr[2]));
+  const seen=new Set();
+  for(const cells of groups) for(const [cx,cy,cz] of cells){
+    const k=cx+','+cy+','+cz;
+    if(seen.has(k)) continue; seen.add(k);
+    const cb=get(cx,cy,cz);
+    if(!isDoor(cb)||doorOpen(cb)===toOpen) continue;
+    const r=doorRight(cb);
+    editBlock(cx,cy,cz,!r?(toOpen?DOOR_OPEN:DOOR):(toOpen?DOOR2_OPEN:DOOR2));
+    doorAnims.set(k,{p:0,from:toOpen?0:1,to:toOpen?1:0});
   }
   sfxDoor(toOpen);
   return true;
