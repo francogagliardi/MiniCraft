@@ -877,6 +877,8 @@ function doorOpen(b){ return b===DOOR_OPEN||b===DOOR2_OPEN||b===DOORZ_OPEN||b===
 function doorRight(b){ return b===DOOR2||b===DOOR2_OPEN||b===DOORZ2||b===DOORZ2_OPEN; }
 function doorZ(b){ return b===DOORZ||b===DOORZ_OPEN||b===DOORZ2||b===DOORZ2_OPEN; }
 function doorSame(a,b){ return isDoor(a)&&isDoor(b)&&doorRight(a)===doorRight(b)&&doorZ(a)===doorZ(b); }
+// signo de giro: la bisagra derecha gira espejado para que la doble abra junta
+function doorSign(b){ return (doorRight(b)!==doorZ(b))?1:-1; }
 let doorGeoTop = null, doorGeoTopM = null, doorGeoBot = null, doorGeoBotM = null,
     doorGeoTopZ = null, doorGeoTopMZ = null, doorGeoBotZ = null, doorGeoBotMZ = null, doorMat = null;
 function doorUV(geo,t,mirror){
