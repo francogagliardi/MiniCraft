@@ -29,7 +29,9 @@ const server = http.createServer((req, res) => {
     if (!file.startsWith(STATIC)) { res.writeHead(403); res.end('no'); return; }
     fs.readFile(file, (err, data) => {
       if (err) { res.writeHead(404); res.end('404'); return; }
-      res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream' });
+      // sin caché: el index.html cambia en cada deploy y los celus lo cachean agresivo
+      res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream',
+        'Cache-Control': 'no-cache' });
       res.end(data);
     });
   } catch (e) { res.writeHead(500); res.end('err'); }
