@@ -93,6 +93,12 @@ ok(HB === 9, 'hotbar de 9 slots');
 // 6. controles táctiles + reglas de ataque (sin romper el camino de PC)
 const nModule = (html.match(/<script type="module">/g) || []).length;
 ok(nModule === 1, 'un solo <script type="module">');
+// estructura HTML sana: sin esto el navegador traga el body como CSS/JS (página vacía)
+for (const tag of ['style', 'script', 'head', 'body', 'html', 'div', 'canvas']) {
+  const open = (html.match(new RegExp(`<${tag}(?=[\\s>])`, 'g')) || []).length;
+  const close = (html.match(new RegExp(`</${tag}>`, 'g')) || []).length;
+  ok(open > 0 && open === close, `tags <${tag}> balanceados (${open}/${close})`);
+}
 for (const needle of ['const TOUCH', 'canAct()', 'touchControls', 'jumpTouch', 'placeTouch',
     'atkTouch', 'btnFull', 'toggleFull', 'only-touch', 'needSword']) {
   ok(html.includes(needle), `táctil/ataque: ${needle} presente`);
