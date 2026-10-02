@@ -965,23 +965,48 @@ function doorOpenId(b){ // variante abierta conservando bisagra y plano
   const r=doorRight(b), fz=doorZ(b);
   return !fz?(!r?DOOR_OPEN:DOOR2_OPEN):(!r?DOORZ_OPEN:DOORZ2_OPEN);
 }
-// Al poner una puerta al lado de otra (sobre su eje) se espeja la bisagra para
-// formar puerta doble estilo Minecraft: bisagras a los bordes externos.
-function doorIdFor(x,y,z,closedId){
-  const fz=doorZ(closedId), mir=fz?DOORZ2:DOOR2;
-  const ns=fz?[[x,y,z-1],[x,y,z+1]]:[[x-1,y,z],[x+1,y,z]];
-  for(const [nx,ny,nz] of ns){
-    const w=get(nx,ny,nz);
-    if(isDoor(w)&&doorZ(w)===fz){ return doorRight(w)?closedId:mir; }
+function doorSideId(b, right){ // misma apertura y plano, bisagra dada
+  const fz=doorZ(b), o=doorOpen(b);
+  if(!fz) return o?(right?DOOR2_OPEN:DOOR_OPEN):(right?DOOR2:DOOR);
+  return o?(right?DOORZ2_OPEN:DOORZ_OPEN):(right?DOORZ2:DOORZ);
+}
+// pares viejos con bisagras del mismo lado (solo local): se alternan L,R,L,R…
+function repairDoors(){
+  const fixRun=(cells)=>{
+    if(cells.length<2) return;
+    cells.forEach(([x,y,z],i)=>{
+      const wantRight=i%2===1;
+      for(const [cx,cy,cz] of doorCells(x,y,z)){
+        const cb=get(cx,cy,cz);
+        if(isDoor(cb)&&doorRight(cb)!==wantRight){
+          const nv=doorSideId(cb,wantRight);
+          world[widx(cx,cy,cz)]=nv; edits.push([widx(cx,cy,cz),nv]);
+        }
+      }
+    });
+  };
+  const isLower=(x,y,z)=>{
+    const b=get(x,y,z);
+    return isDoor(b)&&(y===0||!doorSame(get(x,y-1,z),b));
+  };
+  for(let y=0;y<H;y++) for(let z=0;z<W;z++){
+    let run=[], fz=null;
+    const flush=()=>{ fixRun(run); run=[]; fz=null; };
+    for(let x=0;x<=W;x++){
+      const ok=x<W&&isLower(x,y,z);
+      if(ok&&(fz===null||doorZ(get(x,y,z))===fz)){ if(fz===null) fz=doorZ(get(x,y,z)); run.push([x,y,z]); }
+      else flush();
+    }
   }
-  // sin vecina sobre su eje: si hay puerta pegada en el otro eje, heredar su
-  // plano (así la doble sale bien mires desde donde mires al ponerla)
-  const ns2=fz?[[x-1,y,z],[x+1,y,z]]:[[x,y,z-1],[x,y,z+1]];
-  for(const [nx,ny,nz] of ns2){
-    const w=get(nx,ny,nz);
-    if(isDoor(w)) return doorIdFor(x,y,z,doorZ(w)?DOORZ:DOOR);
+  for(let y=0;y<H;y++) for(let x=0;x<W;x++){
+    let run=[], fz=null;
+    const flush=()=>{ fixRun(run); run=[]; fz=null; };
+    for(let z=0;z<=W;z++){
+      const ok=z<W&&isLower(x,y,z);
+      if(ok&&(fz===null||doorZ(get(x,y,z))===fz)){ if(fz===null) fz=doorZ(get(x,y,z)); run.push([x,y,z]); }
+      else flush();
+    }
   }
-  return closedId;
 }
 // compañera de puerta doble: vecina sobre el eje con bisagra opuesta;
 // se busca primero del lado opuesto a la propia bisagra para que en filas
@@ -1521,14 +1546,34 @@ function doPlace(){
   }
   if(id===DOOR){
     // la puerta mide 2 bloques: necesita la celda de arriba libre.
-    // mira al jugador (como en Minecraft): el plano queda perpendicular a la vista.
     if(y+1>=H||![AIR,WATER].includes(get(x,y+1,z))){ toast('🚪 Sin lugar arriba: la puerta mide 2 bloques'); return; }
     const p=player.pos;
     if(x+1>p.x-.3&&x<p.x+.3&&z+1>p.z-.3&&z<p.z+.3&&y+2>p.y&&y+1<p.y+1.8){ toast('⛔ Ahí estás vos'); return; }
-    const ld=lookDir(), fz=Math.abs(ld.x)>Math.abs(ld.z);
-    const pid=doorIdFor(x,y,z,fz?DOORZ:DOOR);
+    // plano: perpendicular a la vista, o heredado de puerta vecina
+    const ld=lookDir();
+    let fz=Math.abs(ld.x)>Math.abs(ld.z);
+    const ring4=[[x-1,y,z],[x+1,y,z],[x,y,z-1],[x,y,z+1]];
+    for(const [nx,ny,nz] of ring4){ const w=get(nx,ny,nz); if(isDoor(w)){ fz=doorZ(w); break; } }
+    // compañera sobre el eje del plano → doble canónica con bisagras afuera,
+    // sin importar el orden en que se pongan las dos
+    const offs=fz?[[0,0,-1],[0,0,1]]:[[-1,0,0],[1,0,0]];
+    let px=null;
+    for(const [dx,dy,dz] of offs){
+      const w=get(x+dx,y,z+dz);
+      if(isDoor(w)&&doorZ(w)===fz){ px=[x+dx,y,z+dz]; break; }
+    }
+    let pid=fz?DOORZ:DOOR, dbl=false;
+    if(px){
+      dbl=true;
+      const pRight=fz?(px[2]>z):(px[0]>x);
+      pid=fz?(pRight?DOORZ:DOORZ2):(pRight?DOOR:DOOR2); // yo = lado opuesto
+      for(const [cx,cy,cz] of doorCells(px[0],px[1],px[2])){ // vecina a su lado externo
+        const cb=get(cx,cy,cz);
+        if(isDoor(cb)&&doorRight(cb)!==pRight) editBlock(cx,cy,cz,doorSideId(cb,pRight));
+      }
+    }
     editBlock(x,y,z,pid); editBlock(x,y+1,z,pid); sfxPlace();
-    toast((pid===DOOR2||pid===DOORZ2)?'🚪 ¡Puerta doble! Click derecho para abrir/cerrar':'🚪 Puerta de 2 bloques: click derecho para abrir/cerrar');
+    toast(dbl?'🚪 ¡Puerta doble! Click derecho para abrir/cerrar':'🚪 Puerta de 2 bloques: click derecho para abrir/cerrar');
     return;
   }
   editBlock(x,y,z,id); sfxPlace();
@@ -1956,6 +2001,7 @@ async function startGame(wantedMode){
   } else {
     if(!load()) genWorld();
     normalizeDoors(); // puertas viejas de 1 bloque crecen a 2 (mundo intacto)
+    repairDoors(); // pares con bisagras del mismo lado se alternan L,R
     buildAllChunks(); buildGlobals();
     if(location.protocol.indexOf('http')===0) toast('🔌 Sin servidor: modo solitario');
   }
