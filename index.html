@@ -881,25 +881,28 @@ function doorSame(a,b){ return isDoor(a)&&isDoor(b)&&doorRight(a)===doorRight(b)
 function doorSign(b){ return (doorRight(b)!==doorZ(b))?1:-1; }
 let doorGeoTop = null, doorGeoTopM = null, doorGeoBot = null, doorGeoBotM = null,
     doorGeoTopZ = null, doorGeoTopMZ = null, doorGeoBotZ = null, doorGeoBotMZ = null, doorMat = null;
-function doorUV(geo,t,mirror){
+function doorUV(geo,t,mirror,neg){
+  // neg='z' (puerta X) o 'x' (puerta Z): la cara trasera se espeja para que la
+  // manija quede en el MISMO borde físico → se ve hacia adentro de ambos lados
   const [u0,v0,u1,v1] = tileUV(t);
-  const uv = geo.attributes.uv;
+  const uv = geo.attributes.uv, no = geo.attributes.normal;
   for(let i=0;i<uv.count;i++){
-    const u = mirror ? 1-uv.getX(i) : uv.getX(i);
+    let u = mirror ? 1-uv.getX(i) : uv.getX(i);
+    if((neg==='z' ? no.getZ(i) : no.getX(i)) < 0) u = 1-u;
     uv.setXY(i, u0+u*(u1-u0), v0+uv.getY(i)*(v1-v0));
   }
 }
 function doorAssets(){
   if(doorGeoTop) return;
-  doorGeoTop = new THREE.BoxGeometry(.94,.98,.1); doorUV(doorGeoTop,30,false); // ventana arriba
-  doorGeoTopM = new THREE.BoxGeometry(.94,.98,.1); doorUV(doorGeoTopM,30,true);
-  doorGeoBot = new THREE.BoxGeometry(.94,.98,.1); doorUV(doorGeoBot,31,false); // paneles abajo
-  doorGeoBotM = new THREE.BoxGeometry(.94,.98,.1); doorUV(doorGeoBotM,31,true);
+  doorGeoTop = new THREE.BoxGeometry(.94,.98,.1); doorUV(doorGeoTop,30,false,'z'); // ventana arriba
+  doorGeoTopM = new THREE.BoxGeometry(.94,.98,.1); doorUV(doorGeoTopM,30,true,'z');
+  doorGeoBot = new THREE.BoxGeometry(.94,.98,.1); doorUV(doorGeoBot,31,false,'z'); // paneles abajo
+  doorGeoBotM = new THREE.BoxGeometry(.94,.98,.1); doorUV(doorGeoBotM,31,true,'z');
   // eje Z: panel fino en X y ancho en Z (no basta mover el pivote, hay que rotar la lámina)
-  doorGeoTopZ = new THREE.BoxGeometry(.1,.98,.94); doorUV(doorGeoTopZ,30,false);
-  doorGeoTopMZ = new THREE.BoxGeometry(.1,.98,.94); doorUV(doorGeoTopMZ,30,true);
-  doorGeoBotZ = new THREE.BoxGeometry(.1,.98,.94); doorUV(doorGeoBotZ,31,false);
-  doorGeoBotMZ = new THREE.BoxGeometry(.1,.98,.94); doorUV(doorGeoBotMZ,31,true);
+  doorGeoTopZ = new THREE.BoxGeometry(.1,.98,.94); doorUV(doorGeoTopZ,30,false,'x');
+  doorGeoTopMZ = new THREE.BoxGeometry(.1,.98,.94); doorUV(doorGeoTopMZ,30,true,'x');
+  doorGeoBotZ = new THREE.BoxGeometry(.1,.98,.94); doorUV(doorGeoBotZ,31,false,'x');
+  doorGeoBotMZ = new THREE.BoxGeometry(.1,.98,.94); doorUV(doorGeoBotMZ,31,true,'x');
   doorMat = new THREE.MeshLambertMaterial({ map:atlasTex });
 }
 function doorAngle(k, b){
