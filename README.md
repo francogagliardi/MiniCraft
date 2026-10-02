@@ -4,7 +4,7 @@ Un mini Minecraft hecho con amor: voxel, súper básico pero pulido, con
 multijugador. Un solo `index.html` (Three.js por CDN) + un servidor
 chiquito en Node.js con WebSocket.
 
-![stack](https://img.shields.io/badge/three.js-r160-blue) ![node](https://img.shields.io/badge/node-20-green) ![docker](https://img.shields.io/badge/docker-ready-blue)
+![stack](https://img.shields.io/badge/three.js-r160-blue) ![node](https://img.shields.io/badge/node-20-green) ![docker](https://img.shields.io/badge/docker-ready-blue) [![CI](https://github.com/francogagliardi/MiniCraft/actions/workflows/ci.yml/badge.svg)](https://github.com/francogagliardi/MiniCraft/actions)
 
 ## ✨ Qué tiene
 
@@ -75,6 +75,15 @@ Variables: `ADMIN_KEY` (recomendado cambiarla), `PORT`.
    (ahí vive `world.json`, así no perdés el mundo en cada deploy).
 6. Deploy ▶️ — tus amigos entran a `http://TU_IP:3000`.
 
+### 🔄 Deploy automático (push a main → se actualiza solo)
+
+1. Pusheá a `main`: corre el workflow **CI** (tests estáticos + protocolo).
+2. Si pasa ✅, el workflow **Deploy** llama al deploy webhook de Easypanel.
+3. Para activarlo: en Easypanel copiá la **Deploy Webhook URL** de la app
+   y guardala en GitHub → repo **Settings → Secrets and variables →
+   Actions** → secret `EASYPANEL_WEBHOOK`.
+4. Sin ese secret el deploy se omite (no falla) y desplegás a mano.
+
 > El juego carga Three.js desde CDN: los jugadores necesitan internet,
 > pero tu VPS no necesita nada especial.
 
@@ -99,6 +108,13 @@ Variables: `ADMIN_KEY` (recomendado cambiarla), `PORT`.
 
 ## 🧪 Tests
 
-Servidor probado de punta a punta (welcome, movimiento, bloques,
-daño PvP, chat, muerte). Cliente verificado con chequeos de sintaxis
-y tests de la matemática voxel (winding, UVs del atlas, alturas).
+```bash
+cd server && npm test
+```
+
+- **Estáticos** (`test/static.mjs`): sintaxis cliente/servidor, tiles del
+  atlas, winding de caras, inventario y hotbar.
+- **Protocolo** (`test/protocol.mjs`): levanta el server de verdad y
+  verifica welcome, movimiento, bloques, daño PvP, muerte, chat y admin key.
+
+El workflow **CI** los corre en cada push/PR a `main`.

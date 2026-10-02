@@ -1,0 +1,34 @@
+# Deploy automático a Easypanel (vía deploy webhook).
+#
+# Cómo activarlo:
+#   1. En Easypanel, abrí tu app MiniCraft → Deploy Webhook → copiá la URL.
+#   2. En GitHub: repo Settings → Secrets and variables → Actions
+#      → New repository secret: EASYPANEL_WEBHOOK = <la URL>.
+#   3. Listo: cada push a main que pase el CI redespliega solo.
+#
+# Si el secret no existe, este workflow no falla: avisa y termina.
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+jobs:
+  deploy:
+    name: Redesplegar en Easypanel
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger deploy webhook
+        if: secrets.EASYPANEL_WEBHOOK != ''
+        env:
+          EASYPANEL_WEBHOOK: ${{ secrets.EASYPANEL_WEBHOOK }}
+        run: curl -fsSL -X POST "$EASYPANEL_WEBHOOK" --max-time 60
+
+      - name: Sin webhook configurado
+        if: secrets.EASYPANEL_WEBHOOK == ''
+        run: |
+          echo "⚠️ Secret EASYPANEL_WEBHOOK no configurado: deploy omitido."
+          echo "Ver README (sección Deploy automático) para activarlo."
