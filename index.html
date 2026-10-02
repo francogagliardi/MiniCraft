@@ -869,7 +869,8 @@ function doorOpen(b){ return b===DOOR_OPEN||b===DOOR2_OPEN||b===DOORZ_OPEN||b===
 function doorRight(b){ return b===DOOR2||b===DOOR2_OPEN||b===DOORZ2||b===DOORZ2_OPEN; }
 function doorZ(b){ return b===DOORZ||b===DOORZ_OPEN||b===DOORZ2||b===DOORZ2_OPEN; }
 function doorSame(a,b){ return isDoor(a)&&isDoor(b)&&doorRight(a)===doorRight(b)&&doorZ(a)===doorZ(b); }
-let doorGeoTop = null, doorGeoTopM = null, doorGeoBot = null, doorGeoBotM = null, doorMat = null;
+let doorGeoTop = null, doorGeoTopM = null, doorGeoBot = null, doorGeoBotM = null,
+    doorGeoTopZ = null, doorGeoTopMZ = null, doorGeoBotZ = null, doorGeoBotMZ = null, doorMat = null;
 function doorUV(geo,t,mirror){
   const [u0,v0,u1,v1] = tileUV(t);
   const uv = geo.attributes.uv;
@@ -884,6 +885,11 @@ function doorAssets(){
   doorGeoTopM = new THREE.BoxGeometry(.94,.98,.1); doorUV(doorGeoTopM,30,true);
   doorGeoBot = new THREE.BoxGeometry(.94,.98,.1); doorUV(doorGeoBot,31,false); // paneles abajo
   doorGeoBotM = new THREE.BoxGeometry(.94,.98,.1); doorUV(doorGeoBotM,31,true);
+  // eje Z: panel fino en X y ancho en Z (no basta mover el pivote, hay que rotar la lámina)
+  doorGeoTopZ = new THREE.BoxGeometry(.1,.98,.94); doorUV(doorGeoTopZ,30,false);
+  doorGeoTopMZ = new THREE.BoxGeometry(.1,.98,.94); doorUV(doorGeoTopMZ,30,true);
+  doorGeoBotZ = new THREE.BoxGeometry(.1,.98,.94); doorUV(doorGeoBotZ,31,false);
+  doorGeoBotMZ = new THREE.BoxGeometry(.1,.98,.94); doorUV(doorGeoBotMZ,31,true);
   doorMat = new THREE.MeshLambertMaterial({ map:atlasTex });
 }
 function doorAngle(k, b){
@@ -914,7 +920,10 @@ function buildDoors(){
     }
     const below=y>0?world[widx(x,y-1,z)]:-1;
     const isTop=doorSame(below,b); // mitad superior = ventana
-    const geo=isTop?(r?doorGeoTopM:doorGeoTop):(r?doorGeoBotM:doorGeoBot);
+    const mir=(r!==fz); // espejo: manija al borde libre en ambos ejes
+    const geo=!fz
+      ? (isTop?(mir?doorGeoTopM:doorGeoTop):(mir?doorGeoBotM:doorGeoBot))
+      : (isTop?(mir?doorGeoTopMZ:doorGeoTopZ):(mir?doorGeoBotMZ:doorGeoBotZ));
     const m=new THREE.Mesh(geo,doorMat);
     if(!fz) m.position.set(r?-0.47:0.47,.5,0);
     else m.position.set(0,.5,r?-0.47:0.47);
