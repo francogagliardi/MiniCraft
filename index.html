@@ -302,6 +302,13 @@ addEventListener('error', function(e){
   var l = document.getElementById('loading');
   if (l) { l.style.display = 'block'; l.textContent = '⚠️ No cargó: ' + (e.message || 'revisá tu conexión'); }
 }, true);
+addEventListener('unhandledrejection', function(e){
+  try{
+    var l = document.getElementById('loading');
+    var r = (e && e.reason && (e.reason.message || e.reason)) || 'error desconocido';
+    if (l) { l.style.display = 'block'; l.textContent = '⚠️ Error: ' + r + ' · recargá con Ctrl+F5'; }
+  }catch(_){}
+});
 </script>
 <script type="module">
 // Controles táctiles (?touch=1 fuerza táctil, ?pc=1 fuerza PC: útil para probar)
@@ -409,7 +416,7 @@ const AIR=0, GRASS=1, DIRT=2, STONE=3, LOG=4, PLANKS=5, LEAVES=6, SAND=7, GLASS=
       DOORZ=29, DOORZ_OPEN=30, DOORZ2=31, DOORZ2_OPEN=32;
 const SWORD = 100; // item (no es bloque, no se puede poner en el mundo)
 const SAVE_KEY = 'minicraft-save-v2';
-const CLIENT_V = 'v7'; // sello visible en menú/pausa: confirma qué build está corriendo
+const CLIENT_V = 'v8'; // sello visible en menú/pausa: confirma qué build está corriendo
 
 const DEFS = {
   [GRASS]:  { name:'Pasto',      css:'linear-gradient(135deg,#8bd450 0 55%,#9a6a45 55% 100%)', color:0x8bd450, cube:1, opaque:1, hard:.55, tiles:{top:0,side:1,bottom:2} },
@@ -1887,7 +1894,11 @@ function load(){
     const d=JSON.parse(s);
     if(!d||typeof d.seed!=='number'||!Array.isArray(d.edits)) return false;
     SEED=d.seed; genWorld();
-    for(const [i,v] of d.edits) if(i>=0&&i<world.length) world[i]=v;
+    for(const e of (d.edits||[])){
+      if(!Array.isArray(e)) continue; // edición corrupta: se salta, no se cuelga
+      const [i,v]=e;
+      if(i>=0&&i<world.length) world[i]=v;
+    }
     if(Array.isArray(d.hotbar)&&d.hotbar.length===9&&d.hotbar.every(id=>DEFS[id])) hotbarIds=d.hotbar;
     if(typeof d.sel==='number'&&d.sel>=0&&d.sel<9) sel=d.sel;
     edits.push(...d.edits);
@@ -1920,7 +1931,11 @@ async function startGame(wantedMode){
     if(d.adminDenied){ toast('🔑 Clave admin incorrecta: entrás como jugador'); mode='player'; }
     else mode=d.admin?'admin':'player';
     SEED=d.seed; genWorld();
-    for(const [i,v] of d.edits) if(i>=0&&i<world.length) world[i]=v;
+    for(const e of (d.edits||[])){
+      if(!Array.isArray(e)) continue; // edición corrupta: se salta, no se cuelga
+      const [i,v]=e;
+      if(i>=0&&i<world.length) world[i]=v;
+    }
     buildAllChunks(); buildGlobals();
     for(const p of d.players) addRemote(p);
     setupNetHandlers();
@@ -1940,8 +1955,27 @@ async function startGame(wantedMode){
   tryLock();
   if(!isAdmin()) setTimeout(()=>toast('🌱 Modo jugador: mantené el click para picar'),800);
 }
-document.getElementById('btnPlayer').onclick=()=>startGame('player');
-document.getElementById('btnAdmin').onclick=()=>startGame('admin');
+document.getElementById('btnPlayer').onclick=()=>runStart('player');
+document.getElementById('btnAdmin').onclick=()=>runStart('admin');
+// entrar nunca debe quedar colgado en "Conectando": cualquier error se muestra
+// en pantalla y los botones vuelven, en vez de un spinner infinito.
+function runStart(wantedMode){
+  const t0=Date.now();
+  const watch=setTimeout(()=>{
+    if(!started){
+      const l=document.getElementById('loading');
+      l.textContent+=' ⏳ (tarda mucho: probá recargar con Ctrl+F5)';
+    }
+  },12000);
+  startGame(wantedMode).catch(err=>{
+    clearTimeout(watch);
+    const l=document.getElementById('loading');
+    l.style.display='block';
+    l.textContent='⚠️ Error al entrar: '+((err&&err.message)||err)+' · tocá JUGAR de nuevo';
+    document.getElementById('btnPlayer').style.display='block';
+    document.getElementById('btnAdmin').style.display='block';
+  });
+}
 
 /* ============ LOOP ============ */
 let last=performance.now();
