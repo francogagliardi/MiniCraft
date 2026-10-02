@@ -81,8 +81,10 @@ Variables: `ADMIN_KEY` (recomendado cambiarla), `PORT`.
 2. Si pasa ✅, el workflow **Deploy** llama al deploy webhook de Easypanel.
 3. Para activarlo: en Easypanel copiá la **Deploy Webhook URL** de la app
    y guardala en GitHub → repo **Settings → Secrets and variables →
-   Actions** → secret `EASYPANEL_WEBHOOK`.
+   Actions** → secret `EASYPANEL_DEPLOY_WEBHOOK`.
 4. Sin ese secret el deploy se omite (no falla) y desplegás a mano.
+
+<!-- test deploy webhook: 2026-10-02 -->
 
 > El juego carga Three.js desde CDN: los jugadores necesitan internet,
 > pero tu VPS no necesita nada especial.
