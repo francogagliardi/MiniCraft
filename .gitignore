@@ -1,0 +1,13 @@
+# dependencias
+node_modules/
+server/node_modules/
+
+# mundo local (se genera solo, no subir)
+server/world.json
+world.json
+data/
+
+# sistema
+.DS_Store
+Thumbs.db
+Desktop.ini

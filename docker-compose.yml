@@ -1,0 +1,17 @@
+services:
+  minicraft:
+    build: .
+    image: minicraft:latest
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: 3000
+      ADMIN_KEY: ${ADMIN_KEY:-minicraft-admin-2026}
+      MINICRAFT_DIR: /app
+      WORLD_FILE: /data/world.json
+    volumes:
+      - minicraft-data:/data
+    restart: unless-stopped
+
+volumes:
+  minicraft-data:

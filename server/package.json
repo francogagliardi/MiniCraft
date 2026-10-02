@@ -1,0 +1,10 @@
+{
+  "name": "minicraft-server",
+  "version": "1.0.0",
+  "description": "Servidor multijugador para Minicraft (HTTP + WebSocket)",
+  "main": "server.js",
+  "license": "MIT",
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
