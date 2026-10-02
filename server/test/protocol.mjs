@@ -122,6 +122,10 @@ try {
   a.ws.send(JSON.stringify({ t: 'edit', x: 83, y: 15, z: 80, v: 27 }));
   const pd4 = await nextOf(b.seen, b.seen.length, 'pedit');
   ok(pd4.v === 27, 'relay de puerta doble (27)');
+  // puerta orientada en Z (29↔30) también viaja por la red
+  a.ws.send(JSON.stringify({ t: 'edit', x: 84, y: 15, z: 80, v: 29 }));
+  const pd5 = await nextOf(b.seen, b.seen.length, 'pedit');
+  ok(pd5.v === 29, 'relay de puerta en Z (29)');
 
   // 5. daño PvP: víctima recibe phit + atacante recibe hitok
   // (los índices se capturan ANTES de mandar el hit: phit puede llegar primero)

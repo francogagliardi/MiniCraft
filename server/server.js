@@ -109,7 +109,7 @@ wss.on('connection', (ws) => {
     } else if (m.t === 'edit') {
       const { x, y, z, v } = m;
       if (![x, y, z, v].every(n => Number.isInteger(n))) return;
-      if (x < 0 || x >= 160 || z < 0 || z >= 160 || y < 0 || y >= 40 || v < 0 || v > 30) return;
+      if (x < 0 || x >= 160 || z < 0 || z >= 160 || y < 0 || y >= 40 || v < 0 || v > 40) return;
       if (v === 11 || y === 0) return; // bedrock solo la pone el generador
       edits.push([(y * 160 + z) * 160 + x, v]);
       if (edits.length > 300000) edits.splice(0, edits.length - 300000);

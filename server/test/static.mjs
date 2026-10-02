@@ -36,6 +36,7 @@ const AIR = 0, GRASS = 1, DIRT = 2, STONE = 3, LOG = 4, PLANKS = 5, LEAVES = 6,
   FLOWER_R = 13, FLOWER_Y = 14, COBBLE = 15, WOOL = 16, SNOW = 17, CLAY = 18,
   OBSIDIAN = 19, PUMPKIN = 20, BOOKS = 21, MELON = 22, SWORD = 100;
 const DOOR = 23, DOOR_OPEN = 24, HAY = 25, SBRICK = 26, DOOR2 = 27, DOOR2_OPEN = 28;
+const DOORZ = 29, DOORZ_OPEN = 30, DOORZ2 = 31, DOORZ2_OPEN = 32;
 const grabObj = (marker) => {
   let i = html.indexOf(marker);
   i = html.indexOf('{', i);

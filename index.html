@@ -405,7 +405,8 @@ const W = 160, H = 40, CH = 16, WATER_Y = 10;
 const AIR=0, GRASS=1, DIRT=2, STONE=3, LOG=4, PLANKS=5, LEAVES=6, SAND=7, GLASS=8,
       BRICK=9, GLOW=10, BEDROCK=11, WATER=12, FLOWER_R=13, FLOWER_Y=14,
       COBBLE=15, WOOL=16, SNOW=17, CLAY=18, OBSIDIAN=19, PUMPKIN=20, BOOKS=21, MELON=22,
-      DOOR=23, DOOR_OPEN=24, HAY=25, SBRICK=26, DOOR2=27, DOOR2_OPEN=28;
+      DOOR=23, DOOR_OPEN=24, HAY=25, SBRICK=26, DOOR2=27, DOOR2_OPEN=28,
+      DOORZ=29, DOORZ_OPEN=30, DOORZ2=31, DOORZ2_OPEN=32;
 const SWORD = 100; // item (no es bloque, no se puede poner en el mundo)
 const SAVE_KEY = 'minicraft-save-v2';
 
@@ -438,6 +439,10 @@ const DEFS = {
   [SBRICK]: { name:'Piedra tallada 🧱', css:'linear-gradient(135deg,#b9bec7,#7e848e)', color:0x9aa0a8, cube:1, opaque:1, hard:2, tiles:{top:29,side:29,bottom:29} },
   [DOOR2]:  { name:'Puerta 🚪',  css:'linear-gradient(135deg,#d8b078,#8a5f30)', color:0xcfa672, door:1, hard:.9, tiles:{top:8,side:26,bottom:8} },
   [DOOR2_OPEN]:{ name:'Puerta abierta', css:'linear-gradient(135deg,#d8b078,#8a5f30)', color:0xcfa672, door:1, open:1, hard:.9, tiles:{top:8,side:26,bottom:8} },
+  [DOORZ]:  { name:'Puerta 🚪',  css:'linear-gradient(135deg,#d8b078,#8a5f30)', color:0xcfa672, door:1, faceZ:1, hard:.9, tiles:{top:8,side:26,bottom:8} },
+  [DOORZ_OPEN]:{ name:'Puerta abierta', css:'linear-gradient(135deg,#d8b078,#8a5f30)', color:0xcfa672, door:1, open:1, faceZ:1, hard:.9, tiles:{top:8,side:26,bottom:8} },
+  [DOORZ2]: { name:'Puerta 🚪',  css:'linear-gradient(135deg,#d8b078,#8a5f30)', color:0xcfa672, door:1, faceZ:1, hard:.9, tiles:{top:8,side:26,bottom:8} },
+  [DOORZ2_OPEN]:{ name:'Puerta abierta', css:'linear-gradient(135deg,#d8b078,#8a5f30)', color:0xcfa672, door:1, open:1, faceZ:1, hard:.9, tiles:{top:8,side:26,bottom:8} },
   [SWORD]:  { name:'Espada ⚔️',  css:'linear-gradient(135deg,#f4f6fa 0 60%,#c9a13b 60% 72%,#8a94a8 72% 100%)', color:0xdfe6f2, item:'sword' },
 };
 const INVENTORY = [GRASS,DIRT,STONE,COBBLE,SBRICK,LOG,PLANKS,BOOKS,LEAVES,SAND,SNOW,CLAY,WOOL,GLASS,BRICK,OBSIDIAN,PUMPKIN,MELON,HAY,GLOW,DOOR,SWORD,FLOWER_R,FLOWER_Y];
@@ -856,32 +861,41 @@ function refreshAt(x,z){
 /* ============ PUERTAS (bisagra animada) ============ */
 // Las puertas no van al mesh de chunks: son paneles finos con pivote que
 // rota al abrir/cerrar. Cerrada = sólida, abierta = deja pasar.
-const DOOR_OPEN_ANG = -1.75; // ~-100°
+const DOOR_OPEN_ANG = 1.75; // ~100°
 const doorMeshes = new Map(); // "x,y,z" -> pivot Group
 const doorAnims = new Map();  // "x,y,z" -> {p, from, to} (0=cerrada,1=abierta)
-let doorGeoTop = null, doorGeoBot = null, doorMat = null;
-function doorUV(geo,t){
+function isDoor(b){ return b===DOOR||b===DOOR_OPEN||b===DOOR2||b===DOOR2_OPEN||b===DOORZ||b===DOORZ_OPEN||b===DOORZ2||b===DOORZ2_OPEN; }
+function doorOpen(b){ return b===DOOR_OPEN||b===DOOR2_OPEN||b===DOORZ_OPEN||b===DOORZ2_OPEN; }
+function doorRight(b){ return b===DOOR2||b===DOOR2_OPEN||b===DOORZ2||b===DOORZ2_OPEN; }
+function doorZ(b){ return b===DOORZ||b===DOORZ_OPEN||b===DOORZ2||b===DOORZ2_OPEN; }
+function doorSame(a,b){ return isDoor(a)&&isDoor(b)&&doorRight(a)===doorRight(b)&&doorZ(a)===doorZ(b); }
+let doorGeoTop = null, doorGeoTopM = null, doorGeoBot = null, doorGeoBotM = null, doorMat = null;
+function doorUV(geo,t,mirror){
   const [u0,v0,u1,v1] = tileUV(t);
   const uv = geo.attributes.uv;
-  for(let i=0;i<uv.count;i++) uv.setXY(i, u0+uv.getX(i)*(u1-u0), v0+uv.getY(i)*(v1-v0));
+  for(let i=0;i<uv.count;i++){
+    const u = mirror ? 1-uv.getX(i) : uv.getX(i);
+    uv.setXY(i, u0+u*(u1-u0), v0+uv.getY(i)*(v1-v0));
+  }
 }
 function doorAssets(){
   if(doorGeoTop) return;
-  doorGeoTop = new THREE.BoxGeometry(.94,.98,.1); doorUV(doorGeoTop,30); // ventana arriba
-  doorGeoBot = new THREE.BoxGeometry(.94,.98,.1); doorUV(doorGeoBot,31); // paneles abajo
+  doorGeoTop = new THREE.BoxGeometry(.94,.98,.1); doorUV(doorGeoTop,30,false); // ventana arriba
+  doorGeoTopM = new THREE.BoxGeometry(.94,.98,.1); doorUV(doorGeoTopM,30,true);
+  doorGeoBot = new THREE.BoxGeometry(.94,.98,.1); doorUV(doorGeoBot,31,false); // paneles abajo
+  doorGeoBotM = new THREE.BoxGeometry(.94,.98,.1); doorUV(doorGeoBotM,31,true);
   doorMat = new THREE.MeshLambertMaterial({ map:atlasTex });
 }
 function doorAngle(k, b){
   const a = doorAnims.get(k);
   const t = a ? a.from+(a.to-a.from)*(1-Math.pow(1-Math.min(1,a.p),3)) : (doorOpen(b)?1:0);
-  // la bisagra derecha gira espejado para que la puerta doble abra junta
-  return t*DOOR_OPEN_ANG*(doorRight(b)?-1:1);
+  return t*DOOR_OPEN_ANG*doorSign(b);
 }
 // celdas de una puerta de 2 bloques: la clickeada + su otra mitad
 function doorCells(x,y,z){
-  const cells=[[x,y,z]];
-  if(y+1<H&&isDoor(get(x,y+1,z))) cells.push([x,y+1,z]);
-  else if(y>0&&isDoor(get(x,y-1,z))) cells.push([x,y-1,z]);
+  const b=get(x,y,z), cells=[[x,y,z]];
+  if(y+1<H&&doorSame(get(x,y+1,z),b)) cells.push([x,y+1,z]);
+  else if(y>0&&doorSame(get(x,y-1,z),b)) cells.push([x,y-1,z]);
   return cells;
 }
 function buildDoors(){
@@ -891,13 +905,20 @@ function buildDoors(){
   for(let y=0;y<H;y++) for(let z=0;z<W;z++) for(let x=0;x<W;x++){
     const b=world[widx(x,y,z)];
     if(!isDoor(b)) continue;
-    const k=x+','+y+','+z, r=doorRight(b);
+    const k=x+','+y+','+z, r=doorRight(b), fz=doorZ(b);
     const pivot=new THREE.Group();
-    pivot.position.set(x+(r?0.97:0.03),y,z+.5); // bisagra al borde externo
+    if(!fz){ // panel ancho en X, bisagra al borde X externo
+      pivot.position.set(x+(r?0.97:0.03),y,z+.5);
+    } else { // panel ancho en Z, bisagra al borde Z externo
+      pivot.position.set(x+.5,y,z+(r?0.97:0.03));
+    }
     const below=y>0?world[widx(x,y-1,z)]:-1;
-    const isTop=isDoor(below)&&doorRight(below)===r; // mitad superior = ventana
-    const m=new THREE.Mesh(isTop?doorGeoTop:doorGeoBot,doorMat);
-    m.position.set(r?-0.47:0.47,.5,0); m.castShadow=true; m.receiveShadow=true;
+    const isTop=doorSame(below,b); // mitad superior = ventana
+    const geo=isTop?(r?doorGeoTopM:doorGeoTop):(r?doorGeoBotM:doorGeoBot);
+    const m=new THREE.Mesh(geo,doorMat);
+    if(!fz) m.position.set(r?-0.47:0.47,.5,0);
+    else m.position.set(0,.5,r?-0.47:0.47);
+    m.castShadow=true; m.receiveShadow=true;
     pivot.add(m); pivot.rotation.y=doorAngle(k,b);
     scene.add(pivot); doorMeshes.set(k,pivot);
   }
@@ -909,35 +930,41 @@ function tickDoors(dt){
     const piv=doorMeshes.get(k);
     if(!piv){ doorAnims.delete(k); continue; }
     const e=1-Math.pow(1-Math.min(1,a.p),3);
-    piv.rotation.y=(a.from+(a.to-a.from)*e)*DOOR_OPEN_ANG;
+    const [ax,ay,az]=k.split(',').map(Number);
+    piv.rotation.y=(a.from+(a.to-a.from)*e)*DOOR_OPEN_ANG*doorSign(get(ax,ay,az));
     if(a.p>=1) doorAnims.delete(k);
   }
 }
-function isDoor(b){ return b===DOOR||b===DOOR_OPEN||b===DOOR2||b===DOOR2_OPEN; }
-function doorOpen(b){ return b===DOOR_OPEN||b===DOOR2_OPEN; }
-function doorRight(b){ return b===DOOR2||b===DOOR2_OPEN; }
-// Al poner una puerta al lado de otra (eje X) se espeja la bisagra para
-// formar puerta doble estilo Minecraft: bisagras a los bordes externos.
-function doorIdFor(x,y,z,id){
-  if(id!==DOOR) return id;
-  let pid=DOOR;
-  for(const nx of [x-1,x+1]){
-    const w=get(nx,y,z);
-    if(w===DOOR||w===DOOR_OPEN){ pid=DOOR2; break; }
-    if(w===DOOR2||w===DOOR2_OPEN){ pid=DOOR; break; }
-  }
-  return pid;
+function doorClosedId(b){ // variante cerrada conservando bisagra y plano
+  const r=doorRight(b), fz=doorZ(b);
+  return !fz?(!r?DOOR:DOOR2):(!r?DOORZ:DOORZ2);
 }
-// compañera de puerta doble: puerta vecina (eje X) con bisagra opuesta;
+function doorOpenId(b){ // variante abierta conservando bisagra y plano
+  const r=doorRight(b), fz=doorZ(b);
+  return !fz?(!r?DOOR_OPEN:DOOR2_OPEN):(!r?DOORZ_OPEN:DOORZ2_OPEN);
+}
+// Al poner una puerta al lado de otra (sobre su eje) se espeja la bisagra para
+// formar puerta doble estilo Minecraft: bisagras a los bordes externos.
+function doorIdFor(x,y,z,closedId){
+  const fz=doorZ(closedId), mir=fz?DOORZ2:DOOR2;
+  const ns=fz?[[x,y,z-1],[x,y,z+1]]:[[x-1,y,z],[x+1,y,z]];
+  for(const [nx,ny,nz] of ns){
+    const w=get(nx,ny,nz);
+    if(isDoor(w)&&doorZ(w)===fz){ return doorRight(w)?closedId:mir; }
+  }
+  return closedId;
+}
+// compañera de puerta doble: vecina sobre el eje con bisagra opuesta;
 // devuelve su mitad inferior o null
 function doorPair(x,y,z){
-  const b=get(x,y,z);
-  for(const nx of [x-1,x+1]){
-    const w=get(nx,y,z);
-    if(isDoor(w)&&doorRight(w)!==doorRight(b)){
-      if(y>0){ const bw=get(nx,y-1,z);
-        if(isDoor(bw)&&doorRight(bw)===doorRight(w)) return [nx,y-1,z]; }
-      return [nx,y,z];
+  const b=get(x,y,z), fz=doorZ(b);
+  const ns=fz?[[x,y,z-1],[x,y,z+1]]:[[x-1,y,z],[x+1,y,z]];
+  for(const [nx,ny,nz] of ns){
+    const w=get(nx,ny,nz);
+    if(isDoor(w)&&doorZ(w)===fz&&doorRight(w)!==doorRight(b)){
+      if(ny>0){ const bw=get(nx,ny-1,nz);
+        if(doorSame(bw,w)) return [nx,ny-1,nz]; }
+      return [nx,ny,nz];
     }
   }
   return null;
@@ -955,8 +982,7 @@ function toggleDoor(x,y,z){
     if(seen.has(k)) continue; seen.add(k);
     const cb=get(cx,cy,cz);
     if(!isDoor(cb)||doorOpen(cb)===toOpen) continue;
-    const r=doorRight(cb);
-    editBlock(cx,cy,cz,!r?(toOpen?DOOR_OPEN:DOOR):(toOpen?DOOR2_OPEN:DOOR2));
+    editBlock(cx,cy,cz,toOpen?doorOpenId(cb):doorClosedId(cb));
     doorAnims.set(k,{p:0,from:toOpen?0:1,to:toOpen?1:0});
   }
   sfxDoor(toOpen);
@@ -968,7 +994,7 @@ function normalizeDoors(){
     const b=world[widx(x,y,z)];
     if(!isDoor(b)) continue;
     const below=y>0?world[widx(x,y-1,z)]:-1;
-    if(isDoor(below)&&doorRight(below)===doorRight(b)) continue; // es mitad superior
+    if(doorSame(below,b)) continue; // es mitad superior
     const a=world[widx(x,y+1,z)];
     if(a===AIR||a===WATER){ world[widx(x,y+1,z)]=b; edits.push([widx(x,y+1,z),b]); }
   }
@@ -1464,13 +1490,15 @@ function doPlace(){
     if(x+1>p.x-.3&&x<p.x+.3&&z+1>p.z-.3&&z<p.z+.3&&y+1>p.y&&y<p.y+1.8){ toast('⛔ Ahí estás vos'); return; }
   }
   if(id===DOOR){
-    // la puerta mide 2 bloques: necesita la celda de arriba libre
+    // la puerta mide 2 bloques: necesita la celda de arriba libre.
+    // mira al jugador (como en Minecraft): el plano queda perpendicular a la vista.
     if(y+1>=H||![AIR,WATER].includes(get(x,y+1,z))){ toast('🚪 Sin lugar arriba: la puerta mide 2 bloques'); return; }
     const p=player.pos;
     if(x+1>p.x-.3&&x<p.x+.3&&z+1>p.z-.3&&z<p.z+.3&&y+2>p.y&&y+1<p.y+1.8){ toast('⛔ Ahí estás vos'); return; }
-    const pid=doorIdFor(x,y,z,id);
+    const ld=lookDir(), fz=Math.abs(ld.x)>Math.abs(ld.z);
+    const pid=doorIdFor(x,y,z,fz?DOORZ:DOOR);
     editBlock(x,y,z,pid); editBlock(x,y+1,z,pid); sfxPlace();
-    toast(pid!==DOOR?'🚪 ¡Puerta doble! Click derecho para abrir/cerrar':'🚪 Puerta de 2 bloques: click derecho para abrir/cerrar');
+    toast((pid===DOOR2||pid===DOORZ2)?'🚪 ¡Puerta doble! Click derecho para abrir/cerrar':'🚪 Puerta de 2 bloques: click derecho para abrir/cerrar');
     return;
   }
   editBlock(x,y,z,id); sfxPlace();
