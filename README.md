@@ -99,6 +99,23 @@ Variables: `ADMIN_KEY` (recomendado cambiarla), `PORT`.
 | `E` / `Enter` | Inventario / chat |
 | `F` | Volar (solo admin) |
 
+### 📱 Controles táctiles (celular)
+
+| Gesto / botón | Acción |
+|---|---|
+| Joystick (abajo izq.) | Moverse |
+| Arrastrar en pantalla | Mirar |
+| Tocar (rápido) | Romper / acariciar 🐷🐑 (equivale a click izq.) |
+| Mantener el dedo | Picar progresivo ⛏ |
+| ⚔️ | Atacar (**solo con la espada en la mano**) |
+| 🧱 | Poner bloque / saludar / acariciar (equivale a click der.) |
+| ⤒ / 🕊 / 🎒 / 💬 | Saltar / volar (admin) / inventario / chat |
+| ⛶ (arriba) | Pantalla completa |
+
+> Sin la espada en la mano no se puede dañar a otros jugadores
+> (romper, poner y acariciar siguen funcionando con cualquier item).
+> Probá el modo táctil en PC con `?touch=1` en la URL.
+
 ## 🔑 Variables de entorno (server)
 
 | Var | Default | Qué hace |

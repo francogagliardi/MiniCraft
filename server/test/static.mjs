@@ -90,5 +90,16 @@ ok(INV.every(id => DEFS[id]), `inventario (${INV.length} items válidos)`);
 const HB = html.match(/DEFAULT_HOTBAR = \[([^\]]+)\]/)[1].split(',').length;
 ok(HB === 9, 'hotbar de 9 slots');
 
+// 6. controles táctiles + reglas de ataque (sin romper el camino de PC)
+const nModule = (html.match(/<script type="module">/g) || []).length;
+ok(nModule === 1, 'un solo <script type="module">');
+for (const needle of ['const TOUCH', 'canAct()', 'touchControls', 'jumpTouch', 'placeTouch',
+    'atkTouch', 'btnFull', 'toggleFull', 'only-touch', 'needSword']) {
+  ok(html.includes(needle), `táctil/ataque: ${needle} presente`);
+}
+ok(/function tryLock\(\)\{\s*if \(TOUCH\) return;/.test(html), 'tryLock con guarda TOUCH');
+ok(!/hotbarIds\[sel\]!==SWORD/.test(html), 'sin bloqueo total sin espada (romper/poner/acariciar libres)');
+ok(html.includes('Necesitás la espada'), 'aviso al atacar sin espada');
+
 if (fails) { console.log(`\n💥 ${fails} chequeo(s) fallaron`); process.exit(1); }
 console.log('\n🎉 tests estáticos OK');

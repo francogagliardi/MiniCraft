@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Minicraft — mini minecraft lindo</title>
 <link rel="manifest" href="data:application/json,{%22name%22:%22Minicraft%22,%22short_name%22:%22Minicraft%22,%22start_url%22:%22.%22,%22display%22:%22standalone%22,%22background_color%22:%22%237ec8f7%22,%22theme_color%22:%22%237ec8f7%22,%22icons%22:[{%22src%22:%22data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect fill='%238bd450' x='0' y='0' width='100' height='100' rx='20'/%3E%3Crect fill='%239a6a45' x='0' y='55' width='100' height='45'/%3E%3C/svg%3E%22,%22sizes%22:%22512x512%22,%22type%22:%22image/svg+xml%22,%22purpose%22:%22any maskable%22}]}">
 <meta name="theme-color" content="#7ec8f7">
@@ -143,16 +143,22 @@
   #loading { font-weight:800; color:#2f6db3; }
   @media (max-width:700px){ .card{padding:30px 22px} .card h1{font-size:38px} #hint{display:none}
     .slot{width:38px;height:50px} .slot .cube{width:20px;height:20px} #invGrid{grid-template-columns:repeat(4,1fr)} }
-  @media (pointer: coarse) {
-    .slot{width:calc((100vw - 40px)/9);height:46px} .slot .cube{width:18px;height:18px} .slot .n{font-size:8px} .slot .key{font-size:8px}
-    #hotbar{bottom:8px;padding:6px;gap:4px;border-radius:14px}
-    #health{bottom:196px;font-size:18px}
-    #toast{bottom:236px}
-    #chatlog{bottom:250px;width:min(300px,58vw);left:12px}
-    #chatbox{bottom:80px;width:calc(100vw - 24px)} #chatbox input{font-size:16px} #chatSend{padding:12px 20px;font-size:14px}
-    .pill{font-size:11px;padding:6px 10px}
-    .controls .only-pc{display:none} .controls .only-touch{display:block}
-  }
+  /* layout táctil: va por body.touch (mismo flag que el JS), no por media query */
+  .only-touch{ display:none; }
+  body.touch .only-touch{ display:block; }
+  body.touch .slot{width:calc((100vw - 40px)/9);height:46px} body.touch .slot .cube{width:18px;height:18px}
+  body.touch .slot .n{font-size:8px} body.touch .slot .key{font-size:8px}
+  body.touch #hotbar{bottom:8px;padding:6px;gap:4px;border-radius:14px}
+  body.touch #health{bottom:196px;font-size:18px}
+  body.touch #toast{bottom:236px}
+  body.touch #chatlog{bottom:250px;width:min(300px,58vw);left:12px}
+  body.touch #chatbox{bottom:80px;width:calc(100vw - 24px)} body.touch #chatbox input{font-size:16px}
+  body.touch #chatSend{padding:12px 20px;font-size:14px}
+  body.touch .pill{font-size:11px;padding:6px 10px}
+  body.touch .controls .only-pc{display:none}
+  /* el navegador no debe robar gestos: el juego maneja sus propios punteros */
+  #game, #touchControls, #joystick, #stickBase, .touchButton{ touch-action:none; }
+  .touchButton{ -webkit-tap-highlight-color:transparent; user-select:none; -webkit-user-select:none; }
 #touchControls {
   position: fixed;
   inset: 0;
@@ -219,6 +225,7 @@
     <div class="pill" id="btnFly" title="Volar (F)">🕊 Volar: off</div>
     <div class="pill" id="btnSound" title="Sonido">🔊</div>
     <div class="pill only-touch" id="btnShadow" title="Sombras">☀️</div>
+    <div class="pill only-touch" id="btnFull" title="Pantalla completa">⛶</div>
     <div class="pill" id="btnReset" title="Mundo nuevo">↺ Nuevo</div>
   </div>
 </div>
@@ -261,8 +268,9 @@
       <div class="only-pc"><b>Click izq.</b> Romper / pegar</div><div class="only-pc"><b>Click der.</b> Poner bloque</div>
       <div class="only-pc"><b>E</b> Inventario</div><div class="only-pc"><b>Enter</b> Chat</div>
       <div class="only-touch"><b>👆 Joystick</b> Moverse</div><div class="only-touch"><b>👆 Arrastrar</b> Mirar</div>
-      <div class="only-touch"><b>👆 Tocar</b> Romper / Atacar</div><div class="only-touch"><b>🧱 Botón</b> Poner / Acciones</div>
-      <div class="only-touch"><b>⤒ Botón</b> Saltar</div><div class="only-touch"><b>🎒/💬 Botones</b> Inv. / Chat</div>
+      <div class="only-touch"><b>👆 Tocar</b> Romper / acariciar</div><div class="only-touch"><b>⚔️ Botón</b> Atacar (con espada)</div>
+      <div class="only-touch"><b>🧱 Botón</b> Poner bloque</div><div class="only-touch"><b>⤒ Botón</b> Saltar</div>
+      <div class="only-touch"><b>🎒/💬</b> Inv. / chat</div><div class="only-touch"><b>⛶ Arriba</b> Pantalla completa</div>
     </div>
     <div class="tiny" id="mpNote">Tip: acariciá a los animalitos 💕 · Cuidado con las caídas en modo jugador</div>
   </div>
@@ -286,8 +294,11 @@
 </div>
 
 <script type="module">
-// Controles táctiles
-const TOUCH = matchMedia('(hover: none) and (pointer: coarse)').matches || navigator.maxTouchPoints > 0;
+// Controles táctiles (?touch=1 fuerza táctil, ?pc=1 fuerza PC: útil para probar)
+const TOUCH = /[?&]touch=1/.test(location.search) ? true
+  : /[?&]pc=1/.test(location.search) ? false
+  : (matchMedia('(hover: none) and (pointer: coarse)').matches || navigator.maxTouchPoints > 0);
+document.body.classList.add(TOUCH ? 'touch' : 'pc');
 
 if (TOUCH) {
   // Agregar controles táctiles dinámicamente
@@ -299,6 +310,7 @@ if (TOUCH) {
       <div id="stickKnob"></div>
     </div>
     <div id="touchButtons">
+      <div class="touchButton" id="atkTouch">⚔️</div>
       <div class="touchButton" id="jumpTouch">⤒</div>
       <div class="touchButton" id="placeTouch">🧱</div>
       <div class="touchButton" id="flyTouch">🕊</div>
@@ -317,6 +329,7 @@ if (TOUCH) {
     jy: 0,
     clear() {
       this.jx = this.jy = 0;
+      touchVec.x = touchVec.y = 0;
       this.knob.style.transform = 'translate(28px, 28px)';
     },
   };
@@ -365,6 +378,8 @@ if (TOUCH) {
   }
 
   // Configurar botones táctiles
+  document.getElementById('atkTouch').addEventListener('pointerdown', () => { mouseDown[0] = true; resetBreak(); onLeftDown(); });
+  document.getElementById('atkTouch').addEventListener('pointerup', () => { mouseDown[0] = false; resetBreak(); });
   document.getElementById('jumpTouch').addEventListener('pointerdown', () => keys['Space'] = true);
   document.getElementById('jumpTouch').addEventListener('pointerup', () => keys['Space'] = false);
   document.getElementById('placeTouch').addEventListener('pointerdown', () => { mouseDown[2] = true; onRightDown(); });
@@ -1252,8 +1267,6 @@ function doBreak(pre){
   sfxBreak(); refreshAt(h.x,h.z); resetBreak();
 }
 function doPlace(){
-  if(hotbarIds[sel]!==SWORD) { toast('⚔️ ¡Solo podés atacar con espada!'); return; }
-if(hotbarIds[sel]===SWORD){ swordAttack(); return; }
   const h=raycast(); if(!h) return;
   const id=hotbarIds[sel], dd=DEFS[id];
   const x=h.x+h.nx, y=h.y+h.ny, z=h.z+h.nz;
@@ -1284,19 +1297,16 @@ function swordAttack(){
   else { av.a.flash=.25; burst(av.a.g.position.x-.5,av.a.g.position.y+1.4,av.a.g.position.z-.5,0xffd94f,10); }
   toast(`⚔️ ¡Al medio corazón a ${av.a.name}!`);
 }
-function hitRemote(a){
-  sfxHit();
-  const dx=a.g.position.x-player.pos.x, dz=a.g.position.z-player.pos.z;
-  const l=Math.hypot(dx,dz)||1;
-  if(mp) netSend({ t:'hit', id:a.id, dmg:2, dx:dx/l, dz:dz/l });
-  else { a.flash=.18; burst(a.g.position.x-.5,a.g.position.y+1.4,a.g.position.z-.5,0xff4444,8); }
-  toast(`⚔️ ¡Toma, ${a.name}!`);
+let noSwordT=0;
+function needSword(){
+  // solo avisa cada 2s para no spamear el toast a cada click
+  const now=performance.now()/1000;
+  if(now-noSwordT>2){ noSwordT=now; toast('⚔️ Necesitás la espada en la mano para atacar'); }
 }
 function onLeftDown(){
-  if(hotbarIds[sel]!==SWORD) { toast('⚔️ ¡Solo podés atacar con espada!'); return; }
-if(hotbarIds[sel]===SWORD){ swordAttack(); lastAct=performance.now(); return; }
+  if(hotbarIds[sel]===SWORD){ swordAttack(); lastAct=performance.now(); return; }
   const av=avatarHit();
-  if(av){ hitRemote(av.a); lastAct=performance.now(); return; }
+  if(av){ needSword(); lastAct=performance.now(); return; }
   const an=animalHit();
   if(an){ pet(an.a); lastAct=performance.now(); return; }
   if(isAdmin()){ doBreak(); lastAct=performance.now(); }
@@ -1309,8 +1319,7 @@ function greetRemote(a){
 }
 let rAction='place'; // qué hace mantener el clic derecho: place | greet | pet | attack
 function onRightDown(){
-  if(hotbarIds[sel]!==SWORD) { toast('⚔️ ¡Solo podés atacar con espada!'); return; }
-if(hotbarIds[sel]===SWORD){ rAction='attack'; swordAttack(); lastAct=performance.now(); return; }
+  if(hotbarIds[sel]===SWORD){ rAction='attack'; swordAttack(); lastAct=performance.now(); return; }
   const av=avatarHit();
   if(av){ rAction='greet'; greetRemote(av.a); lastAct=performance.now(); return; }
   const an=animalHit();
@@ -1356,33 +1365,44 @@ addEventListener('mousemove',e=>{
   player.yaw-=e.movementX*.0024;
   player.pitch=Math.max(-1.55,Math.min(1.55,player.pitch-e.movementY*.0024));
 });
-// Touch look - drag on canvas to look around
-let lookTouchId = null;
+// Touch: arrastrar = mirar, toque rápido = atacar/picar (click izq), mantener = picar
+let lookTouchId = null, tapT0 = 0, tapX = 0, tapY = 0, lookLX = 0, lookLY = 0, tapMoved = false, holdTimer = null;
 canvas.addEventListener('pointerdown', (e) => {
   if (!TOUCH || e.pointerType !== 'touch') return;
   if (state !== 'play' || dead) return;
   // Ignore if it's on UI elements (buttons, joystick)
   if (e.target.closest('#touchControls') || e.target.closest('#chatbox') || e.target.closest('#inv')) return;
   lookTouchId = e.pointerId;
-  canvas.setPointerCapture(e.pointerId);
+  tapT0 = performance.now(); tapX = lookLX = e.clientX; tapY = lookLY = e.clientY; tapMoved = false;
+  try { canvas.setPointerCapture(e.pointerId); } catch (err) {}
+  clearTimeout(holdTimer);
+  holdTimer = setTimeout(() => {
+    if (lookTouchId === e.pointerId && !tapMoved && state === 'play' && !dead) {
+      mouseDown[0] = true; resetBreak(); onLeftDown(); // mantener = picar progresivo
+    }
+  }, 260);
   e.preventDefault();
 });
 canvas.addEventListener('pointermove', (e) => {
   if (!TOUCH || e.pointerType !== 'touch' || lookTouchId !== e.pointerId) return;
   if (state !== 'play' || dead) return;
-  player.yaw -= e.movementX * .0032;
-  player.pitch = Math.max(-1.55, Math.min(1.55, player.pitch - e.movementY * .0032));
+  if (Math.hypot(e.clientX - tapX, e.clientY - tapY) > 12) tapMoved = true;
+  const dx = e.clientX - lookLX, dy = e.clientY - lookLY;
+  lookLX = e.clientX; lookLY = e.clientY;
+  player.yaw -= dx * .0042;
+  player.pitch = Math.max(-1.55, Math.min(1.55, player.pitch - dy * .0042));
   e.preventDefault();
 });
-canvas.addEventListener('pointerup', (e) => {
+function endLookTouch(e) {
   if (!TOUCH || e.pointerType !== 'touch' || lookTouchId !== e.pointerId) return;
+  clearTimeout(holdTimer);
+  const quick = performance.now() - tapT0 < 300;
   lookTouchId = null;
-  canvas.releasePointerCapture(e.pointerId);
-});
-canvas.addEventListener('pointercancel', (e) => {
-  if (!TOUCH || e.pointerType !== 'touch' || lookTouchId !== e.pointerId) return;
-  lookTouchId = null;
-});
+  if (mouseDown[0]) { mouseDown[0] = false; resetBreak(); } // venía picando por hold
+  else if (quick && !tapMoved && state === 'play' && !dead) onLeftDown(); // toque = click izq
+}
+canvas.addEventListener('pointerup', endLookTouch);
+canvas.addEventListener('pointercancel', endLookTouch);
 
 /* ============ HOTBAR + INVENTARIO ============ */
 const hotbarEl=document.getElementById('hotbar');
@@ -1589,6 +1609,15 @@ document.getElementById('btnShadow').onclick=e=>{e.stopPropagation();
   e.target.textContent=renderer.shadowMap.enabled?'☀️':'🌑';
   localStorage.setItem('mc-shadows', renderer.shadowMap.enabled ? '1' : '0');
 };
+function toggleFull(){
+  try{
+    if(document.fullscreenElement||document.webkitFullscreenElement)
+      (document.exitFullscreen||document.webkitExitFullscreen)?.call(document);
+    else
+      (document.documentElement.requestFullscreen||document.documentElement.webkitRequestFullscreen)?.call(document.documentElement);
+  }catch(e){}
+}
+document.getElementById('btnFull').onclick=e=>{e.stopPropagation();toggleFull();};
 document.getElementById('btnReset').onclick=e=>{e.stopPropagation();
   if(mp){ toast('↺ Pedile al dueño del server que borre world.json'); return; }
   if(confirm('¿Generar un mundo nuevo? Se borra tu construcción.')){ localStorage.removeItem(SAVE_KEY); location.reload(); }};
