@@ -17,7 +17,6 @@ ENV PORT=3000 \
     WORLD_FILE=/data/world.json
 
 EXPOSE 3000
-VOLUME ["/data"]
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD sh -c 'wget -qO- http://127.0.0.1:${PORT:-3000}/ > /dev/null 2>&1 || exit 1'
