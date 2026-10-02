@@ -859,7 +859,15 @@ function doorAssets(){
 function doorAngle(k, b){
   const a = doorAnims.get(k);
   const t = a ? a.from+(a.to-a.from)*(1-Math.pow(1-Math.min(1,a.p),3)) : (doorOpen(b)?1:0);
-  return t*DOOR_OPEN_ANG;
+  // la bisagra derecha gira espejado para que la puerta doble abra junta
+  return t*DOOR_OPEN_ANG*(doorRight(b)?-1:1);
+}
+// celdas de una puerta de 2 bloques: la clickeada + su otra mitad
+function doorCells(x,y,z){
+  const cells=[[x,y,z]];
+  if(y+1<H&&isDoor(get(x,y+1,z))) cells.push([x,y+1,z]);
+  else if(y>0&&isDoor(get(x,y-1,z))) cells.push([x,y-1,z]);
+  return cells;
 }
 function buildDoors(){
   doorAssets();
@@ -906,13 +914,26 @@ function doorIdFor(x,y,z,id){
 function toggleDoor(x,y,z){
   const b=get(x,y,z);
   if(!isDoor(b)) return false;
-  const toOpen=!doorOpen(b), r=doorRight(b);
-  const nv=!r?(toOpen?DOOR_OPEN:DOOR):(toOpen?DOOR2_OPEN:DOOR2);
-  const k=x+','+y+','+z;
-  editBlock(x,y,z,nv);
-  doorAnims.set(k,{p:0,from:toOpen?0:1,to:toOpen?1:0});
+  const toOpen=!doorOpen(b);
+  for(const [cx,cy,cz] of doorCells(x,y,z)){
+    const cb=get(cx,cy,cz), r=doorRight(cb);
+    const nv=!r?(toOpen?DOOR_OPEN:DOOR):(toOpen?DOOR2_OPEN:DOOR2);
+    editBlock(cx,cy,cz,nv);
+    doorAnims.set(cx+','+cy+','+cz,{p:0,from:toOpen?0:1,to:toOpen?1:0});
+  }
   sfxDoor(toOpen);
   return true;
+}
+// puertas viejas de 1 bloque (solo local): les crece la mitad de arriba
+function normalizeDoors(){
+  for(let y=0;y<H-1;y++) for(let z=0;z<W;z++) for(let x=0;x<W;x++){
+    const b=world[widx(x,y,z)];
+    if(!isDoor(b)) continue;
+    const below=y>0?world[widx(x,y-1,z)]:-1;
+    if(isDoor(below)&&doorRight(below)===doorRight(b)) continue; // es mitad superior
+    const a=world[widx(x,y+1,z)];
+    if(a===AIR||a===WATER){ world[widx(x,y+1,z)]=b; edits.push([widx(x,y+1,z),b]); }
+  }
 }
 function editBlock(x,y,z,v,remote=false){
   if(!inB(x,y,z)) return;
@@ -1373,11 +1394,22 @@ function doBreak(pre){
   const h=pre||raycast(); if(!h) return;
   const d=DEFS[h.b];
   if(d.unbreakable){ toast('🪨 La roca madre es indestructible'); return; }
-  if(!d.flower) burst(h.x,h.y,h.z,blockColor(h.b));
-  doorAnims.delete(h.x+','+h.y+','+h.z);
-  rawSet(h.x,h.y,h.z,AIR);
-  if(!mp){ edits.push([widx(h.x,h.y,h.z),AIR]); saveSoon(); }
-  else netSend({ t:'edit', x:h.x, y:h.y, z:h.z, v:AIR });
+  if(isDoor(h.b)){
+    // romper una mitad saca la puerta entera (2 bloques)
+    for(const [cx,cy,cz] of doorCells(h.x,h.y,h.z)){
+      burst(cx,cy,cz,blockColor(h.b));
+      doorAnims.delete(cx+','+cy+','+cz);
+      rawSet(cx,cy,cz,AIR);
+      if(!mp){ edits.push([widx(cx,cy,cz),AIR]); }
+      else netSend({ t:'edit', x:cx, y:cy, z:cz, v:AIR });
+    }
+    if(!mp) saveSoon();
+  } else {
+    if(!d.flower) burst(h.x,h.y,h.z,blockColor(h.b));
+    rawSet(h.x,h.y,h.z,AIR);
+    if(!mp){ edits.push([widx(h.x,h.y,h.z),AIR]); saveSoon(); }
+    else netSend({ t:'edit', x:h.x, y:h.y, z:h.z, v:AIR });
+  }
   sfxBreak(); refreshAt(h.x,h.z); resetBreak();
 }
 function doPlace(){
@@ -1393,8 +1425,17 @@ function doPlace(){
     const p=player.pos;
     if(x+1>p.x-.3&&x<p.x+.3&&z+1>p.z-.3&&z<p.z+.3&&y+1>p.y&&y<p.y+1.8){ toast('⛔ Ahí estás vos'); return; }
   }
-  editBlock(x,y,z,doorIdFor(x,y,z,id)); sfxPlace();
-  if(id===DOOR) toast('🚪 Puerta puesta: click derecho sobre ella para abrir/cerrar');
+  if(id===DOOR){
+    // la puerta mide 2 bloques: necesita la celda de arriba libre
+    if(y+1>=H||![AIR,WATER].includes(get(x,y+1,z))){ toast('🚪 Sin lugar arriba: la puerta mide 2 bloques'); return; }
+    const p=player.pos;
+    if(x+1>p.x-.3&&x<p.x+.3&&z+1>p.z-.3&&z<p.z+.3&&y+2>p.y&&y+1<p.y+1.8){ toast('⛔ Ahí estás vos'); return; }
+    const pid=doorIdFor(x,y,z,id);
+    editBlock(x,y,z,pid); editBlock(x,y+1,z,pid); sfxPlace();
+    toast(pid!==DOOR?'🚪 ¡Puerta doble! Click derecho para abrir/cerrar':'🚪 Puerta de 2 bloques: click derecho para abrir/cerrar');
+    return;
+  }
+  editBlock(x,y,z,id); sfxPlace();
 }
 let lastSword=0;
 function swordAttack(){
@@ -1809,6 +1850,7 @@ async function startGame(wantedMode){
     chatMsg('🌿',`Conectado como ${myName} (${mode}) · ${d.players.length} jugador(es) en línea`);
   } else {
     if(!load()) genWorld();
+    normalizeDoors(); // puertas viejas de 1 bloque crecen a 2 (mundo intacto)
     buildAllChunks(); buildGlobals();
     if(location.protocol.indexOf('http')===0) toast('🔌 Sin servidor: modo solitario');
   }
