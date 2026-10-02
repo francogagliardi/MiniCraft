@@ -20,6 +20,8 @@
     background:radial-gradient(ellipse at center, transparent 62%, rgba(30,60,120,.18) 100%); }
   #dmg { position:fixed; inset:0; pointer-events:none; z-index:6; opacity:0;
     background:radial-gradient(ellipse at center, rgba(255,0,0,.12) 40%, rgba(220,0,0,.5) 100%); transition:opacity .1s; }
+  #water { position:fixed; inset:0; pointer-events:none; z-index:7; opacity:0; transition:opacity .25s;
+    background:linear-gradient(180deg, rgba(35,130,225,.42), rgba(8,60,150,.62)); }
   #cross { position:fixed; left:50%; top:50%; width:22px; height:22px; transform:translate(-50%,-50%);
     z-index:10; pointer-events:none; transition:transform .12s; }
   #cross::before, #cross::after { content:''; position:absolute; background:#fff; border-radius:3px;
@@ -215,6 +217,7 @@
 <canvas id="game"></canvas>
 <div id="vignette"></div>
 <div id="dmg"></div>
+<div id="water"></div>
 <div id="cross"></div>
 <div id="cdRing"></div>
 <div id="hitm"></div>
@@ -279,7 +282,7 @@
 <div class="overlay hidden" id="pause">
   <div class="card">
     <h1 style="font-size:42px">En pausa ☁️</h1>
-    <p class="sub">El mundo te espera. Hacé click para seguir.</p>
+    <p class="sub">El mundo te espera. Hacé click para seguir. (<b>Enter</b> abre el chat)</p>
     <button class="btn btn-player" id="btnResume" style="width:auto;padding:14px 50px">Seguir jugando</button>
     <div class="tiny">Tu mundo se guarda solo 💾</div>
   </div>
@@ -401,7 +404,8 @@ import * as THREE from 'three';
 const W = 160, H = 40, CH = 16, WATER_Y = 10;
 const AIR=0, GRASS=1, DIRT=2, STONE=3, LOG=4, PLANKS=5, LEAVES=6, SAND=7, GLASS=8,
       BRICK=9, GLOW=10, BEDROCK=11, WATER=12, FLOWER_R=13, FLOWER_Y=14,
-      COBBLE=15, WOOL=16, SNOW=17, CLAY=18, OBSIDIAN=19, PUMPKIN=20, BOOKS=21, MELON=22;
+      COBBLE=15, WOOL=16, SNOW=17, CLAY=18, OBSIDIAN=19, PUMPKIN=20, BOOKS=21, MELON=22,
+      DOOR=23, DOOR_OPEN=24, HAY=25, SBRICK=26, DOOR2=27, DOOR2_OPEN=28;
 const SWORD = 100; // item (no es bloque, no se puede poner en el mundo)
 const SAVE_KEY = 'minicraft-save-v2';
 
@@ -428,9 +432,15 @@ const DEFS = {
   [PUMPKIN]:{ name:'Calabaza 🎃',css:'linear-gradient(135deg,#f5a742,#c9721b)', color:0xe08a2d, cube:1, opaque:1, hard:1, tiles:{top:22,side:21,bottom:22} },
   [BOOKS]:  { name:'Librero 📚', css:'linear-gradient(135deg,#c98d5f,#7a4a28)', color:0xa06a3c, cube:1, opaque:1, hard:1.2, tiles:{top:8,side:23,bottom:8} },
   [MELON]:  { name:'Melón 🍉',   css:'linear-gradient(135deg,#7ed957,#2f8f46)', color:0x5cb85c, cube:1, opaque:1, hard:.8, tiles:{top:24,side:25,bottom:24} },
+  [DOOR]:   { name:'Puerta 🚪',  css:'linear-gradient(135deg,#d8b078,#8a5f30)', color:0xcfa672, door:1, hard:.9, tiles:{top:8,side:26,bottom:8} },
+  [DOOR_OPEN]:{ name:'Puerta abierta', css:'linear-gradient(135deg,#d8b078,#8a5f30)', color:0xcfa672, door:1, open:1, hard:.9, tiles:{top:8,side:26,bottom:8} },
+  [HAY]:    { name:'Fardo 🌾',   css:'linear-gradient(135deg,#e8c53a,#b8922a)', color:0xd9b832, cube:1, opaque:1, hard:.6, tiles:{top:28,side:27,bottom:28} },
+  [SBRICK]: { name:'Piedra tallada 🧱', css:'linear-gradient(135deg,#b9bec7,#7e848e)', color:0x9aa0a8, cube:1, opaque:1, hard:2, tiles:{top:29,side:29,bottom:29} },
+  [DOOR2]:  { name:'Puerta 🚪',  css:'linear-gradient(135deg,#d8b078,#8a5f30)', color:0xcfa672, door:1, hard:.9, tiles:{top:8,side:26,bottom:8} },
+  [DOOR2_OPEN]:{ name:'Puerta abierta', css:'linear-gradient(135deg,#d8b078,#8a5f30)', color:0xcfa672, door:1, open:1, hard:.9, tiles:{top:8,side:26,bottom:8} },
   [SWORD]:  { name:'Espada ⚔️',  css:'linear-gradient(135deg,#f4f6fa 0 60%,#c9a13b 60% 72%,#8a94a8 72% 100%)', color:0xdfe6f2, item:'sword' },
 };
-const INVENTORY = [GRASS,DIRT,STONE,COBBLE,LOG,PLANKS,BOOKS,LEAVES,SAND,SNOW,CLAY,WOOL,GLASS,BRICK,OBSIDIAN,PUMPKIN,MELON,GLOW,SWORD,FLOWER_R,FLOWER_Y];
+const INVENTORY = [GRASS,DIRT,STONE,COBBLE,SBRICK,LOG,PLANKS,BOOKS,LEAVES,SAND,SNOW,CLAY,WOOL,GLASS,BRICK,OBSIDIAN,PUMPKIN,MELON,HAY,GLOW,DOOR,SWORD,FLOWER_R,FLOWER_Y];
 const DEFAULT_HOTBAR = [GRASS,DIRT,STONE,PLANKS,LOG,LEAVES,GLASS,BRICK,COBBLE];
 
 /* ============ MODO / VIDA ============ */
@@ -516,6 +526,22 @@ atlasCanvas.width = 128; atlasCanvas.height = 64;
   tile(24, c => { c.fillStyle='#a8e063'; c.fillRect(0,0,16,16); speckle(c,0,['#7ed957','#c4f09a'],30); });
   tile(25, c => { c.fillStyle='#4fae4f'; c.fillRect(0,0,16,16);
     c.fillStyle='#2f7f33'; for(let x=0;x<16;x+=3) c.fillRect(x,0,1,16); speckle(c,0,['#7ed957'],22); });
+  tile(26, c => { c.fillStyle='#cfa672'; c.fillRect(0,0,16,16);
+    c.fillStyle='#8a5f30'; c.fillRect(0,0,16,1); c.fillRect(0,15,16,1); c.fillRect(0,0,1,16); c.fillRect(15,0,1,16);
+    c.fillRect(7,0,2,16);
+    c.fillStyle='#bfe3ff'; c.fillRect(2,2,4,4); c.fillRect(10,2,4,4);
+    c.fillStyle='#5d4126'; c.fillRect(11,10,2,2);
+    speckle(c,0,['#b78d55','#e0bc85'],22); });
+  tile(27, c => { c.fillStyle='#d9b832'; c.fillRect(0,0,16,16);
+    c.fillStyle='#b8922a'; c.fillRect(0,3,16,2); c.fillRect(0,11,16,2);
+    speckle(c,0,['#e8c53a','#a8821f'],30); });
+  tile(28, c => { c.fillStyle='#e8c53a'; c.fillRect(0,0,16,16);
+    c.strokeStyle='#b8922a';
+    for(let r=7;r>0;r-=2) c.strokeRect(8-r,8-r,r*2,r*2);
+    speckle(c,0,['#d9b832'],18); });
+  tile(29, c => { c.fillStyle='#9aa0a8'; c.fillRect(0,0,16,16);
+    c.fillStyle='#bcc1c8'; for(let y=0;y<16;y+=4) for(let x=0;x<16;x+=8) c.fillRect(x+((y/4)%2)*4+1, y+1, 6, 2);
+    speckle(c,0,['#7e848e'],20); });
 }
 const atlasTex = new THREE.CanvasTexture(atlasCanvas);
 atlasTex.magFilter = THREE.NearestFilter; atlasTex.minFilter = THREE.NearestFilter;
@@ -658,7 +684,9 @@ const inB = (x,y,z) => x>=0 && x<W && z>=0 && z<W && y>=0 && y<H;
 const get = (x,y,z) => inB(x,y,z) ? world[widx(x,y,z)] : AIR;
 const rawSet = (x,y,z,v) => { if(inB(x,y,z)) world[widx(x,y,z)] = v; };
 function isOpaque(b){ const d = DEFS[b]; return d && d.cube && !!d.opaque; }
-function isSolid(b){ const d = DEFS[b]; return !!d && (d.cube || d.glow) && b!==AIR; }
+function isSolid(b){ const d = DEFS[b]; if(!d||b===AIR) return false;
+  if(d.door) return !d.open; // cerrada traba, abierta deja pasar
+  return !!(d.cube || d.glow); }
 const solidAt = (x,y,z) => {
   if(y<0) return true;
   if(!inB(x,y,z)) return x<0||x>=W||z<0||z>=W;
@@ -758,7 +786,7 @@ function buildChunk(cx,cz){
   const x0=cx*CH, z0=cz*CH;
   for(let y=0;y<H;y++) for(let z=z0;z<z0+CH;z++) for(let x=x0;x<x0+CH;x++){
     const b=world[widx(x,y,z)], d=DEFS[b];
-    if(!d || !d.cube || !d.opaque) continue;
+    if(!d || !d.cube || !d.opaque || d.door) continue;
     for(let f=0;f<6;f++){
       const F=FACES[f], nb=get(x+F.d[0],y+F.d[1],z+F.d[2]);
       if(isOpaque(nb)) continue;
@@ -801,6 +829,7 @@ function buildGlobals(){
   if(transMesh){ transMesh.renderOrder=2; scene.add(transMesh); }
   flowerMesh=F.build(matFlower,{shadow:false}); if(flowerMesh) scene.add(flowerMesh);
   glowMesh=G.build(matGlow,{shadow:false}); if(glowMesh) scene.add(glowMesh);
+  buildDoors();
 }
 function refreshAt(x,z){
   const cx=(x/CH)|0, cz=(z/CH)|0;
@@ -810,6 +839,80 @@ function refreshAt(x,z){
   if(z%CH===0&&cz>0) buildChunk(cx,cz-1);
   if(z%CH===15&&cz<W/CH-1) buildChunk(cx,cz+1);
   buildGlobals();
+}
+/* ============ PUERTAS (bisagra animada) ============ */
+// Las puertas no van al mesh de chunks: son paneles finos con pivote que
+// rota al abrir/cerrar. Cerrada = sólida, abierta = deja pasar.
+const DOOR_OPEN_ANG = -1.75; // ~-100°
+const doorMeshes = new Map(); // "x,y,z" -> pivot Group
+const doorAnims = new Map();  // "x,y,z" -> {p, from, to} (0=cerrada,1=abierta)
+let doorGeo = null, doorMat = null;
+function doorAssets(){
+  if(doorGeo) return;
+  doorGeo = new THREE.BoxGeometry(.94,.98,.1);
+  // llevar todos los UVs al tile 26 de la puerta
+  const [u0,v0,u1,v1] = tileUV(26);
+  const uv = doorGeo.attributes.uv;
+  for(let i=0;i<uv.count;i++) uv.setXY(i, u0+uv.getX(i)*(u1-u0), v0+uv.getY(i)*(v1-v0));
+  doorMat = new THREE.MeshLambertMaterial({ map:atlasTex });
+}
+function doorAngle(k, b){
+  const a = doorAnims.get(k);
+  const t = a ? a.from+(a.to-a.from)*(1-Math.pow(1-Math.min(1,a.p),3)) : (doorOpen(b)?1:0);
+  return t*DOOR_OPEN_ANG;
+}
+function buildDoors(){
+  doorAssets();
+  for(const [,pivot] of doorMeshes) scene.remove(pivot);
+  doorMeshes.clear();
+  for(let y=0;y<H;y++) for(let z=0;z<W;z++) for(let x=0;x<W;x++){
+    const b=world[widx(x,y,z)];
+    if(!isDoor(b)) continue;
+    const k=x+','+y+','+z, r=doorRight(b);
+    const pivot=new THREE.Group();
+    pivot.position.set(x+(r?0.97:0.03),y,z+.5); // bisagra al borde externo
+    const m=new THREE.Mesh(doorGeo,doorMat);
+    m.position.set(r?-0.47:0.47,.5,0); m.castShadow=true; m.receiveShadow=true;
+    pivot.add(m); pivot.rotation.y=doorAngle(k,b);
+    scene.add(pivot); doorMeshes.set(k,pivot);
+  }
+}
+function tickDoors(dt){
+  if(!doorAnims.size) return;
+  for(const [k,a] of [...doorAnims]){
+    a.p+=dt/.28;
+    const piv=doorMeshes.get(k);
+    if(!piv){ doorAnims.delete(k); continue; }
+    const e=1-Math.pow(1-Math.min(1,a.p),3);
+    piv.rotation.y=(a.from+(a.to-a.from)*e)*DOOR_OPEN_ANG;
+    if(a.p>=1) doorAnims.delete(k);
+  }
+}
+function isDoor(b){ return b===DOOR||b===DOOR_OPEN||b===DOOR2||b===DOOR2_OPEN; }
+function doorOpen(b){ return b===DOOR_OPEN||b===DOOR2_OPEN; }
+function doorRight(b){ return b===DOOR2||b===DOOR2_OPEN; }
+// Al poner una puerta al lado de otra (eje X) se espeja la bisagra para
+// formar puerta doble estilo Minecraft: bisagras a los bordes externos.
+function doorIdFor(x,y,z,id){
+  if(id!==DOOR) return id;
+  let pid=DOOR;
+  for(const nx of [x-1,x+1]){
+    const w=get(nx,y,z);
+    if(w===DOOR||w===DOOR_OPEN){ pid=DOOR2; break; }
+    if(w===DOOR2||w===DOOR2_OPEN){ pid=DOOR; break; }
+  }
+  return pid;
+}
+function toggleDoor(x,y,z){
+  const b=get(x,y,z);
+  if(!isDoor(b)) return false;
+  const toOpen=!doorOpen(b), r=doorRight(b);
+  const nv=!r?(toOpen?DOOR_OPEN:DOOR):(toOpen?DOOR2_OPEN:DOOR2);
+  const k=x+','+y+','+z;
+  editBlock(x,y,z,nv);
+  doorAnims.set(k,{p:0,from:toOpen?0:1,to:toOpen?1:0});
+  sfxDoor(toOpen);
+  return true;
 }
 function editBlock(x,y,z,v,remote=false){
   if(!inB(x,y,z)) return;
@@ -842,6 +945,7 @@ const sfxBaa=()=>{ tone(430,330,.28,'triangle',.14); tone(540,420,.22,'sine',.08
 const sfxHurt=()=>tone(200,70,.2,'sawtooth',.2);
 const sfxDie=()=>{ tone(300,50,.6,'sawtooth',.22); };
 const sfxHit=()=>tone(500,200,.1,'square',.16);
+const sfxDoor=(open)=>{ tone(open?280:520, open?640:240, .16,'triangle',.16); tone(open?420:340, open?760:200, .12,'sine',.08,.05); };
 
 /* ============ JUGADOR ============ */
 const player={ pos:new THREE.Vector3(), vel:new THREE.Vector3(), yaw:Math.PI, pitch:-.12, fly:false, onGround:false };
@@ -852,13 +956,15 @@ if (TOUCH) { // Simplificar visual en táctil
   document.getElementById('hint').style.display = 'none';
 }
 addEventListener('keydown', e=>{
+  if(e.target && (e.target.tagName==='INPUT'||e.target.tagName==='TEXTAREA')) return;
   if(e.code==='Space') e.preventDefault();
   keys[e.code]=true;
-  if(e.target && (e.target.tagName==='INPUT')) return;
   if(e.code==='Enter'){
-    if(state==='play'&&locked()) { openChat(); e.stopPropagation(); }
+    if((state==='play'||state==='pause')&&!dead) { openChat(); e.stopPropagation(); }
     return;
   }
+  if(e.code==='Escape'&&state==='chat'){ closeChat(false); return; }
+  if(e.code==='KeyE'&&(state==='play'||state==='pause')&&!dead){ openInv(); return; }
   if(state!=='play'||!canAct()||dead) return;
   if(e.code.startsWith('Digit')){ const n=+e.code.slice(5); if(n>=1&&n<=9) select(n-1); }
   if(e.code==='KeyF'&&isAdmin()) toggleFly();
@@ -988,7 +1094,7 @@ function raycast(maxD=8){
     else { z+=sz; t=dist.z; dist.z+=tD.z; nx=0;ny=0;nz=-sz; }
     if(t>maxD) return null;
     const b=get(x,y,z), dd=DEFS[b];
-    if(dd&&(dd.cube||dd.flower||dd.glow)) return {x,y,z,nx,ny,nz,b,dist:t};
+    if(dd&&(dd.cube||dd.flower||dd.glow||dd.door)) return {x,y,z,nx,ny,nz,b,dist:t};
   }
   return null;
 }
@@ -1268,6 +1374,7 @@ function doBreak(pre){
   const d=DEFS[h.b];
   if(d.unbreakable){ toast('🪨 La roca madre es indestructible'); return; }
   if(!d.flower) burst(h.x,h.y,h.z,blockColor(h.b));
+  doorAnims.delete(h.x+','+h.y+','+h.z);
   rawSet(h.x,h.y,h.z,AIR);
   if(!mp){ edits.push([widx(h.x,h.y,h.z),AIR]); saveSoon(); }
   else netSend({ t:'edit', x:h.x, y:h.y, z:h.z, v:AIR });
@@ -1286,7 +1393,8 @@ function doPlace(){
     const p=player.pos;
     if(x+1>p.x-.3&&x<p.x+.3&&z+1>p.z-.3&&z<p.z+.3&&y+1>p.y&&y<p.y+1.8){ toast('⛔ Ahí estás vos'); return; }
   }
-  editBlock(x,y,z,id); sfxPlace();
+  editBlock(x,y,z,doorIdFor(x,y,z,id)); sfxPlace();
+  if(id===DOOR) toast('🚪 Puerta puesta: click derecho sobre ella para abrir/cerrar');
 }
 let lastSword=0;
 function swordAttack(){
@@ -1327,6 +1435,8 @@ function greetRemote(a){
 let rAction='place'; // qué hace mantener el clic derecho: place | greet | pet | attack
 function onRightDown(){
   if(hotbarIds[sel]===SWORD){ rAction='attack'; swordAttack(); lastAct=performance.now(); return; }
+  const dh=raycast();
+  if(dh&&isDoor(dh.b)){ rAction='door'; toggleDoor(dh.x,dh.y,dh.z); lastAct=performance.now(); return; }
   const av=avatarHit();
   if(av){ rAction='greet'; greetRemote(av.a); lastAct=performance.now(); return; }
   const an=animalHit();
@@ -1448,14 +1558,20 @@ function refreshInvMarks(){
     el.classList.toggle('inSlot', hotbarIds.includes(+el.dataset.id)));
 }
 function openInv(){
-  if(state!=='play') return;
-  state='inv'; document.exitPointerLock?.();
+  if(state!=='play'&&state!=='pause') return;
+  if(dead) return;
+  state='inv'; pause.classList.add('hidden'); document.exitPointerLock?.();
   document.getElementById('invSub').innerHTML=
     `Clic en un bloque para ponerlo en tu slot actual: <b>${sel+1} · ${DEFS[hotbarIds[sel]].name}</b>`;
   invEl.classList.remove('hidden');
 }
 function closeInv(){
-  invEl.classList.add('hidden'); if(!dead){ state='play'; tryLock(); } saveSoon();
+  invEl.classList.add('hidden');
+  if(!dead){ state='play'; tryLock();
+    setTimeout(()=>{ if(state==='play'&&!TOUCH&&!locked()&&!dead){
+      state='pause'; pause.classList.remove('hidden'); } },350);
+  }
+  saveSoon();
 }
 document.getElementById('invClose').onclick=closeInv;
 
@@ -1469,8 +1585,9 @@ function chatMsg(from,text){
   setTimeout(()=>{ d.style.transition='opacity 1s'; d.style.opacity=0; setTimeout(()=>d.remove(),1000); },9000);
 }
 function openChat(){
-  if(state!=='play') return;
-  state='chat'; document.exitPointerLock?.();
+  if(state!=='play'&&state!=='pause') return;
+  if(dead) return;
+  state='chat'; pause.classList.add('hidden'); document.exitPointerLock?.();
   const box=document.getElementById('chatbox'), inp=document.getElementById('chatinput');
   box.style.display='block'; inp.value='';
   setTimeout(()=>inp.focus(),50);
@@ -1484,7 +1601,12 @@ function closeChat(sendIt){
     else chatMsg(myName,text);
   }
   inp.value=''; inp.blur();
-  if(!dead){ state='play'; tryLock(); }
+  if(!dead){ state='play'; tryLock();
+    // si el navegador rechaza el lock (cooldown tras Esc), no quedarse
+    // en 'play' sin lock (chat muerto): mostrar pausa para reenganchar.
+    setTimeout(()=>{ if(state==='play'&&!TOUCH&&!locked()&&!dead){
+      state='pause'; pause.classList.remove('hidden'); } },350);
+  }
 }
 document.getElementById('chatinput').addEventListener('keydown',e=>{
   e.stopPropagation();
@@ -1533,7 +1655,9 @@ function setupNetHandlers(){
       if(a){ a.target.set(m.p[0],m.p[1],m.p[2]); a.yaw=m.yaw;
         if(Number.isFinite(m.hp)&&m.hp!==a.hp){ a.hp=m.hp; drawBar(a); }
         if((m.dead===1)!==a.dead){ a.dead=m.dead===1; } } }
-    else if(m.t==='pedit'){ rawSet(m.x,m.y,m.z,m.v); refreshAt(m.x,m.z); }
+    else if(m.t==='pedit'){ const was=get(m.x,m.y,m.z); rawSet(m.x,m.y,m.z,m.v); refreshAt(m.x,m.z);
+      if(isDoor(was)&&isDoor(m.v)&&doorOpen(was)!==doorOpen(m.v)){
+        doorAnims.set(m.x+','+m.y+','+m.z,{p:0,from:doorOpen(was)?1:0,to:doorOpen(m.v)?1:0}); } }
     else if(m.t==='join'){ addRemote(m); chatMsg('🌿',`${m.name} se unió`); }
     else if(m.t==='leave'){ removeRemote(m.id); }
     else if(m.t==='chat'){ chatMsg(m.from,m.text); tone(700,900,.07,'sine',.1); }
@@ -1584,8 +1708,9 @@ function tryLock(){
 canvas.addEventListener('click',()=>{ if(started&&state==='play'&&!locked()&&!dead) tryLock(); });
 document.addEventListener('pointerlockchange',()=>{
   mouseDown={0:false,2:false}; rAction='place'; resetBreak();
-  if(locked()){ state='play'; menu.classList.add('hidden'); pause.classList.add('hidden');
-    invEl.classList.add('hidden'); document.getElementById('chatbox').style.display='none'; }
+  if(locked()){ menu.classList.add('hidden'); pause.classList.add('hidden');
+    if(state==='pause') state='play';
+    if(state==='play'){ invEl.classList.add('hidden'); document.getElementById('chatbox').style.display='none'; } }
   else if(started){
     if(state==='inv'||state==='chat') pause.classList.add('hidden');
     else if(!dead){ state='pause'; pause.classList.remove('hidden'); }
@@ -1701,6 +1826,16 @@ document.getElementById('btnAdmin').onclick=()=>startGame('admin');
 
 /* ============ LOOP ============ */
 let last=performance.now();
+const waterEl=document.getElementById('water');
+let under=false;
+function tickWater(){
+  const uw=get(Math.floor(camera.position.x),Math.floor(camera.position.y),Math.floor(camera.position.z))===WATER;
+  if(uw===under) return;
+  under=uw;
+  waterEl.style.opacity=under?1:0;
+  if(under){ scene.fog.color.setHex(0x1a6fd0); scene.fog.near=1; scene.fog.far=26; scene.background.setHex(0x1a6fd0); }
+  else { scene.fog.color.setHex(0xbfe3ff); scene.fog.near=34; scene.fog.far=125; scene.background.setHex(0x8ecdf5); }
+}
 function loop(now){
   requestAnimationFrame(loop);
   const dt=Math.min((now-last)/1000,.05); last=now;
@@ -1722,7 +1857,7 @@ function loop(now){
       cross.classList.add('active'); }
     else { hl.visible=hlEdge.visible=false; cross.classList.remove('active'); }
   } else { hl.visible=hlEdge.visible=false; if(!mouseDown[0]) crackMesh.visible=false; }
-  tickSword(dt, now); tickCooldown();
+  tickSword(dt, now); tickCooldown(); tickDoors(dt); tickWater();
   tickParts(dt); tickDmgNums(dt);
   renderer.render(scene,camera);
 }

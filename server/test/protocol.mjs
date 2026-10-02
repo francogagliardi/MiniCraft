@@ -108,6 +108,20 @@ try {
   a.ws.send(JSON.stringify({ t: 'edit', x: 1, y: 1, z: 1, v: 11 }));
   await wait(400);
   ok(!b.seen.some(m => m.t === 'pedit' && m.v === 11), 'bedrock por red bloqueado');
+  // puerta (23↔24) y bloques nuevos (25, 26) viajan por la red como cualquier bloque
+  a.ws.send(JSON.stringify({ t: 'edit', x: 81, y: 15, z: 80, v: 23 }));
+  const pd1 = await nextOf(b.seen, b.seen.length, 'pedit');
+  ok(pd1.v === 23, 'relay de puerta cerrada (23)');
+  a.ws.send(JSON.stringify({ t: 'edit', x: 81, y: 15, z: 80, v: 24 }));
+  const pd2 = await nextOf(b.seen, b.seen.length, 'pedit');
+  ok(pd2.v === 24, 'relay de puerta abierta (24)');
+  a.ws.send(JSON.stringify({ t: 'edit', x: 82, y: 15, z: 80, v: 26 }));
+  const pd3 = await nextOf(b.seen, b.seen.length, 'pedit');
+  ok(pd3.v === 26, 'relay de bloque nuevo (26)');
+  // puerta doble (bisagra espejada 27↔28) también viaja por la red
+  a.ws.send(JSON.stringify({ t: 'edit', x: 83, y: 15, z: 80, v: 27 }));
+  const pd4 = await nextOf(b.seen, b.seen.length, 'pedit');
+  ok(pd4.v === 27, 'relay de puerta doble (27)');
 
   // 5. daño PvP: víctima recibe phit + atacante recibe hitok
   // (los índices se capturan ANTES de mandar el hit: phit puede llegar primero)
