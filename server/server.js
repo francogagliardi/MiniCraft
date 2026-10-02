@@ -12,6 +12,9 @@ const ADMIN_KEY = process.env.ADMIN_KEY || 'minicraft-admin-2026';
 const STATIC = process.env.MINICRAFT_DIR || path.join(__dirname, '..');
 const SAVE_FILE = process.env.WORLD_FILE || path.join(__dirname, 'world.json');
 
+// Asegura que la carpeta de persistencia exista (ej: /data en Easypanel/Docker).
+try { fs.mkdirSync(path.dirname(SAVE_FILE), { recursive: true }); } catch (e) {}
+
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8', '.json': 'application/json',
@@ -47,7 +50,9 @@ function save() {
   try { fs.writeFileSync(SAVE_FILE, JSON.stringify({ seed: SEED, edits })); } catch (e) {}
 }
 setInterval(save, 15000);
-process.on('SIGINT', () => { save(); process.exit(); });
+function shutdown(sig) { try { save(); } catch (e) {} process.exit(0); }
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));
 
 // ---- jugadores ----
 const players = new Map(); // ws -> {id, name, mode, admin, pos}
@@ -128,7 +133,8 @@ wss.on('connection', (ws) => {
   });
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, '0.0.0.0', () => {
   console.log(`⛏ Minicraft server en http://localhost:${PORT}`);
-  console.log(`   Clave admin: ${ADMIN_KEY}`);
+  console.log(`   STATIC=${STATIC} SAVE_FILE=${SAVE_FILE}`);
+  console.log(`   Clave admin: ${ADMIN_KEY ? '(configurada)' : '(vacia)'}`);
 });
