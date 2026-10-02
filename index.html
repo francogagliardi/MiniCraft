@@ -409,6 +409,7 @@ const AIR=0, GRASS=1, DIRT=2, STONE=3, LOG=4, PLANKS=5, LEAVES=6, SAND=7, GLASS=
       DOORZ=29, DOORZ_OPEN=30, DOORZ2=31, DOORZ2_OPEN=32;
 const SWORD = 100; // item (no es bloque, no se puede poner en el mundo)
 const SAVE_KEY = 'minicraft-save-v2';
+const CLIENT_V = 'v7'; // sello visible en menú/pausa: confirma qué build está corriendo
 
 const DEFS = {
   [GRASS]:  { name:'Pasto',      css:'linear-gradient(135deg,#8bd450 0 55%,#9a6a45 55% 100%)', color:0x8bd450, cube:1, opaque:1, hard:.55, tiles:{top:0,side:1,bottom:2} },
@@ -1901,9 +1902,10 @@ document.getElementById('btnPlayer').style.display='block';
 document.getElementById('btnAdmin').style.display='block';
 document.getElementById('nameInput').value='Aventurero'+((Math.random()*99)|0);
 if(location.protocol.indexOf('http')!==0)
-  document.getElementById('mpNote').textContent='📁 Modo solitario (abriste el archivo local). Subilo al server para multijugador.';
+  document.getElementById('mpNote').textContent='📁 Modo solitario (abriste el archivo local). Subilo al server para multijugador. · '+CLIENT_V;
 else
-  document.getElementById('mpNote').textContent='🌐 Servidor detectado: ¡van a verte otros jugadores!';
+  document.getElementById('mpNote').textContent='🌐 Servidor detectado: ¡van a verte otros jugadores! · '+CLIENT_V;
+document.querySelector('#pause .tiny').textContent+=' · '+CLIENT_V;
 
 async function startGame(wantedMode){
   myName=document.getElementById('nameInput').value.trim().slice(0,16)||'Aventurero';
