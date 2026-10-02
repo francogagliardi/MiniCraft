@@ -1272,8 +1272,10 @@ function netSend(o){
 function connectMP(wantedMode){
   return new Promise(resolve=>{
     if(location.protocol.indexOf('http')!==0){ resolve({ solo:true }); return; }
+    // https:// exige wss:// (el navegador bloquea ws:// inseguro en páginas seguras)
+    const wsp = location.protocol==='https:' ? 'wss' : 'ws';
     let ws;
-    try{ ws=new WebSocket(`ws://${location.host}`); }catch(e){ resolve({ solo:true }); return; }
+    try{ ws=new WebSocket(`${wsp}://${location.host}`); }catch(e){ resolve({ solo:true }); return; }
     const to=setTimeout(()=>{ try{ws.close();}catch(e){} resolve({ solo:true }); },3500);
     ws.onopen=()=>{
       ws.send(JSON.stringify({ t:'hello', name:myName, mode:wantedMode,
