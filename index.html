@@ -971,13 +971,21 @@ function doorIdFor(x,y,z,closedId){
     const w=get(nx,ny,nz);
     if(isDoor(w)&&doorZ(w)===fz){ return doorRight(w)?closedId:mir; }
   }
+  // sin vecina sobre su eje: si hay puerta pegada en el otro eje, heredar su
+  // plano (así la doble sale bien mires desde donde mires al ponerla)
+  const ns2=fz?[[x-1,y,z],[x+1,y,z]]:[[x,y,z-1],[x,y,z+1]];
+  for(const [nx,ny,nz] of ns2){
+    const w=get(nx,ny,nz);
+    if(isDoor(w)) return doorIdFor(x,y,z,doorZ(w)?DOORZ:DOOR);
+  }
   return closedId;
 }
 // compañera de puerta doble: vecina sobre el eje con bisagra opuesta;
-// devuelve su mitad inferior o null
+// se busca primero del lado opuesto a la propia bisagra para que en filas
+// (L R L R…) las parejas no se solapen. Devuelve su mitad inferior o null.
 function doorPair(x,y,z){
-  const b=get(x,y,z), fz=doorZ(b);
-  const ns=fz?[[x,y,z-1],[x,y,z+1]]:[[x-1,y,z],[x+1,y,z]];
+  const b=get(x,y,z), fz=doorZ(b), s=doorRight(b)?-1:1;
+  const ns=fz?[[x,y,z+s],[x,y,z-s]]:[[x+s,y,z],[x-s,y,z]];
   for(const [nx,ny,nz] of ns){
     const w=get(nx,ny,nz);
     if(isDoor(w)&&doorZ(w)===fz&&doorRight(w)!==doorRight(b)){
