@@ -293,6 +293,13 @@
   </div>
 </div>
 
+<script>
+// Si el juego no carga (CDN bloqueado, WebGL, etc.), mostrar el motivo en vez de celeste mudo
+addEventListener('error', function(e){
+  var l = document.getElementById('loading');
+  if (l) { l.style.display = 'block'; l.textContent = '⚠️ No cargó: ' + (e.message || 'revisá tu conexión'); }
+}, true);
+</script>
 <script type="module">
 // Controles táctiles (?touch=1 fuerza táctil, ?pc=1 fuerza PC: útil para probar)
 const TOUCH = /[?&]touch=1/.test(location.search) ? true
