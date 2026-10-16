@@ -114,6 +114,38 @@ ok(INV.every(id => DEFS[id]), `inventario (${INV.length} items válidos)`);
 const HB = html.match(/DEFAULT_HOTBAR = \[([^\]]+)\]/)[1].split(',').length;
 ok(HB === 9, 'hotbar de 9 slots');
 
+// 5b. mundo 208 (migrar-mundo-208): constantes, claves y ambiente escalados
+{
+  const W = html.match(/const W = (\d+), H = (\d+), CH = (\d+)/);
+  ok(W && +W[1] === 208 && +W[2] === 40 && +W[3] === 16, `dimensiones W=208 H=40 CH=16 (${W ? W[0] : 'sin match'})`);
+  ok(html.includes("const SAVE_KEY = 'minicraft-save-v3'"), 'SAVE_KEY -v3 (invalida saves stride-160)');
+  ok(!html.includes('minicraft-save-v2'), 'sin restos de save-v2');
+  ok(/const CLIENT_V = 'v9'/.test(html), 'CLIENT_V v9');
+  ok(!/const CLIENT_V = 'v8'/.test(html), 'sin restos de CLIENT_V v8');
+  // widx usa W (stride paramétrico, no literal 160)
+  ok(/const widx = \(x,y,z\) => \(y\*W \+ z\)\*W \+ x/.test(html), 'widx con stride W');
+  ok(!/y \* 160|160 \* 160|25600/.test(html), 'sin stride-160 residual en lógica de mundo');
+  // ambiente escalado a 208 + offset del mundo viejo (migrar-mundo-208: tierra nueva al N/O)
+  ok(/const OX = 48, OZ = 48/.test(html), 'offset OX=OZ=48 (mundo viejo en array 48..207)');
+  ok([...html.matchAll(/\bhAt\(x-OX,z-OZ\)/g)].length >= 5 && /hAt\(sx-OX,sz-OZ\)/.test(html),
+    'terreno muestreado con coords de mundo (genWorld×3 + findSpawn + animales + fallback)');
+  ok(!/\bhAt\((x,z|sx,sz)\)/.test(html), 'sin hAt con coords de array (desincronizaría suelo vs spawn)');
+  ok(/for\(let r=0;r<104;r\+\+\)/.test(html), 'findSpawn radio ~104 (mitad de 208)');
+  ok(/left:-114, right:114, top:114, bottom:-114/.test(html), 'frustum sombras ±114');
+  ok(/new THREE\.Fog\(0xbfe3ff, 34, 180\)/.test(html) && /scene\.fog\.far=180/.test(html),
+    'fog far 180 (cubre borde a borde 208)');
+  ok(/sunSprite\.position\.set\(W\/2\+120, 130, W\/2-240\)/.test(html), 'sunSprite re-anclado a W/2');
+  ok(/Math\.random\(\)\*\(W\+40\)-20/.test(html), 'nubes cubren W (rango W+40)');
+}
+
+// 5c. servidor 208 + offset: validación, stride y spawn junto a las casas desplazadas
+{
+  const srv = fs.readFileSync(path.join(root, 'server', 'server.js'), 'utf8');
+  ok(/x >= 208/.test(srv) && /\(y \* 208 \+ z\) \* 208 \+ x/.test(srv), 'server valida 0..207 e indexa con stride 208');
+  ok(/pos: \[128\.5, 20, 136\.5\]/.test(srv), 'spawn default junto a las casas desplazadas (+48)');
+  ok(!/104\.5, 20, 104\.5/.test(srv), 'sin resto del spawn centrado anterior');
+}
+
 // 6. controles táctiles + reglas de ataque (sin romper el camino de PC)
 const nModule = (html.match(/<script type="module">/g) || []).length;
 ok(nModule === 1, 'un solo <script type="module">');

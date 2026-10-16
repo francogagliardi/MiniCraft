@@ -84,7 +84,7 @@ wss.on('connection', (ws) => {
       me = {
         id: nextId++, name: cleanName(m.name),
         mode: admin ? 'admin' : 'player', admin,
-        pos: [80.5, 20, 88.5], yaw: Math.PI, pitch: 0, hp: 10, dead: 0,
+        pos: [128.5, 20, 136.5], yaw: Math.PI, pitch: 0, hp: 10, dead: 0,
       };
       players.set(ws, me);
       send(ws, {
@@ -109,9 +109,9 @@ wss.on('connection', (ws) => {
     } else if (m.t === 'edit') {
       const { x, y, z, v } = m;
       if (![x, y, z, v].every(n => Number.isInteger(n))) return;
-      if (x < 0 || x >= 160 || z < 0 || z >= 160 || y < 0 || y >= 40 || v < 0 || v > 64) return;
+      if (x < 0 || x >= 208 || z < 0 || z >= 208 || y < 0 || y >= 40 || v < 0 || v > 64) return;
       if (v === 11 || y === 0) return; // bedrock solo la pone el generador
-      edits.push([(y * 160 + z) * 160 + x, v]);
+      edits.push([(y * 208 + z) * 208 + x, v]);
       if (edits.length > 300000) edits.splice(0, edits.length - 300000);
       broadcast({ t: 'pedit', x, y, z, v, by: me.name }, ws);
     } else if (m.t === 'hit') {

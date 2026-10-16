@@ -408,7 +408,8 @@ if (TOUCH) {
 import * as THREE from 'three';
 
 /* ============ CONFIG ============ */
-const W = 160, H = 40, CH = 16, WATER_Y = 10;
+const W = 208, H = 40, CH = 16, WATER_Y = 10;
+const OX = 48, OZ = 48; // offset del mundo viejo: ocupa el array 48..207; tierra nueva al N/O (0..47)
 const AIR=0, GRASS=1, DIRT=2, STONE=3, LOG=4, PLANKS=5, LEAVES=6, SAND=7, GLASS=8,
       BRICK=9, GLOW=10, BEDROCK=11, WATER=12, FLOWER_R=13, FLOWER_Y=14,
       COBBLE=15, WOOL=16, SNOW=17, CLAY=18, OBSIDIAN=19, PUMPKIN=20, BOOKS=21, MELON=22,
@@ -421,8 +422,8 @@ const AIR=0, GRASS=1, DIRT=2, STONE=3, LOG=4, PLANKS=5, LEAVES=6, SAND=7, GLASS=
       STAIR_SBRICK_E=55, STAIR_SBRICK_W=56, STAIR_SBRICK_S=57, STAIR_SBRICK_N=58;
 // Escaleras: stairDir = eje de subida (0:+X=E 1:-X=W 2:+Z=S 3:-Z=N); mitad baja al frente (-dir), alta al fondo.
 const SWORD = 100; // item (no es bloque, no se puede poner en el mundo)
-const SAVE_KEY = 'minicraft-save-v2';
-const CLIENT_V = 'v8'; // sello visible en menú/pausa: confirma qué build está corriendo
+const SAVE_KEY = 'minicraft-save-v3';
+const CLIENT_V = 'v9'; // sello visible en menú/pausa: confirma qué build está corriendo
 
 const DEFS = {
   [GRASS]:  { name:'Pasto',      css:'linear-gradient(135deg,#8bd450 0 55%,#9a6a45 55% 100%)', color:0x8bd450, cube:1, opaque:1, hard:.55, tiles:{top:0,side:1,bottom:2} },
@@ -651,13 +652,13 @@ if (LOW) {
 }
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x8ecdf5);
-scene.fog = new THREE.Fog(0xbfe3ff, 34, 125);
+scene.fog = new THREE.Fog(0xbfe3ff, 34, 180);
 const camera = new THREE.PerspectiveCamera(74, innerWidth/innerHeight, .1, 600);
 scene.add(new THREE.HemisphereLight(0xd8ecff, 0x8a7a5a, .95));
 const sun = new THREE.DirectionalLight(0xfff2d8, 1.9);
 sun.position.set(W/2+40, 60, W/2+25); sun.castShadow = !LOW;
 sun.shadow.mapSize.set(LOW ? 1024 : 2048, LOW ? 1024 : 2048);
-Object.assign(sun.shadow.camera, { left:-70, right:70, top:70, bottom:-70, far:220 });
+Object.assign(sun.shadow.camera, { left:-114, right:114, top:114, bottom:-114, far:220 });
 sun.shadow.camera.updateProjectionMatrix();
 sun.shadow.bias = -0.0004;
 sun.target.position.set(W/2, 0, W/2);
@@ -668,7 +669,7 @@ scene.add(new THREE.Mesh(new THREE.SphereGeometry(280,16,12), new THREE.ShaderMa
   vertexShader:'varying vec3 vP; void main(){ vP=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}',
   fragmentShader:'varying vec3 vP; uniform vec3 top,bot;\nvoid main(){ float h=normalize(vP).y*.5+.5; gl_FragColor=vec4(mix(bot,top,smoothstep(.02,.65,h)),1.);}' })));
 const sunSprite = new THREE.Mesh(new THREE.CircleGeometry(12,24), new THREE.MeshBasicMaterial({ color:0xfff6c9, fog:false }));
-sunSprite.position.set(W/2+120, 130, -160); sunSprite.lookAt(W/2,0,W/2); scene.add(sunSprite);
+sunSprite.position.set(W/2+120, 130, W/2-240); sunSprite.lookAt(W/2,0,W/2); scene.add(sunSprite);
 
 const clouds = [];
 {
@@ -679,7 +680,7 @@ const clouds = [];
       const m = new THREE.Mesh(new THREE.BoxGeometry(4+Math.random()*5, 1.4, 3+Math.random()*2), cm);
       m.position.set(j*2.8-n, Math.random()*.6, Math.random()*2-1); g.add(m);
     }
-    g.position.set(Math.random()*200-20, 36+Math.random()*5, Math.random()*200-20);
+    g.position.set(Math.random()*(W+40)-20, 36+Math.random()*5, Math.random()*(W+40)-20);
     g.userData.v = .4+Math.random()*.6;
     clouds.push(g); scene.add(g);
   }
@@ -776,7 +777,7 @@ function genWorld(){
   world.fill(AIR); edits.length = 0;
   const rng = mulberry(SEED);
   for(let x=0;x<W;x++) for(let z=0;z<W;z++){
-    const h = Math.min(hAt(x,z), H-8);
+    const h = Math.min(hAt(x-OX,z-OZ), H-8);
     rawSet(x,0,z,BEDROCK);
     for(let y=1;y<=h;y++){
       rawSet(x,y,z, y<h-3 ? STONE : y<h ? DIRT : (h<=WATER_Y+1 ? SAND : GRASS));
@@ -785,7 +786,7 @@ function genWorld(){
   }
   let placed=0, guard=0;
   while(placed<65 && guard++<4000){
-    const x=4+(rng()*(W-8)|0), z=4+(rng()*(W-8)|0), h=hAt(x,z);
+    const x=4+(rng()*(W-8)|0), z=4+(rng()*(W-8)|0), h=hAt(x-OX,z-OZ);
     if(h<=WATER_Y+1 || get(x,h,z)!==GRASS) continue;
     const th=4;
     for(let y=h+1;y<=h+th;y++) rawSet(x,y,z,LOG);
@@ -798,7 +799,7 @@ function genWorld(){
   }
   let fl=0; guard=0;
   while(fl<450 && guard++<20000){
-    const x=2+(rng()*(W-4)|0), z=2+(rng()*(W-4)|0), h=hAt(x,z);
+    const x=2+(rng()*(W-4)|0), z=2+(rng()*(W-4)|0), h=hAt(x-OX,z-OZ);
     if(h<=WATER_Y+1 || get(x,h,z)!==GRASS || get(x,h+1,z)!==AIR) continue;
     rawSet(x,h+1,z, rng()<.5?FLOWER_R:FLOWER_Y); fl++;
   }
@@ -1440,10 +1441,10 @@ function raycast(maxD=8){
 function findSpawn(){
   // busca tierra firme con la columna despejada (nada de aparecer dentro de un árbol 🌳)
   const sx=W/2|0, sz=W/2|0;
-  for(let r=0;r<80;r++) for(let a=0;a<12;a++){
+  for(let r=0;r<104;r++) for(let a=0;a<12;a++){
     const x=Math.max(2,Math.min(W-3,sx+Math.round(Math.cos(a/12*6.28)*r)));
     const z=Math.max(2,Math.min(W-3,sz+Math.round(Math.sin(a/12*6.28)*r)));
-    const h=hAt(x,z);
+    const h=hAt(x-OX,z-OZ);
     if(h<=WATER_Y+1||h>=H-7) continue;
     let ok=true;
     for(let y=h+1;y<=h+4&&ok;y++){ const b=get(x,y,z); if(b!==AIR&&b!==WATER) ok=false; }
@@ -1452,7 +1453,7 @@ function findSpawn(){
     if(collidesAt(x+.5,h+1.01,z+.5,.3,1.8)) continue;
     return new THREE.Vector3(x+.5,h+1.01,z+.5);
   }
-  return new THREE.Vector3(sx+.5,hAt(sx,sz)+2,sz+.5);
+  return new THREE.Vector3(sx+.5,hAt(sx-OX,sz-OZ)+2,sz+.5);
 }
 
 /* ============ RESALTADO + GRIETAS + PARTÍCULAS ============ */
@@ -1531,7 +1532,7 @@ function makeSheep(x,y,z){
 function spawnAnimals(rng){
   let pigs=0, sheep=0, guard=0;
   while((pigs<8||sheep<6)&&guard++<3000){
-    const x=6+(rng()*(W-12)|0), z=6+(rng()*(W-12)|0), h=hAt(x,z);
+    const x=6+(rng()*(W-12)|0), z=6+(rng()*(W-12)|0), h=hAt(x-OX,z-OZ);
     if(h<=WATER_Y+1||get(x,h,z)!==GRASS) continue;
     const a = pigs<=sheep ? makePig(x+.5,h+1.01,z+.5) : makeSheep(x+.5,h+1.01,z+.5);
     if(a.kind==='pig') pigs++; else sheep++;
@@ -2258,7 +2259,7 @@ function tickWater(){
   under=uw;
   waterEl.style.opacity=under?1:0;
   if(under){ scene.fog.color.setHex(0x1a6fd0); scene.fog.near=1; scene.fog.far=26; scene.background.setHex(0x1a6fd0); }
-  else { scene.fog.color.setHex(0xbfe3ff); scene.fog.near=34; scene.fog.far=125; scene.background.setHex(0x8ecdf5); }
+  else { scene.fog.color.setHex(0xbfe3ff); scene.fog.near=34; scene.fog.far=180; scene.background.setHex(0x8ecdf5); }
 }
 function loop(now){
   requestAnimationFrame(loop);

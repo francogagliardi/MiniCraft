@@ -133,6 +133,22 @@ try {
     ok(pe2.v === v, `relay de escalera (${v})`);
   }
 
+  // 4b. mundo 208: borde nuevo aceptado, fuera de bordes rechazado, stride 208
+  a.ws.send(JSON.stringify({ t: 'edit', x: 207, y: 15, z: 207, v: 9 }));
+  const peEdge = await nextOf(b.seen, b.seen.length, 'pedit');
+  ok(peEdge.x === 207 && peEdge.z === 207, 'edit en borde 207 aceptado y replicado');
+  a.ws.send(JSON.stringify({ t: 'edit', x: 208, y: 15, z: 80, v: 9 }));
+  await wait(400);
+  ok(!b.seen.some(m => m.t === 'pedit' && m.x === 208), 'edit x=208 rechazado');
+  a.ws.send(JSON.stringify({ t: 'edit', x: 80, y: 40, z: 80, v: 9 }));
+  await wait(400);
+  ok(!b.seen.some(m => m.t === 'pedit' && m.y === 40), 'edit y=40 rechazado');
+  const wit = await hello('Testigo', 'player');
+  const edgeIdx = (15 * 208 + 207) * 208 + 207;
+  ok(wit.m.edits.some(e => Array.isArray(e) && e[0] === edgeIdx && e[1] === 9),
+    `índice persistido con stride 208 (${edgeIdx})`);
+  wit.ws.close();
+
   // 5. daño PvP: víctima recibe phit + atacante recibe hitok
   // (los índices se capturan ANTES de mandar el hit: phit puede llegar primero)
   const nA = a.seen.length, nB2 = b.seen.length;
