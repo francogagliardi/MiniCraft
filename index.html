@@ -1534,6 +1534,8 @@ function spawnAnimals(rng){
   while((pigs<8||sheep<6)&&guard++<3000){
     const x=6+(rng()*(W-12)|0), z=6+(rng()*(W-12)|0), h=hAt(x-OX,z-OZ);
     if(h<=WATER_Y+1||get(x,h,z)!==GRASS) continue;
+    if(get(x,h+1,z)!==AIR||get(x,h+2,z)!==AIR) continue;
+    if(collidesAt(x+.5,h+1.01,z+.5,.32,.9)) continue;
     const a = pigs<=sheep ? makePig(x+.5,h+1.01,z+.5) : makeSheep(x+.5,h+1.01,z+.5);
     if(a.kind==='pig') pigs++; else sheep++;
     a.g.traverse(o=>o.userData.animal=a);
@@ -1718,16 +1720,18 @@ function doBreak(pre){
     for(const [cx,cy,cz] of doorCells(h.x,h.y,h.z)){
       burst(cx,cy,cz,blockColor(h.b));
       doorAnims.delete(cx+','+cy+','+cz);
-      rawSet(cx,cy,cz,AIR);
-      if(!mp){ edits.push([widx(cx,cy,cz),AIR]); }
-      else netSend({ t:'edit', x:cx, y:cy, z:cz, v:AIR });
+      const v = cy<=WATER_Y ? WATER : AIR;
+      rawSet(cx,cy,cz,v);
+      if(!mp){ edits.push([widx(cx,cy,cz),v]); }
+      else netSend({ t:'edit', x:cx, y:cy, z:cz, v });
     }
     if(!mp) saveSoon();
   } else {
     if(!d.flower) burst(h.x,h.y,h.z,blockColor(h.b));
-    rawSet(h.x,h.y,h.z,AIR);
-    if(!mp){ edits.push([widx(h.x,h.y,h.z),AIR]); saveSoon(); }
-    else netSend({ t:'edit', x:h.x, y:h.y, z:h.z, v:AIR });
+    const v = h.y<=WATER_Y ? WATER : AIR;
+    rawSet(h.x,h.y,h.z,v);
+    if(!mp){ edits.push([widx(h.x,h.y,h.z),v]); saveSoon(); }
+    else netSend({ t:'edit', x:h.x, y:h.y, z:h.z, v });
   }
   sfxBreak(); refreshAt(h.x,h.z); resetBreak();
 }
