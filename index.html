@@ -1740,6 +1740,20 @@ function doBreak(pre){
   }
   sfxBreak(); refreshAt(h.x,h.z); resetBreak();
 }
+// Test AABB celda-vs-caja de entidad con margen parametrizado en XZ; Y exacto.
+// hw = semiancho (.3 jugador, .32 animal), h = alto (1.8 jugador, 1.2 animal).
+// M = 0 local/animales (simulacion local exacta, sin lag); 0.1 remotos
+// (posicion interpolada g.position va retrasada vs target en tickAvatar).
+function entSolapa(px,py,pz,hw,h,x,y,z,M){
+  return x+1>px-hw+M&&x<px+hw-M&&z+1>pz-hw+M&&z<pz+hw-M&&y+1>py&&y<py+h;
+}
+function ocupadoPor(x,y,z){
+  const p=player.pos;
+  if(entSolapa(p.x,p.y,p.z,.3,1.8,x,y,z,0)) return true;
+  for(const a of remotes.values()){ const q=a.g.position; if(entSolapa(q.x,q.y,q.z,.3,1.8,x,y,z,.1)) return true; }
+  for(const a of animals){ const q=a.g.position; if(entSolapa(q.x,q.y,q.z,.32,1.2,x,y,z,0)) return true; }
+  return false;
+}
 function doPlace(){
   const h=raycast(); if(!h) return;
   const id=hotbarIds[sel], dd=DEFS[id];
@@ -1750,8 +1764,7 @@ function doPlace(){
   if(dd?.stair){
     // Escalera: el ítem elige el material, lookDir() la orientación (frente bajo hacia el jugador).
     if(cur!==AIR&&cur!==WATER&&!DEFS[cur].flower) return; // sin apilado ni conversión
-    const p=player.pos;
-    if(x+1>p.x-.3&&x<p.x+.3&&z+1>p.z-.3&&z<p.z+.3&&y+1>p.y&&y<p.y+1.8){ toast('⛔ Ahí estás vos'); return; }
+    if(ocupadoPor(x,y,z)){ toast('⛔ Ahí estás vos'); return; }
     const ld=lookDir();
     const dir=Math.abs(ld.x)>Math.abs(ld.z)?(ld.x>0?0:1):(ld.z>0?2:3);
     editBlock(x,y,z,(id-dd.stairDir)+dir); sfxPlace(); return;
@@ -1763,14 +1776,12 @@ function doPlace(){
     }
     else if(get(x,y-1,z)!==GRASS){ toast('🌸 Las flores van sobre pasto'); return; }
   } else {
-    const p=player.pos;
-    if(x+1>p.x-.3&&x<p.x+.3&&z+1>p.z-.3&&z<p.z+.3&&y+1>p.y&&y<p.y+1.8){ toast('⛔ Ahí estás vos'); return; }
+    if(ocupadoPor(x,y,z)){ toast('⛔ Ahí estás vos'); return; }
   }
   if(id===DOOR){
     // la puerta mide 2 bloques: necesita la celda de arriba libre.
     if(y+1>=H||![AIR,WATER].includes(get(x,y+1,z))){ toast('🚪 Sin lugar arriba: la puerta mide 2 bloques'); return; }
-    const p=player.pos;
-    if(x+1>p.x-.3&&x<p.x+.3&&z+1>p.z-.3&&z<p.z+.3&&y+2>p.y&&y+1<p.y+1.8){ toast('⛔ Ahí estás vos'); return; }
+    if(ocupadoPor(x,y,z)||ocupadoPor(x,y+1,z)){ toast('⛔ Ahí estás vos'); return; }
     // plano: perpendicular a la vista, o heredado de puerta vecina
     const ld=lookDir();
     let fz=Math.abs(ld.x)>Math.abs(ld.z);
