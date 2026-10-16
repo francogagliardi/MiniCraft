@@ -1510,7 +1510,7 @@ function makePig(x,y,z){
   const legs=[box(.16,.42,.16,dpink,-.2,.21,.32,g),box(.16,.42,.16,dpink,.2,.21,.32,g),
               box(.16,.42,.16,dpink,-.2,.21,-.32,g),box(.16,.42,.16,dpink,.2,.21,-.32,g)];
   g.position.set(x,y,z);
-  return { g, head, legs, kind:'pig', tx:x, tz:z, wait:2, vy:0, onGround:false, t:Math.random()*10, petCd:0,
+  return { g, head, legs, kind:'pig', tx:x, tz:z, wait:2, vy:0, onGround:false, stuck:0, t:Math.random()*10, petCd:0,
     say:()=>{ sfxOink(); toast('🐷 ¡Oink oink!'); } };
 }
 function makeSheep(x,y,z){
@@ -1526,7 +1526,7 @@ function makeSheep(x,y,z){
   const legs=[box(.15,.45,.15,dark,-.22,.22,.35,g),box(.15,.45,.15,dark,.22,.22,.35,g),
               box(.15,.45,.15,dark,-.22,.22,-.35,g),box(.15,.45,.15,dark,.22,.22,-.35,g)];
   g.position.set(x,y,z);
-  return { g, head, legs, kind:'sheep', tx:x, tz:z, wait:2, vy:0, onGround:false, t:Math.random()*10, petCd:0,
+  return { g, head, legs, kind:'sheep', tx:x, tz:z, wait:2, vy:0, onGround:false, stuck:0, t:Math.random()*10, petCd:0,
     say:()=>{ sfxBaa(); toast('🐑 ¡Beee!'); } };
 }
 function spawnAnimals(rng){
@@ -1535,7 +1535,7 @@ function spawnAnimals(rng){
     const x=6+(rng()*(W-12)|0), z=6+(rng()*(W-12)|0), h=hAt(x-OX,z-OZ);
     if(h<=WATER_Y+1||get(x,h,z)!==GRASS) continue;
     if(get(x,h+1,z)!==AIR||get(x,h+2,z)!==AIR) continue;
-    if(collidesAt(x+.5,h+1.01,z+.5,.32,.9)) continue;
+    if(collidesAt(x+.5,h+1.01,z+.5,.32,1.2)) continue;
     const a = pigs<=sheep ? makePig(x+.5,h+1.01,z+.5) : makeSheep(x+.5,h+1.01,z+.5);
     if(a.kind==='pig') pigs++; else sheep++;
     a.g.traverse(o=>o.userData.animal=a);
@@ -1550,13 +1550,18 @@ function tickAnimal(a,dt){
   if(d>.4&&a.wait<=0){
     const sp=1.3, nx=a.g.position.x+dx/d*sp*dt, nz=a.g.position.z+dz/d*sp*dt;
     a.g.rotation.y=Math.atan2(dx/d,dz/d);
-    if(!collidesAt(nx,a.g.position.y,nz,.32,.9)){ a.g.position.x=nx; a.g.position.z=nz; moving=true; }
-    else if(a.onGround){ a.vy=5.2; a.onGround=false; moving=true; }
+    if(!collidesAt(nx,a.g.position.y,nz,.32,1.2)){ a.g.position.x=nx; a.g.position.z=nz; a.stuck=0; moving=true; }
+    else {
+      a.stuck=(a.stuck||0)+1;
+      if(a.stuck>=30){ a.tx=a.g.position.x+(Math.random()-.5)*16; a.tz=a.g.position.z+(Math.random()-.5)*16;
+        a.tx=Math.max(4,Math.min(W-4,a.tx)); a.tz=Math.max(4,Math.min(W-4,a.tz)); a.wait=1+Math.random()*3; a.stuck=0; }
+      else if(a.onGround&&slabBlocked(nx,a.g.position.y,nz)){ a.vy=5.2; a.onGround=false; moving=true; }
+    }
   } else if(a.wait<=0){ a.tx=a.g.position.x+(Math.random()-.5)*16; a.tz=a.g.position.z+(Math.random()-.5)*16;
-    a.tx=Math.max(4,Math.min(W-4,a.tx)); a.tz=Math.max(4,Math.min(W-4,a.tz)); a.wait=3+Math.random()*6; }
+    a.tx=Math.max(4,Math.min(W-4,a.tx)); a.tz=Math.max(4,Math.min(W-4,a.tz)); a.wait=3+Math.random()*6; a.stuck=0; }
   a.vy-=20*dt;
   const ny=a.g.position.y+a.vy*dt;
-  if(!collidesAt(a.g.position.x,ny,a.g.position.z,.32,.9)){ a.g.position.y=ny; a.onGround=false; }
+  if(!collidesAt(a.g.position.x,ny,a.g.position.z,.32,1.2)){ a.g.position.y=ny; a.onGround=false; }
   else { if(a.vy<0)a.onGround=true; a.vy=0; }
   if(a.g.position.y<0)a.g.position.y=H-1;
   const sw=moving?Math.sin(a.t*11)*.55:0;
