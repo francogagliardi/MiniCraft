@@ -413,7 +413,7 @@ const AIR=0, GRASS=1, DIRT=2, STONE=3, LOG=4, PLANKS=5, LEAVES=6, SAND=7, GLASS=
       BRICK=9, GLOW=10, BEDROCK=11, WATER=12, FLOWER_R=13, FLOWER_Y=14,
       COBBLE=15, WOOL=16, SNOW=17, CLAY=18, OBSIDIAN=19, PUMPKIN=20, BOOKS=21, MELON=22,
       DOOR=23, DOOR_OPEN=24, HAY=25, SBRICK=26, DOOR2=27, DOOR2_OPEN=28,
-      DOORZ=29, DOORZ_OPEN=30, DOORZ2=31, DOORZ2_OPEN=32, TORCH=33, SLAB_STONE=34;
+      DOORZ=29, DOORZ_OPEN=30, DOORZ2=31, DOORZ2_OPEN=32, TORCH=33, SLAB_STONE=34, SLAB_PLANKS=35, SLAB_COBBLE=36, SLAB_BRICK=37, SLAB_SBRICK=38;
 const SWORD = 100; // item (no es bloque, no se puede poner en el mundo)
 const SAVE_KEY = 'minicraft-save-v2';
 const CLIENT_V = 'v8'; // sello visible en menú/pausa: confirma qué build está corriendo
@@ -434,7 +434,11 @@ const DEFS = {
   [FLOWER_R]:{ name:'Flor roja', css:'radial-gradient(circle,#ff5b5b 30%,#37a837 32%)', color:0xff5b5b, flower:1, hard:.15, tile:14 },
   [FLOWER_Y]:{ name:'Flor amarilla', css:'radial-gradient(circle,#ffd94f 30%,#37a837 32%)', color:0xffd94f, flower:1, hard:.15, tile:15 },
   [TORCH]:  { name:'Antorcha 🔥', css:'linear-gradient(135deg,#ffd94f 0 45%,#ff9d2e 45% 75%,#6b4a2f 75% 100%)', color:0xffb52e, flower:1, hard:.15, tile:32 },
-  [SLAB_STONE]: { name:'Losa de piedra 🧱', css:'linear-gradient(135deg,#c3c8cf 0 50%,#9298a1 50% 100%)', color:0xa8adb5, cube:1, slab:1, hard:1.8, tiles:{top:33,side:33,bottom:33} },
+  [SLAB_STONE]: { name:'Losa de piedra 🧱', css:'linear-gradient(135deg,#c3c8cf 0 50%,#9298a1 50% 100%)', color:0xa8adb5, cube:1, slab:1, slabBase:STONE, hard:1.8, tiles:{top:33,side:33,bottom:33} },
+  [SLAB_PLANKS]: { name:'Losa de tablones 🪵', css:'linear-gradient(135deg,#d8b078 0 50%,#b78d55 50% 100%)', color:0xcfa672, cube:1, slab:1, slabBase:PLANKS, hard:1, tiles:{top:8,side:8,bottom:8} },
+  [SLAB_COBBLE]: { name:'Losa de roca 🪨', css:'linear-gradient(135deg,#b9bec7 0 50%,#7e848e 50% 100%)', color:0x9aa0a8, cube:1, slab:1, slabBase:COBBLE, hard:1.8, tiles:{top:16,side:16,bottom:16} },
+  [SLAB_BRICK]: { name:'Losa de ladrillos 🧱', css:'linear-gradient(135deg,#d97b63 0 50%,#a94a38 50% 100%)', color:0xc05a44, cube:1, slab:1, slabBase:BRICK, hard:2, tiles:{top:9,side:9,bottom:9} },
+  [SLAB_SBRICK]: { name:'Losa de piedra tallada 🧱', css:'linear-gradient(135deg,#b9bec7 0 50%,#7e848e 50% 100%)', color:0x9aa0a8, cube:1, slab:1, slabBase:SBRICK, hard:2, tiles:{top:29,side:29,bottom:29} },
   [COBBLE]: { name:'Roca',       css:'linear-gradient(135deg,#b9bec7,#7e848e)', color:0x9aa0a8, cube:1, opaque:1, hard:1.8, tiles:{top:16,side:16,bottom:16} },
   [WOOL]:   { name:'Lana',       css:'linear-gradient(135deg,#ffffff,#d9d4c8)', color:0xefe9dc, cube:1, opaque:1, hard:.7, tiles:{top:17,side:17,bottom:17} },
   [SNOW]:   { name:'Nieve',      css:'linear-gradient(135deg,#ffffff,#cfe4f5)', color:0xf2f8ff, cube:1, opaque:1, hard:.5, tiles:{top:18,side:18,bottom:18} },
@@ -455,7 +459,7 @@ const DEFS = {
   [DOORZ2_OPEN]:{ name:'Puerta abierta', css:'linear-gradient(135deg,#d8b078,#8a5f30)', color:0xcfa672, door:1, open:1, faceZ:1, hard:.9, tiles:{top:8,side:26,bottom:8} },
   [SWORD]:  { name:'Espada ⚔️',  css:'linear-gradient(135deg,#f4f6fa 0 60%,#c9a13b 60% 72%,#8a94a8 72% 100%)', color:0xdfe6f2, item:'sword' },
 };
-const INVENTORY = [GRASS,DIRT,STONE,COBBLE,SBRICK,LOG,PLANKS,BOOKS,LEAVES,SAND,SNOW,CLAY,WOOL,GLASS,BRICK,OBSIDIAN,PUMPKIN,MELON,HAY,GLOW,DOOR,SWORD,FLOWER_R,FLOWER_Y,TORCH,SLAB_STONE];
+const INVENTORY = [GRASS,DIRT,STONE,COBBLE,SBRICK,LOG,PLANKS,BOOKS,LEAVES,SAND,SNOW,CLAY,WOOL,GLASS,BRICK,OBSIDIAN,PUMPKIN,MELON,HAY,GLOW,DOOR,SWORD,FLOWER_R,FLOWER_Y,TORCH,SLAB_STONE,SLAB_PLANKS,SLAB_COBBLE,SLAB_BRICK,SLAB_SBRICK];
 const DEFAULT_HOTBAR = [GRASS,DIRT,STONE,PLANKS,LOG,LEAVES,GLASS,BRICK,COBBLE];
 
 /* ============ MODO / VIDA ============ */
@@ -872,9 +876,9 @@ function buildGlobals(){
       for(let f=0;f<6;f++){ const Fc=FACES[f], nb=get(x+Fc.d[0],y+Fc.d[1],z+Fc.d[2]);
         if(nb===GLOW||isOpaque(nb)) continue;
         G.quad(x,y,z,Fc.v,Fc.d,11,1,false); }
-    } else if(b===SLAB_STONE){
+    } else if(DEFS[b]?.slab){
       // Losa: medio cubo (mitad inferior, 0.5 de alto). Omite caras contra opacos como los cubos.
-      const T33=DEFS[SLAB_STONE].tiles;
+      const T33=DEFS[b].tiles;
       const SIDES=[
         { d:[1,0,0],  shade:.8, v:[[1,0,1],[1,0,0],[1,.5,0],[1,.5,1]] },
         { d:[-1,0,0], shade:.8, v:[[0,0,0],[0,0,1],[0,.5,1],[0,.5,0]] },
@@ -1159,7 +1163,7 @@ function collidesAt(px,py,pz,r,hgt){
     for(let y=Math.floor(py);y<=Math.floor(py+hgt-.01);y++)
       for(let z=Math.floor(pz-r);z<=Math.floor(pz+r);z++){
         const b=inB(x,y,z)?world[widx(x,y,z)]:AIR;
-        if(b===SLAB_STONE&&py>=y+.5) continue; // pies a la altura o sobre la tapa: no traba
+        if(DEFS[b]?.slab&&py>=y+.5) continue; // pies a la altura o sobre la tapa: no traba
         if(solidAt(x,y,z)) return true;
       }
   return false;
@@ -1174,7 +1178,7 @@ function slabBlocked(px,py,pz){
     for(let z=Math.floor(pz-r);z<=Math.floor(pz+r);z++){
       const b=inB(x,y,z)?world[widx(x,y,z)]:AIR;
       if(b===AIR||b===WATER) continue;
-      if(b===SLAB_STONE){ slab=true; continue; }
+      if(DEFS[b]?.slab){ slab=true; continue; }
       if(isSolid(b)) return false;
     }
   return slab;
@@ -1599,7 +1603,7 @@ function doPlace(){
   const x=h.x+h.nx, y=h.y+h.ny, z=h.z+h.nz;
   if(!inB(x,y,z)) return;
   const cur=get(x,y,z);
-  if(cur===SLAB_STONE&&id===SLAB_STONE){ editBlock(x,y,z,STONE); sfxPlace(); return; }
+  if(DEFS[cur]?.slab&&id===cur){ editBlock(x,y,z,DEFS[cur].slabBase); sfxPlace(); return; }
   if(cur!==AIR&&cur!==WATER&&!DEFS[cur].flower) return;
   if(dd.flower){
     if(id===TORCH){

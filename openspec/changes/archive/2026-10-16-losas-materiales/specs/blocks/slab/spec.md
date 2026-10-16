@@ -1,0 +1,91 @@
+# Spec Delta
+
+## Purpose
+
+Extiende las losas de medio bloque a cuatro materiales de construcción habituales (tablones, roca, ladrillos, piedra tallada), cada una con la apariencia de su material base y el mismo comportamiento de escalón: se sube caminando, dos iguales se apilan en un cubo completo y se sincronizan sin cambios de protocolo.
+
+## ADDED Requirements
+
+### Requirement: Cuatro losas con apariencia de su material base
+
+El sistema SHALL ofrecer losas de tablones, roca, ladrillos y piedra tallada, cada una renderizada como medio cubo de 0.5 (mitad inferior) con la textura de su bloque base en laterales, tapa y cara inferior.
+
+#### Scenario: Ver cada losa colocada
+
+- **WHEN** una losa de tablones, roca, ladrillos o piedra tallada está colocada en el mundo
+- **THEN** el sistema la muestra ocupando solo la mitad inferior de la celda con la apariencia de su material base
+
+#### Scenario: Losa junto a bloque opaco
+
+- **WHEN** una cara de cualquier losa linda con un bloque opaco
+- **THEN** el sistema omite esa cara oculta igual que con los cubos
+
+### Requirement: Todas las losas colisionan 0.5 y se suben caminando
+
+El sistema SHALL tratar toda celda con losa como sólida solo por debajo de su tapa (0.5): el jugador parado sobre cualquier tapa no queda trabado y caminando contra cualquier losa con los pies en el suelo la sube automáticamente sin saltar.
+
+#### Scenario: Subir cualquier losa caminando
+
+- **WHEN** el jugador camina con los pies en el suelo contra una losa de cualquier material y hay lugar libre arriba
+- **THEN** el sistema lo eleva 0.5 y queda parado sobre la tapa
+
+#### Scenario: Parado sobre cualquier tapa
+
+- **WHEN** el jugador está parado sobre la tapa de una losa de cualquier material
+- **THEN** el sistema le permite moverse en horizontal y la gravedad lo mantiene apoyado sin hundirse ni trabarse
+
+#### Scenario: Bloque completo no se sube caminando
+
+- **WHEN** el jugador camina contra un cubo completo de 1 bloque
+- **THEN** el sistema lo detiene (el auto-step solo aplica a losas)
+
+### Requirement: Dos losas del mismo material forman su bloque base
+
+El sistema SHALL convertir la celda en el bloque base correspondiente cuando el jugador coloca una losa sobre una celda que ya contiene una losa DEL MISMO material (tablones→tablones, roca→roca, ladrillos→ladrillos, tallada→tallada, piedra→piedra).
+
+#### Scenario: Apilar mismo material
+
+- **WHEN** el jugador coloca una losa sobre una losa del mismo material
+- **THEN** la celda pasa a ser el bloque base completo (PLANKS, COBBLE, BRICK, SBRICK o STONE según el caso)
+
+#### Scenario: Losa sobre cubo completo
+
+- **WHEN** el jugador coloca una losa en una celda ocupada por un cubo completo
+- **THEN** el sistema rechaza la colocación (la celda ya está llena)
+
+### Requirement: Materiales distintos no se mezclan en el apilado
+
+El sistema SHALL rechazar la colocación cuando la losa en mano es de distinto material que la losa ya puesta en la celda (la celda conserva su losa original sin cambios).
+
+#### Scenario: Apilado mixto rechazado
+
+- **WHEN** el jugador coloca una losa de madera sobre una losa de piedra (o cualquier par de materiales distintos)
+- **THEN** el sistema rechaza la colocación y la celda sigue siendo la losa original
+
+### Requirement: Losas disponibles en inventario y sincronizadas
+
+El sistema SHALL mostrar las 4 losas nuevas en el inventario de bloques y SHALL sincronizar su colocación, apilado y rotura a otros jugadores con el protocolo de edits existente, sin cambios de protocolo.
+
+#### Scenario: Elegir losas en inventario
+
+- **WHEN** el jugador abre el inventario
+- **THEN** las losas de tablones, roca, ladrillos y piedra tallada aparecen como opciones elegibles con su nombre e icono
+
+#### Scenario: Otro jugador ve las losas y el apilado
+
+- **WHEN** un jugador coloca, apila o rompe una losa de cualquier material estando conectado al servidor
+- **THEN** los demás jugadores ven el mismo cambio en la misma posición sin recargar
+
+### Requirement: Rotura con la dureza del material base
+
+El sistema SHALL romper cada losa con el esfuerzo de su material base (tablones 1, roca 1.8, ladrillos 2, piedra tallada 2; piedra 1.8 heredado) sin dejar objeto, manteniendo la física de caída y daño intacta.
+
+#### Scenario: Romper losa de cada material
+
+- **WHEN** el jugador pica una losa el tiempo equivalente a su material base
+- **THEN** la celda vuelve a aire sin dejar objeto
+
+#### Scenario: Bajar de cualquier losa
+
+- **WHEN** el jugador baja caminando desde una losa al suelo
+- **THEN** no recibe daño por caída
