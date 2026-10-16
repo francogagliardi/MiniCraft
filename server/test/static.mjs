@@ -36,7 +36,7 @@ const AIR = 0, GRASS = 1, DIRT = 2, STONE = 3, LOG = 4, PLANKS = 5, LEAVES = 6,
   FLOWER_R = 13, FLOWER_Y = 14, COBBLE = 15, WOOL = 16, SNOW = 17, CLAY = 18,
   OBSIDIAN = 19, PUMPKIN = 20, BOOKS = 21, MELON = 22, SWORD = 100;
 const DOOR = 23, DOOR_OPEN = 24, HAY = 25, SBRICK = 26, DOOR2 = 27, DOOR2_OPEN = 28;
-const DOORZ = 29, DOORZ_OPEN = 30, DOORZ2 = 31, DOORZ2_OPEN = 32;
+const DOORZ = 29, DOORZ_OPEN = 30, DOORZ2 = 31, DOORZ2_OPEN = 32, TORCH = 33;
 const grabObj = (marker) => {
   let i = html.indexOf(marker);
   i = html.indexOf('{', i);
@@ -48,8 +48,8 @@ const grabObj = (marker) => {
   throw new Error('no balanceado: ' + marker);
 };
 const tileUV = (t) => {
-  const col = t % 8, row = (t / 8) | 0, eU = .6 / 128, eV = .6 / 64;
-  return [col / 8 + eU, 1 - (row + 1) / 4 + eV, (col + 1) / 8 - eU, 1 - row / 4 - eV];
+  const col = t % 8, row = (t / 8) | 0, eU = .6 / 128, eV = .6 / 80;
+  return [col / 8 + eU, 1 - (row + 1) / 5 + eV, (col + 1) / 8 - eU, 1 - row / 5 - eV];
 };
 const drawn = new Set([...html.matchAll(/(?:tile|flat|flower)\((\d+),/g)].map(x => +x[1]));
 const DEFS = eval('(' + grabObj('const DEFS = ') + ')');
