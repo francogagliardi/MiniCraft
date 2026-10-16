@@ -867,12 +867,13 @@ function buildChunk(cx,cz){
   if(m){ chunkMeshes[key]=m; scene.add(m); }
 }
 function buildAllChunks(){ for(let cx=0;cx<W/CH;cx++) for(let cz=0;cz<W/CH;cz++) buildChunk(cx,cz); }
-let transMesh=null, flowerMesh=null, glowMesh=null, torchMesh=null, slabMesh=null;
-function buildGlobals(){
-  for(const m of [transMesh,flowerMesh,glowMesh,torchMesh,slabMesh]) if(m){ scene.remove(m); m.geometry.dispose(); }
-  const T=new GeoBuilder(), F=new GeoBuilder(), G=new GeoBuilder(), TM=new GeoBuilder(), S=new GeoBuilder();
-  for(let y=0;y<H;y++) for(let z=0;z<W;z++) for(let x=0;x<W;x++){
-    const b=world[widx(x,y,z)];
+// Meshes globales particionados por chunk (optimizar-renders): chunkKey "cx,cz" -> mesh,
+// por categoría. Mismos materiales y flags {shadow:false} que el barrido único original.
+const transMeshes={}, flowerMeshes={}, glowMeshes={}, torchMeshes={}, slabMeshes={};
+// Emite los quads globales de UNA celda con la misma lógica de ramas por bloque
+// (vidrio, agua, flores, antorcha, glow, losa, escalera) que el barrido completo
+// original. Se comparte entre carga inicial y rebuild parcial por chunk.
+function emitGlobalCell(x,y,z,b,T,F,G,TM,S){
     if(b===GLASS){
       for(let f=0;f<6;f++){ const Fc=FACES[f], nb=get(x+Fc.d[0],y+Fc.d[1],z+Fc.d[2]);
         if(nb===GLASS||isOpaque(nb)) continue;
@@ -963,22 +964,45 @@ function buildGlobals(){
       }
     }
   }
-  transMesh=T.build(matTrans,{shadow:false});
-  if(transMesh){ transMesh.renderOrder=2; scene.add(transMesh); }
-  flowerMesh=F.build(matFlower,{shadow:false}); if(flowerMesh) scene.add(flowerMesh);
-  torchMesh=TM.build(matTorch,{shadow:false}); if(torchMesh) scene.add(torchMesh);
-  glowMesh=G.build(matGlow,{shadow:false}); if(glowMesh) scene.add(glowMesh);
-  slabMesh=S.build(matOpaque,{shadow:false}); if(slabMesh) scene.add(slabMesh);
+// Reconstruye los 5 meshes globales SOLO del chunk (cx,cz), con dispose previo
+// igual que el path original. Los quads son idénticos: misma emitGlobalCell,
+// mismos materiales y {shadow:false}.
+function buildGlobalsForChunk(cx,cz){
+  const key=cx+','+cz;
+  for(const map of [transMeshes,flowerMeshes,glowMeshes,torchMeshes,slabMeshes]){
+    const old=map[key]; if(old){ scene.remove(old); old.geometry.dispose(); delete map[key]; }
+  }
+  const T=new GeoBuilder(), F=new GeoBuilder(), G=new GeoBuilder(), TM=new GeoBuilder(), S=new GeoBuilder();
+  const x0=cx*CH, z0=cz*CH;
+  for(let y=0;y<H;y++) for(let z=z0;z<z0+CH;z++) for(let x=x0;x<x0+CH;x++)
+    emitGlobalCell(x,y,z,world[widx(x,y,z)],T,F,G,TM,S);
+  const t=T.build(matTrans,{shadow:false});
+  if(t){ t.renderOrder=2; transMeshes[key]=t; scene.add(t); }
+  const f=F.build(matFlower,{shadow:false}); if(f){ flowerMeshes[key]=f; scene.add(f); }
+  const tm=TM.build(matTorch,{shadow:false}); if(tm){ torchMeshes[key]=tm; scene.add(tm); }
+  const g=G.build(matGlow,{shadow:false}); if(g){ glowMeshes[key]=g; scene.add(g); }
+  const s=S.build(matOpaque,{shadow:false}); if(s){ slabMeshes[key]=s; scene.add(s); }
+}
+// Barrido completo: SOLO carga inicial (startGame). Por-edit usa buildGlobalsForChunk.
+function buildGlobals(){
+  for(let cx=0;cx<W/CH;cx++) for(let cz=0;cz<W/CH;cz++) buildGlobalsForChunk(cx,cz);
   buildDoors();
 }
+// Conjunto de chunks que refreshAt reconstruye (propio + vecinos de borde).
+// La oclusión solo lee vecinos a distancia 1, así que toda celda afectada por un
+// edit cae en el propio chunk o en el vecino que esta regla ya incluye.
+function affectedChunks(x,z){
+  const cx=(x/CH)|0, cz=(z/CH)|0, set=[cx+','+cz];
+  if(x%CH===0&&cx>0) set.push((cx-1)+','+cz);
+  if(x%CH===15&&cx<W/CH-1) set.push((cx+1)+','+cz);
+  if(z%CH===0&&cz>0) set.push(cx+','+(cz-1));
+  if(z%CH===15&&cz<W/CH-1) set.push(cx+','+(cz+1));
+  return set;
+}
 function refreshAt(x,z){
-  const cx=(x/CH)|0, cz=(z/CH)|0;
-  buildChunk(cx,cz);
-  if(x%CH===0&&cx>0) buildChunk(cx-1,cz);
-  if(x%CH===15&&cx<W/CH-1) buildChunk(cx+1,cz);
-  if(z%CH===0&&cz>0) buildChunk(cx,cz-1);
-  if(z%CH===15&&cz<W/CH-1) buildChunk(cx,cz+1);
-  buildGlobals();
+  const keys=affectedChunks(x,z);
+  for(const k of keys){ const [cx,cz]=k.split(',').map(Number); buildChunk(cx,cz); buildGlobalsForChunk(cx,cz); }
+  buildDoorsForChunks(keys);
 }
 /* ============ PUERTAS (bisagra animada) ============ */
 // Las puertas no van al mesh de chunks: son paneles finos con pivote que
@@ -1031,6 +1055,30 @@ function doorCells(x,y,z){
   else if(y>0&&doorSame(get(x,y-1,z),b)) cells.push([x,y-1,z]);
   return cells;
 }
+// Crea el pivote de puerta de UNA celda con la misma lógica de bisagra/isTop/
+// espejo que el barrido completo original. doorAnims se preserva (nunca se limpia).
+function buildDoorPivot(x,y,z,b){
+  const k=x+','+y+','+z, r=doorRight(b), fz=doorZ(b);
+  const pivot=new THREE.Group();
+  if(!fz){ // panel ancho en X, bisagra al borde X externo
+    pivot.position.set(x+(r?0.97:0.03),y,z+.5);
+  } else { // panel ancho en Z, bisagra al borde Z externo
+    pivot.position.set(x+.5,y,z+(r?0.97:0.03));
+  }
+  const below=y>0?world[widx(x,y-1,z)]:-1;
+  const isTop=doorSame(below,b); // mitad superior = ventana
+  const mir=(r!==fz); // espejo: manija al borde libre en ambos ejes
+  const geo=!fz
+    ? (isTop?(mir?doorGeoTopM:doorGeoTop):(mir?doorGeoBotM:doorGeoBot))
+    : (isTop?(mir?doorGeoTopMZ:doorGeoTopZ):(mir?doorGeoBotMZ:doorGeoBotZ));
+  const m=new THREE.Mesh(geo,doorMat);
+  if(!fz) m.position.set(r?-0.47:0.47,.5,0);
+  else m.position.set(0,.5,r?-0.47:0.47);
+  m.castShadow=true; m.receiveShadow=true;
+  pivot.add(m); pivot.rotation.y=doorAngle(k,b);
+  scene.add(pivot); doorMeshes.set(k,pivot);
+}
+// Barrido completo: SOLO carga inicial (vía buildGlobals). Por-edit usa buildDoorsForChunks.
 function buildDoors(){
   doorAssets();
   for(const [,pivot] of doorMeshes) scene.remove(pivot);
@@ -1038,25 +1086,27 @@ function buildDoors(){
   for(let y=0;y<H;y++) for(let z=0;z<W;z++) for(let x=0;x<W;x++){
     const b=world[widx(x,y,z)];
     if(!isDoor(b)) continue;
-    const k=x+','+y+','+z, r=doorRight(b), fz=doorZ(b);
-    const pivot=new THREE.Group();
-    if(!fz){ // panel ancho en X, bisagra al borde X externo
-      pivot.position.set(x+(r?0.97:0.03),y,z+.5);
-    } else { // panel ancho en Z, bisagra al borde Z externo
-      pivot.position.set(x+.5,y,z+(r?0.97:0.03));
-    }
-    const below=y>0?world[widx(x,y-1,z)]:-1;
-    const isTop=doorSame(below,b); // mitad superior = ventana
-    const mir=(r!==fz); // espejo: manija al borde libre en ambos ejes
-    const geo=!fz
-      ? (isTop?(mir?doorGeoTopM:doorGeoTop):(mir?doorGeoBotM:doorGeoBot))
-      : (isTop?(mir?doorGeoTopMZ:doorGeoTopZ):(mir?doorGeoBotMZ:doorGeoBotZ));
-    const m=new THREE.Mesh(geo,doorMat);
-    if(!fz) m.position.set(r?-0.47:0.47,.5,0);
-    else m.position.set(0,.5,r?-0.47:0.47);
-    m.castShadow=true; m.receiveShadow=true;
-    pivot.add(m); pivot.rotation.y=doorAngle(k,b);
-    scene.add(pivot); doorMeshes.set(k,pivot);
+    buildDoorPivot(x,y,z,b);
+  }
+}
+// Reconciliación parcial: elimina solo los pivotes de las columnas en los chunks
+// afectados y re-escanea solo esas columnas. La geometría de una puerta solo
+// depende de su propia columna (isTop lee la celda de abajo), así que el re-escaneo
+// por columnas de los chunks afectados es exacto.
+function buildDoorsForChunks(keys){
+  doorAssets();
+  const set=new Set(keys);
+  for(const [k,pivot] of [...doorMeshes]){
+    const [x,,z]=k.split(',').map(Number);
+    if(set.has(((x/CH)|0)+','+((z/CH)|0))){ scene.remove(pivot); doorMeshes.delete(k); }
+  }
+  for(const k of keys){
+    const [cx,cz]=k.split(',').map(Number);
+    for(let x=cx*CH;x<cx*CH+CH;x++) for(let z=cz*CH;z<cz*CH+CH;z++)
+      for(let y=0;y<H;y++){
+        const b=world[widx(x,y,z)];
+        if(isDoor(b)) buildDoorPivot(x,y,z,b);
+      }
   }
 }
 function tickDoors(dt){
