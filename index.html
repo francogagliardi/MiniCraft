@@ -228,7 +228,7 @@
     <div class="pill" id="btnFly" title="Volar (F)">🕊 Volar: off</div>
     <div class="pill" id="btnSound" title="Sonido">🔊</div>
     <div class="pill only-touch" id="btnShadow" title="Sombras">☀️</div>
-    <div class="pill only-touch" id="btnFull" title="Pantalla completa">⛶</div>
+    <div class="pill" id="btnFull" title="Pantalla completa (P)">⛶</div>
     <div class="pill" id="btnReset" title="Mundo nuevo">↺ Nuevo</div>
   </div>
 </div>
@@ -236,7 +236,7 @@
 <div id="health"></div>
 <div id="toast"></div>
 <div id="hotbar"></div>
-<div id="hint"><b>W A S D</b> moverse · <b>Espacio</b> saltar<br><b>Click izq</b> romper · <b>Click der</b> poner<br><b>E</b> inventario · <b>Enter</b> chat · acariciá 🐷🐑</div>
+<div id="hint"><b>W A S D</b> moverse · <b>Espacio</b> saltar<br><b>Click izq</b> romper · <b>Click der</b> poner<br><b>E</b> inventario · <b>Enter</b> chat · <b>P</b> pantalla completa · acariciá 🐷🐑</div>
 <div id="plist"></div>
 <div id="chatlog"></div>
 <div id="chatbox"><input id="chatinput" maxlength="140" placeholder="Escribí y Enter para enviar…"><button id="chatSend" style="margin-left:8px;padding:12px 16px;border:none;border-radius:14px;background:#4fae4f;color:#fff;font-weight:700">Enviar</button></div>
@@ -270,6 +270,7 @@
       <div class="only-pc"><b>W A S D</b> Moverse</div><div class="only-pc"><b>Mouse</b> Mirar</div>
       <div class="only-pc"><b>Click izq.</b> Romper / pegar</div><div class="only-pc"><b>Click der.</b> Poner bloque</div>
       <div class="only-pc"><b>E</b> Inventario</div><div class="only-pc"><b>Enter</b> Chat</div>
+      <div class="only-pc"><b>P</b> Pantalla completa</div>
       <div class="only-touch"><b>👆 Joystick</b> Moverse</div><div class="only-touch"><b>👆 Arrastrar</b> Mirar</div>
       <div class="only-touch"><b>👆 Tocar</b> Romper / acariciar</div><div class="only-touch"><b>⚔️ Botón</b> Atacar (con espada)</div>
       <div class="only-touch"><b>🧱 Botón</b> Poner bloque</div><div class="only-touch"><b>⤒ Botón</b> Saltar</div>
@@ -473,7 +474,7 @@ const DEFS = {
   [OBSIDIAN]:{ name:'Obsidiana', css:'linear-gradient(135deg,#3b2a5e,#16121f)', color:0x2a1e45, cube:1, opaque:1, hard:6, tiles:{top:20,side:20,bottom:20} },
   [PUMPKIN]:{ name:'Calabaza 🎃',css:'linear-gradient(135deg,#f5a742,#c9721b)', color:0xe08a2d, cube:1, opaque:1, hard:1, tiles:{top:22,side:21,bottom:22} },
   [BOOKS]:  { name:'Librero 📚', css:'linear-gradient(135deg,#c98d5f,#7a4a28)', color:0xa06a3c, cube:1, opaque:1, hard:1.2, tiles:{top:8,side:23,bottom:8} },
-  [MELON]:  { name:'Melón 🍉',   css:'linear-gradient(135deg,#7ed957,#2f8f46)', color:0x5cb85c, cube:1, opaque:1, hard:.8, tiles:{top:24,side:25,bottom:24} },
+  [MELON]:  { name:'Cactus 🌵',   css:'linear-gradient(135deg,#7ed957,#2f8f46)', color:0x5cb85c, cube:1, opaque:1, hard:.8, tiles:{top:24,side:25,bottom:24} },
   [DOOR]:   { name:'Puerta 🚪',  css:'linear-gradient(135deg,#d8b078,#8a5f30)', color:0xcfa672, door:1, hard:.9, tiles:{top:8,side:26,bottom:8} },
   [DOOR_OPEN]:{ name:'Puerta abierta', css:'linear-gradient(135deg,#d8b078,#8a5f30)', color:0xcfa672, door:1, open:1, hard:.9, tiles:{top:8,side:26,bottom:8} },
   [HAY]:    { name:'Fardo 🌾',   css:'linear-gradient(135deg,#e8c53a,#b8922a)', color:0xd9b832, cube:1, opaque:1, hard:.6, tiles:{top:28,side:27,bottom:28} },
@@ -1269,11 +1270,16 @@ addEventListener('keydown', e=>{
     return;
   }
   if(e.code==='Escape'&&state==='chat'){ closeChat(false); return; }
-  if(e.code==='KeyE'&&(state==='play'||state==='pause')&&!dead){ openInv(); return; }
+  if(e.code==='KeyE'&&!dead){
+    if(state==='inv'){ closeInv(); return; }
+    if(state==='play'||state==='pause'){ openInv(); return; }
+  }
+  if(e.code==='KeyP'&&!dead){
+    if(state==='play'||state==='pause'||state==='inv'){ toggleFull(); return; }
+  }
   if(state!=='play'||!canAct()||dead) return;
   if(e.code.startsWith('Digit')){ const n=+e.code.slice(5); if(n>=1&&n<=9) select(n-1); }
   if(e.code==='KeyF'&&isAdmin()) toggleFly();
-  if(e.code==='KeyE') openInv();
 });
 addEventListener('keyup', e=>keys[e.code]=false);
 
@@ -2138,8 +2144,8 @@ function applyModeUI(){
   fly.classList.toggle('off',!isAdmin());
   renderHealth();
   document.getElementById('hint').innerHTML = isAdmin()
-    ? '<b>W A S D</b> moverse · <b>Espacio</b> saltar<br><b>Click izq</b> romper · <b>Click der</b> poner<br><b>E</b> inventario · <b>F</b> volar · <b>Enter</b> chat'
-    : '<b>W A S D</b> moverse · <b>Espacio</b> saltar<br><b>Mantené click izq</b> para picar ⛏<br><b>E</b> inventario · <b>Enter</b> chat · ¡cuidado al caer!';
+    ? '<b>W A S D</b> moverse · <b>Espacio</b> saltar<br><b>Click izq</b> romper · <b>Click der</b> poner<br><b>E</b> inventario · <b>F</b> volar · <b>Enter</b> chat · <b>P</b> pantalla'
+    : '<b>W A S D</b> moverse · <b>Espacio</b> saltar<br><b>Mantené click izq</b> para picar ⛏<br><b>E</b> inventario · <b>Enter</b> chat · <b>P</b> pantalla · ¡cuidado al caer!';
 }
 function toggleFly(){
   if(!isAdmin()) return;
