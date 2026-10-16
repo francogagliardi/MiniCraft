@@ -126,6 +126,12 @@ try {
   a.ws.send(JSON.stringify({ t: 'edit', x: 84, y: 15, z: 80, v: 29 }));
   const pd5 = await nextOf(b.seen, b.seen.length, 'pedit');
   ok(pd5.v === 29, 'relay de puerta en Z (29)');
+  // escaleras 39-58: las 20 variantes viajan por la red como cualquier bloque
+  for (let v = 39; v <= 58; v++) {
+    a.ws.send(JSON.stringify({ t: 'edit', x: 80 + (v - 39), y: 16, z: 81, v }));
+    const pe2 = await nextOf(b.seen, b.seen.length, 'pedit');
+    ok(pe2.v === v, `relay de escalera (${v})`);
+  }
 
   // 5. daño PvP: víctima recibe phit + atacante recibe hitok
   // (los índices se capturan ANTES de mandar el hit: phit puede llegar primero)

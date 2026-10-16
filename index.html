@@ -413,7 +413,13 @@ const AIR=0, GRASS=1, DIRT=2, STONE=3, LOG=4, PLANKS=5, LEAVES=6, SAND=7, GLASS=
       BRICK=9, GLOW=10, BEDROCK=11, WATER=12, FLOWER_R=13, FLOWER_Y=14,
       COBBLE=15, WOOL=16, SNOW=17, CLAY=18, OBSIDIAN=19, PUMPKIN=20, BOOKS=21, MELON=22,
       DOOR=23, DOOR_OPEN=24, HAY=25, SBRICK=26, DOOR2=27, DOOR2_OPEN=28,
-      DOORZ=29, DOORZ_OPEN=30, DOORZ2=31, DOORZ2_OPEN=32, TORCH=33, SLAB_STONE=34, SLAB_PLANKS=35, SLAB_COBBLE=36, SLAB_BRICK=37, SLAB_SBRICK=38;
+      DOORZ=29, DOORZ_OPEN=30, DOORZ2=31, DOORZ2_OPEN=32, TORCH=33, SLAB_STONE=34, SLAB_PLANKS=35, SLAB_COBBLE=36, SLAB_BRICK=37, SLAB_SBRICK=38,
+      STAIR_STONE_E=39, STAIR_STONE_W=40, STAIR_STONE_S=41, STAIR_STONE_N=42,
+      STAIR_PLANKS_E=43, STAIR_PLANKS_W=44, STAIR_PLANKS_S=45, STAIR_PLANKS_N=46,
+      STAIR_COBBLE_E=47, STAIR_COBBLE_W=48, STAIR_COBBLE_S=49, STAIR_COBBLE_N=50,
+      STAIR_BRICK_E=51, STAIR_BRICK_W=52, STAIR_BRICK_S=53, STAIR_BRICK_N=54,
+      STAIR_SBRICK_E=55, STAIR_SBRICK_W=56, STAIR_SBRICK_S=57, STAIR_SBRICK_N=58;
+// Escaleras: stairDir = eje de subida (0:+X=E 1:-X=W 2:+Z=S 3:-Z=N); mitad baja al frente (-dir), alta al fondo.
 const SWORD = 100; // item (no es bloque, no se puede poner en el mundo)
 const SAVE_KEY = 'minicraft-save-v2';
 const CLIENT_V = 'v8'; // sello visible en menú/pausa: confirma qué build está corriendo
@@ -439,6 +445,26 @@ const DEFS = {
   [SLAB_COBBLE]: { name:'Losa de roca 🪨', css:'linear-gradient(135deg,#b9bec7 0 50%,#7e848e 50% 100%)', color:0x9aa0a8, cube:1, slab:1, slabBase:COBBLE, hard:1.8, tiles:{top:16,side:16,bottom:16} },
   [SLAB_BRICK]: { name:'Losa de ladrillos 🧱', css:'linear-gradient(135deg,#d97b63 0 50%,#a94a38 50% 100%)', color:0xc05a44, cube:1, slab:1, slabBase:BRICK, hard:2, tiles:{top:9,side:9,bottom:9} },
   [SLAB_SBRICK]: { name:'Losa de piedra tallada 🧱', css:'linear-gradient(135deg,#b9bec7 0 50%,#7e848e 50% 100%)', color:0x9aa0a8, cube:1, slab:1, slabBase:SBRICK, hard:2, tiles:{top:29,side:29,bottom:29} },
+  [STAIR_STONE_E]: { name:'Escalera de piedra 🪜', css:'linear-gradient(135deg,#c3c8cf,#9298a1)', color:0xa8adb5, cube:1, stair:1, stairDir:0, stairBase:STONE, hard:1.8, tiles:{top:3,side:3,bottom:3} },
+  [STAIR_STONE_W]: { name:'Escalera de piedra 🪜', css:'linear-gradient(135deg,#c3c8cf,#9298a1)', color:0xa8adb5, cube:1, stair:1, stairDir:1, stairBase:STONE, hard:1.8, tiles:{top:3,side:3,bottom:3} },
+  [STAIR_STONE_S]: { name:'Escalera de piedra 🪜', css:'linear-gradient(135deg,#c3c8cf,#9298a1)', color:0xa8adb5, cube:1, stair:1, stairDir:2, stairBase:STONE, hard:1.8, tiles:{top:3,side:3,bottom:3} },
+  [STAIR_STONE_N]: { name:'Escalera de piedra 🪜', css:'linear-gradient(135deg,#c3c8cf,#9298a1)', color:0xa8adb5, cube:1, stair:1, stairDir:3, stairBase:STONE, hard:1.8, tiles:{top:3,side:3,bottom:3} },
+  [STAIR_PLANKS_E]: { name:'Escalera de tablones 🪜', css:'linear-gradient(135deg,#d8b078,#b78d55)', color:0xcfa672, cube:1, stair:1, stairDir:0, stairBase:PLANKS, hard:1, tiles:{top:8,side:8,bottom:8} },
+  [STAIR_PLANKS_W]: { name:'Escalera de tablones 🪜', css:'linear-gradient(135deg,#d8b078,#b78d55)', color:0xcfa672, cube:1, stair:1, stairDir:1, stairBase:PLANKS, hard:1, tiles:{top:8,side:8,bottom:8} },
+  [STAIR_PLANKS_S]: { name:'Escalera de tablones 🪜', css:'linear-gradient(135deg,#d8b078,#b78d55)', color:0xcfa672, cube:1, stair:1, stairDir:2, stairBase:PLANKS, hard:1, tiles:{top:8,side:8,bottom:8} },
+  [STAIR_PLANKS_N]: { name:'Escalera de tablones 🪜', css:'linear-gradient(135deg,#d8b078,#b78d55)', color:0xcfa672, cube:1, stair:1, stairDir:3, stairBase:PLANKS, hard:1, tiles:{top:8,side:8,bottom:8} },
+  [STAIR_COBBLE_E]: { name:'Escalera de roca 🪜', css:'linear-gradient(135deg,#b9bec7,#7e848e)', color:0x9aa0a8, cube:1, stair:1, stairDir:0, stairBase:COBBLE, hard:1.8, tiles:{top:16,side:16,bottom:16} },
+  [STAIR_COBBLE_W]: { name:'Escalera de roca 🪜', css:'linear-gradient(135deg,#b9bec7,#7e848e)', color:0x9aa0a8, cube:1, stair:1, stairDir:1, stairBase:COBBLE, hard:1.8, tiles:{top:16,side:16,bottom:16} },
+  [STAIR_COBBLE_S]: { name:'Escalera de roca 🪜', css:'linear-gradient(135deg,#b9bec7,#7e848e)', color:0x9aa0a8, cube:1, stair:1, stairDir:2, stairBase:COBBLE, hard:1.8, tiles:{top:16,side:16,bottom:16} },
+  [STAIR_COBBLE_N]: { name:'Escalera de roca 🪜', css:'linear-gradient(135deg,#b9bec7,#7e848e)', color:0x9aa0a8, cube:1, stair:1, stairDir:3, stairBase:COBBLE, hard:1.8, tiles:{top:16,side:16,bottom:16} },
+  [STAIR_BRICK_E]: { name:'Escalera de ladrillos 🪜', css:'linear-gradient(135deg,#d97b63,#a94a38)', color:0xc05a44, cube:1, stair:1, stairDir:0, stairBase:BRICK, hard:2, tiles:{top:9,side:9,bottom:9} },
+  [STAIR_BRICK_W]: { name:'Escalera de ladrillos 🪜', css:'linear-gradient(135deg,#d97b63,#a94a38)', color:0xc05a44, cube:1, stair:1, stairDir:1, stairBase:BRICK, hard:2, tiles:{top:9,side:9,bottom:9} },
+  [STAIR_BRICK_S]: { name:'Escalera de ladrillos 🪜', css:'linear-gradient(135deg,#d97b63,#a94a38)', color:0xc05a44, cube:1, stair:1, stairDir:2, stairBase:BRICK, hard:2, tiles:{top:9,side:9,bottom:9} },
+  [STAIR_BRICK_N]: { name:'Escalera de ladrillos 🪜', css:'linear-gradient(135deg,#d97b63,#a94a38)', color:0xc05a44, cube:1, stair:1, stairDir:3, stairBase:BRICK, hard:2, tiles:{top:9,side:9,bottom:9} },
+  [STAIR_SBRICK_E]: { name:'Escalera de piedra tallada 🪜', css:'linear-gradient(135deg,#b9bec7,#7e848e)', color:0x9aa0a8, cube:1, stair:1, stairDir:0, stairBase:SBRICK, hard:2, tiles:{top:29,side:29,bottom:29} },
+  [STAIR_SBRICK_W]: { name:'Escalera de piedra tallada 🪜', css:'linear-gradient(135deg,#b9bec7,#7e848e)', color:0x9aa0a8, cube:1, stair:1, stairDir:1, stairBase:SBRICK, hard:2, tiles:{top:29,side:29,bottom:29} },
+  [STAIR_SBRICK_S]: { name:'Escalera de piedra tallada 🪜', css:'linear-gradient(135deg,#b9bec7,#7e848e)', color:0x9aa0a8, cube:1, stair:1, stairDir:2, stairBase:SBRICK, hard:2, tiles:{top:29,side:29,bottom:29} },
+  [STAIR_SBRICK_N]: { name:'Escalera de piedra tallada 🪜', css:'linear-gradient(135deg,#b9bec7,#7e848e)', color:0x9aa0a8, cube:1, stair:1, stairDir:3, stairBase:SBRICK, hard:2, tiles:{top:29,side:29,bottom:29} },
   [COBBLE]: { name:'Roca',       css:'linear-gradient(135deg,#b9bec7,#7e848e)', color:0x9aa0a8, cube:1, opaque:1, hard:1.8, tiles:{top:16,side:16,bottom:16} },
   [WOOL]:   { name:'Lana',       css:'linear-gradient(135deg,#ffffff,#d9d4c8)', color:0xefe9dc, cube:1, opaque:1, hard:.7, tiles:{top:17,side:17,bottom:17} },
   [SNOW]:   { name:'Nieve',      css:'linear-gradient(135deg,#ffffff,#cfe4f5)', color:0xf2f8ff, cube:1, opaque:1, hard:.5, tiles:{top:18,side:18,bottom:18} },
@@ -459,7 +485,7 @@ const DEFS = {
   [DOORZ2_OPEN]:{ name:'Puerta abierta', css:'linear-gradient(135deg,#d8b078,#8a5f30)', color:0xcfa672, door:1, open:1, faceZ:1, hard:.9, tiles:{top:8,side:26,bottom:8} },
   [SWORD]:  { name:'Espada ⚔️',  css:'linear-gradient(135deg,#f4f6fa 0 60%,#c9a13b 60% 72%,#8a94a8 72% 100%)', color:0xdfe6f2, item:'sword' },
 };
-const INVENTORY = [GRASS,DIRT,STONE,COBBLE,SBRICK,LOG,PLANKS,BOOKS,LEAVES,SAND,SNOW,CLAY,WOOL,GLASS,BRICK,OBSIDIAN,PUMPKIN,MELON,HAY,GLOW,DOOR,SWORD,FLOWER_R,FLOWER_Y,TORCH,SLAB_STONE,SLAB_PLANKS,SLAB_COBBLE,SLAB_BRICK,SLAB_SBRICK];
+const INVENTORY = [GRASS,DIRT,STONE,COBBLE,SBRICK,LOG,PLANKS,BOOKS,LEAVES,SAND,SNOW,CLAY,WOOL,GLASS,BRICK,OBSIDIAN,PUMPKIN,MELON,HAY,GLOW,DOOR,SWORD,FLOWER_R,FLOWER_Y,TORCH,SLAB_STONE,SLAB_PLANKS,SLAB_COBBLE,SLAB_BRICK,SLAB_SBRICK,STAIR_STONE_E,STAIR_PLANKS_E,STAIR_COBBLE_E,STAIR_BRICK_E,STAIR_SBRICK_E];
 const DEFAULT_HOTBAR = [GRASS,DIRT,STONE,PLANKS,LOG,LEAVES,GLASS,BRICK,COBBLE];
 
 /* ============ MODO / VIDA ============ */
@@ -893,6 +919,48 @@ function buildGlobals(){
         S.quad(x,y+.5,z,[[0,0,1],[1,0,1],[1,0,0],[0,0,0]],[0,1,0],T33.top,1,false);
       if(!isOpaque(get(x,y-1,z)))
         S.quad(x,y,z,[[0,0,0],[1,0,0],[1,0,1],[0,0,1]],[0,-1,0],T33.bottom,.5,false);
+    } else if(DEFS[b]?.stair){
+      // Escalera en L generalizada por flag stair + stairDir (0:+X 1:-X 2:+Z 3:-Z = eje de subida):
+      // mitad inferior completa (0-0.5) + mitad superior trasera (0.5-1.0). UNA rama para las 20 variantes.
+      const T33=DEFS[b].tiles, sd=DEFS[b].stairDir|0;
+      const SIDES=[
+        { d:[1,0,0],  shade:.8, v:[[1,0,1],[1,0,0],[1,.5,0],[1,.5,1]] },
+        { d:[-1,0,0], shade:.8, v:[[0,0,0],[0,0,1],[0,.5,1],[0,.5,0]] },
+        { d:[0,0,1],  shade:.7, v:[[0,0,1],[1,0,1],[1,.5,1],[0,.5,1]] },
+        { d:[0,0,-1], shade:.7, v:[[1,0,0],[0,0,0],[0,.5,0],[1,.5,0]] },
+      ];
+      for(const Fc of SIDES){
+        if(isOpaque(get(x+Fc.d[0],y+Fc.d[1],z+Fc.d[2]))) continue;
+        S.quad(x,y,z,Fc.v,Fc.d,T33.side,Fc.shade,false);
+      }
+      // stepTop (peldaño bajo) + riser (contrahuella) son internos: siempre se dibujan.
+      // back/sA/sB (trasero + laterales altos) y htop se ocultan contra opacos como los cubos.
+      const P=[
+        { top:[[0,.5,1],[.5,.5,1],[.5,.5,0],[0,.5,0]], ris:[[.5,.5,0],[.5,.5,1],[.5,1,1],[.5,1,0]], risD:[-1,0,0],
+          htop:[[.5,1,1],[1,1,1],[1,1,0],[.5,1,0]], back:{d:[1,0,0],shade:.8,v:[[1,.5,1],[1,.5,0],[1,1,0],[1,1,1]]},
+          sA:{d:[0,0,1],shade:.7,v:[[.5,.5,1],[1,.5,1],[1,1,1],[.5,1,1]]}, sB:{d:[0,0,-1],shade:.7,v:[[1,.5,0],[.5,.5,0],[.5,1,0],[1,1,0]]} },
+        { top:[[.5,.5,1],[1,.5,1],[1,.5,0],[.5,.5,0]], ris:[[.5,.5,1],[.5,.5,0],[.5,1,0],[.5,1,1]], risD:[1,0,0],
+          htop:[[0,1,1],[.5,1,1],[.5,1,0],[0,1,0]], back:{d:[-1,0,0],shade:.8,v:[[0,.5,0],[0,.5,1],[0,1,1],[0,1,0]]},
+          sA:{d:[0,0,1],shade:.7,v:[[0,.5,1],[.5,.5,1],[.5,1,1],[0,1,1]]}, sB:{d:[0,0,-1],shade:.7,v:[[.5,.5,0],[0,.5,0],[0,1,0],[.5,1,0]]} },
+        { top:[[0,.5,.5],[1,.5,.5],[1,.5,0],[0,.5,0]], ris:[[1,.5,.5],[0,.5,.5],[0,1,.5],[1,1,.5]], risD:[0,0,-1],
+          htop:[[0,1,1],[1,1,1],[1,1,.5],[0,1,.5]], back:{d:[0,0,1],shade:.7,v:[[0,.5,1],[1,.5,1],[1,1,1],[0,1,1]]},
+          sA:{d:[1,0,0],shade:.8,v:[[1,.5,1],[1,.5,.5],[1,1,.5],[1,1,1]]}, sB:{d:[-1,0,0],shade:.8,v:[[0,.5,.5],[0,.5,1],[0,1,1],[0,1,.5]]} },
+        { top:[[0,.5,1],[1,.5,1],[1,.5,.5],[0,.5,.5]], ris:[[0,.5,.5],[1,.5,.5],[1,1,.5],[0,1,.5]], risD:[0,0,1],
+          htop:[[0,1,.5],[1,1,.5],[1,1,0],[0,1,0]], back:{d:[0,0,-1],shade:.7,v:[[1,.5,0],[0,.5,0],[0,1,0],[1,1,0]]},
+          sA:{d:[1,0,0],shade:.8,v:[[1,.5,.5],[1,.5,0],[1,1,0],[1,1,.5]]}, sB:{d:[-1,0,0],shade:.8,v:[[0,.5,0],[0,.5,.5],[0,1,.5],[0,1,0]]} },
+      ][sd]||null;
+      if(P){
+        S.quad(x,y,z,P.top,[0,1,0],T33.top,1,false);
+        S.quad(x,y,z,P.ris,P.risD,T33.side,.85,false);
+        for(const Fc of [P.back,P.sA,P.sB]){
+          if(isOpaque(get(x+Fc.d[0],y+Fc.d[1],z+Fc.d[2]))) continue;
+          S.quad(x,y,z,Fc.v,Fc.d,T33.side,Fc.shade??.75,false);
+        }
+        if(!isOpaque(get(x,y+1,z)))
+          S.quad(x,y,z,P.htop,[0,1,0],T33.top,1,false);
+        if(!isOpaque(get(x,y-1,z)))
+          S.quad(x,y,z,[[0,0,0],[1,0,0],[1,0,1],[0,0,1]],[0,-1,0],T33.bottom,.5,false);
+      }
     }
   }
   transMesh=T.build(matTrans,{shadow:false});
@@ -1158,18 +1226,33 @@ addEventListener('keydown', e=>{
 });
 addEventListener('keyup', e=>keys[e.code]=false);
 
+function stairLowAt(b,px,pz,x,z){
+  // ¿La huella del jugador dentro de la celda (x,z) cae en la mitad BAJA de la escalera?
+  // stairDir = eje de subida: 0:+X 1:-X 2:+Z 3:-Z; la mitad baja es la opuesta a la subida.
+  // Se recorta al solape con la celda: basta que lo que entra en la celda pise bajo.
+  const sd=DEFS[b]?.stairDir|0, r=.3, e=1e-6;
+  if(sd<2){
+    const lo=Math.max(px-r,x), hi=Math.min(px+r,x+1);
+    const blo=sd===0?x:x+.5, bhi=sd===0?x+.5:x+1;
+    return lo>=blo-e&&hi<=bhi+e;
+  }
+  const lo=Math.max(pz-r,z), hi=Math.min(pz+r,z+1);
+  const blo=sd===2?z:z+.5, bhi=sd===2?z+.5:z+1;
+  return lo>=blo-e&&hi<=bhi+e;
+}
 function collidesAt(px,py,pz,r,hgt){
   for(let x=Math.floor(px-r);x<=Math.floor(px+r);x++)
     for(let y=Math.floor(py);y<=Math.floor(py+hgt-.01);y++)
       for(let z=Math.floor(pz-r);z<=Math.floor(pz+r);z++){
         const b=inB(x,y,z)?world[widx(x,y,z)]:AIR;
         if(DEFS[b]?.slab&&py>=y+.5) continue; // pies a la altura o sobre la tapa: no traba
+        if(DEFS[b]?.stair&&py>=y+.5&&stairLowAt(b,px,pz,x,z)) continue; // sobre el peldaño bajo: no traba
         if(solidAt(x,y,z)) return true;
       }
   return false;
 }
 const collides=(px,py,pz)=>collidesAt(px,py,pz,.3,1.8);
-// Auto-step 0.5: solo ante losas (nunca cubos), con pies en suelo y lugar arriba.
+// Auto-step 0.5: solo ante losas y escaleras (nunca cubos), con pies en suelo y lugar arriba.
 function slabBlocked(px,py,pz){
   const r=.3;
   let slab=false;
@@ -1178,7 +1261,7 @@ function slabBlocked(px,py,pz){
     for(let z=Math.floor(pz-r);z<=Math.floor(pz+r);z++){
       const b=inB(x,y,z)?world[widx(x,y,z)]:AIR;
       if(b===AIR||b===WATER) continue;
-      if(DEFS[b]?.slab){ slab=true; continue; }
+      if(DEFS[b]?.slab||DEFS[b]?.stair){ slab=true; continue; }
       if(isSolid(b)) return false;
     }
   return slab;
@@ -1604,6 +1687,15 @@ function doPlace(){
   if(!inB(x,y,z)) return;
   const cur=get(x,y,z);
   if(DEFS[cur]?.slab&&id===cur){ editBlock(x,y,z,DEFS[cur].slabBase); sfxPlace(); return; }
+  if(dd?.stair){
+    // Escalera: el ítem elige el material, lookDir() la orientación (frente bajo hacia el jugador).
+    if(cur!==AIR&&cur!==WATER&&!DEFS[cur].flower) return; // sin apilado ni conversión
+    const p=player.pos;
+    if(x+1>p.x-.3&&x<p.x+.3&&z+1>p.z-.3&&z<p.z+.3&&y+1>p.y&&y<p.y+1.8){ toast('⛔ Ahí estás vos'); return; }
+    const ld=lookDir();
+    const dir=Math.abs(ld.x)>Math.abs(ld.z)?(ld.x>0?0:1):(ld.z>0?2:3);
+    editBlock(x,y,z,(id-dd.stairDir)+dir); sfxPlace(); return;
+  }
   if(cur!==AIR&&cur!==WATER&&!DEFS[cur].flower) return;
   if(dd.flower){
     if(id===TORCH){

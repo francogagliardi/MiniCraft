@@ -38,6 +38,11 @@ const AIR = 0, GRASS = 1, DIRT = 2, STONE = 3, LOG = 4, PLANKS = 5, LEAVES = 6,
 const DOOR = 23, DOOR_OPEN = 24, HAY = 25, SBRICK = 26, DOOR2 = 27, DOOR2_OPEN = 28;
 const DOORZ = 29, DOORZ_OPEN = 30, DOORZ2 = 31, DOORZ2_OPEN = 32, TORCH = 33, SLAB_STONE = 34;
 const SLAB_PLANKS = 35, SLAB_COBBLE = 36, SLAB_BRICK = 37, SLAB_SBRICK = 38;
+const STAIR_STONE_E = 39, STAIR_STONE_W = 40, STAIR_STONE_S = 41, STAIR_STONE_N = 42;
+const STAIR_PLANKS_E = 43, STAIR_PLANKS_W = 44, STAIR_PLANKS_S = 45, STAIR_PLANKS_N = 46;
+const STAIR_COBBLE_E = 47, STAIR_COBBLE_W = 48, STAIR_COBBLE_S = 49, STAIR_COBBLE_N = 50;
+const STAIR_BRICK_E = 51, STAIR_BRICK_W = 52, STAIR_BRICK_S = 53, STAIR_BRICK_N = 54;
+const STAIR_SBRICK_E = 55, STAIR_SBRICK_W = 56, STAIR_SBRICK_S = 57, STAIR_SBRICK_N = 58;
 const grabObj = (marker) => {
   let i = html.indexOf(marker);
   i = html.indexOf('{', i);
@@ -63,6 +68,22 @@ for (const [id, d] of Object.entries(DEFS)) {
     if (!(a >= 0 && c <= 1 && b >= 0 && e <= 1 && a < c && b < e)) ok(false, `UV inválida tile ${t} (${d.name})`);
   }
   if ((d.cube || d.flower || d.glow) && typeof d.hard !== 'number') ok(false, `${d.name} sin dureza`);
+}
+// 3b. escaleras 39-58: 5 materiales x 4 orientaciones, flag stair + stairDir + stairBase + dureza del base
+{
+  const baseOf = { 39: 3, 43: 5, 47: 15, 51: 9, 55: 26 };
+  const hardOf = { 3: 1.8, 5: 1, 15: 1.8, 9: 2, 26: 2 };
+  let stairOk = true;
+  for (let g = 0; g < 5; g++) {
+    const base = 39 + g * 4;
+    for (let d = 0; d < 4; d++) {
+      const id = base + d, dd = DEFS[id];
+      if (!dd || dd.stair !== 1 || dd.stairDir !== d || dd.stairBase !== baseOf[base] || dd.hard !== hardOf[baseOf[base]]) {
+        ok(false, `escalera ${id} mal definida`); stairOk = false;
+      }
+    }
+  }
+  if (stairOk) ok(true, 'escaleras 39-58 (5 materiales x 4 dirs, dureza del base)');
 }
 ok(true, 'tiles del atlas + durezas');
 
