@@ -1612,7 +1612,7 @@ function onLeftDown(){
 function greetRemote(a){
   burst(a.g.position.x-.5, a.g.position.y+1.7, a.g.position.z-.5, 0xff6b9d, 14, true);
   tone(600,920,.12,'sine',.15);
-  toast(`💕 ${a.name} te saluda`);
+  toast(`💕 A ${a.name} le gusta que lo toquen ahí`);
 }
 let rAction='place'; // qué hace mantener el clic derecho: place | greet | pet | attack
 function onRightDown(){
