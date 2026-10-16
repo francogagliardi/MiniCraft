@@ -1375,7 +1375,9 @@ function renderHealth(){
   el.style.display=isAdmin()?'none':'block';
 }
 let bob=0, stepAcc=0;
-function physics(dt){
+let jumpQueued=false; // salto iniciado en physicsMove: physicsGravity no descuenta g ese frame (conserva 8.8 exacto)
+function physicsMove(dt, withInput){
+  if(!withInput) return;
   const sp=(keys.ShiftLeft&&!player.fly)?7.4:4.8;
   const s=Math.sin(player.yaw), c=Math.cos(player.yaw);
   let ix=0,iz=0;
@@ -1393,11 +1395,20 @@ const l=Math.hypot(ix,iz)||1; ix/=l; iz/=l;
     movePlayer('x',player.vel.x*dt); movePlayer('y',player.vel.y*dt); movePlayer('z',player.vel.z*dt);
   } else {
     player.vel.x=ix*sp; player.vel.z=iz*sp;
+    if(keys.Space&&player.onGround){ player.vel.y=8.8; player.onGround=false; jumpQueued=true; tone(300,500,.08,'sine',.06); }
+    movePlayer('x',player.vel.x*dt); movePlayer('z',player.vel.z*dt);
+  }
+}
+function physicsGravity(dt){
+  if(player.fly){
+    jumpQueued=false; // volando no hay caída; solo se actualiza cámara/coords abajo
+  } else {
     const wasGround=player.onGround;
-    player.vel.y-=26*dt; if(player.vel.y<-22)player.vel.y=-22;
-    if(keys.Space&&player.onGround){ player.vel.y=8.8; player.onGround=false; tone(300,500,.08,'sine',.06); }
+    if(jumpQueued){ jumpQueued=false; }
+    else { player.vel.y-=26*dt; if(player.vel.y<-22)player.vel.y=-22; }
+    if(state!=='play'){ player.vel.x=0; player.vel.z=0; } // con menú: sin deriva horizontal ni pasos
     player.onGround=false;
-    movePlayer('x',player.vel.x*dt); movePlayer('z',player.vel.z*dt); movePlayer('y',player.vel.y*dt);
+    movePlayer('y',player.vel.y*dt);
     if(!isAdmin()&&!dead){
       if(!player.onGround) airPeak=Math.max(airPeak,player.pos.y);
       else {
@@ -1413,7 +1424,7 @@ const l=Math.hypot(ix,iz)||1; ix/=l; iz/=l;
   // regen lenta
   const now=performance.now()/1000;
   if(!isAdmin()&&!dead&&hp<MAXHP&&now-lastHurt>5&&now-lastRegen>4){ lastRegen=now; hp=Math.min(MAXHP,hp+1); renderHealth(); }
-  const moving=Math.hypot(player.vel.x,player.vel.z)>.5&&player.onGround;
+  const moving=state==='play'&&Math.hypot(player.vel.x,player.vel.z)>.5&&player.onGround;
   if(moving){ bob+=dt*10; stepAcc+=dt; if(stepAcc>.34){stepAcc=0; sfxStep();} }
   camera.position.set(player.pos.x, player.pos.y+1.62+(moving?Math.sin(bob)*.05:0), player.pos.z);
   camera.rotation.set(0,0,0); camera.rotateY(player.yaw); camera.rotateX(player.pitch);
@@ -2290,7 +2301,8 @@ function tickWater(){
 function loop(now){
   requestAnimationFrame(loop);
   const dt=Math.min((now-last)/1000,.05); last=now;
-  if(started&&state==='play'&&canAct()&&!dead){ physics(dt); tickBreak(dt); }
+  if(started&&state==='play'&&canAct()&&!dead){ physicsMove(dt,true); tickBreak(dt); }
+  if(started&&!dead&&(state==='play'||state==='inv'||state==='chat'||state==='pause')) physicsGravity(dt);
   if(started&&dead&&deathPos){
     // te caés al suelo: la vista baja y se ladea, y recién después aparece el cartel
     deathT+=dt;
