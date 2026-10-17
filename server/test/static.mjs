@@ -34,7 +34,7 @@ try {
 const AIR = 0, GRASS = 1, DIRT = 2, STONE = 3, LOG = 4, PLANKS = 5, LEAVES = 6,
   SAND = 7, GLASS = 8, BRICK = 9, GLOW = 10, BEDROCK = 11, WATER = 12,
   FLOWER_R = 13, FLOWER_Y = 14, COBBLE = 15, WOOL = 16, SNOW = 17, CLAY = 18,
-  OBSIDIAN = 19, PUMPKIN = 20, BOOKS = 21, MELON = 22, SWORD = 100;
+  OBSIDIAN = 19, PUMPKIN = 20, BOOKS = 21, MELON = 22, SWORD = 100, PICK = 101;
 const DOOR = 23, DOOR_OPEN = 24, HAY = 25, SBRICK = 26, DOOR2 = 27, DOOR2_OPEN = 28;
 const DOORZ = 29, DOORZ_OPEN = 30, DOORZ2 = 31, DOORZ2_OPEN = 32, TORCH = 33, SLAB_STONE = 34;
 const SLAB_PLANKS = 35, SLAB_COBBLE = 36, SLAB_BRICK = 37, SLAB_SBRICK = 38;
@@ -162,6 +162,39 @@ for (const needle of ['const TOUCH', 'canAct()', 'touchControls', 'jumpTouch', '
 ok(/function tryLock\(\)\{\s*if \(TOUCH\) return;/.test(html), 'tryLock con guarda TOUCH');
 ok(!/hotbarIds\[sel\]!==SWORD/.test(html), 'sin bloqueo total sin espada (romper/poner/acariciar libres)');
 ok(html.includes('Necesitás la espada'), 'aviso al atacar sin espada');
+
+// 7. ajustes del pico por feedback en Docker: 0.25 s + golpe animado + pose girada
+{
+  // 7a. tiempo objetivo: pico 0.25 s (constante tuneable), mano ×1.5, BEDROCK ∞
+  const hm = html.match(/const HAND_MULT = ([\d.]+), PICK_TIME = ([\d.]+)/);
+  ok(hm && +hm[1] === 1.5, `HAND_MULT = 1.5 (${hm ? hm[1] : 'sin match'})`);
+  if (hm) {
+    const HAND_MULT = +hm[1], PICK_TIME = +hm[2];
+    const mk = new Function('DEFS', 'HAND_MULT', 'PICK_TIME',
+      'return function breakTime(blockId, heldItem)' + grabObj('function breakTime(blockId, heldItem)'));
+    const breakTime = mk(DEFS, HAND_MULT, PICK_TIME);
+    ok(PICK_TIME === .25, `PICK_TIME = .25 (${PICK_TIME})`);
+    ok(Math.abs(breakTime(STONE, PICK) - .25) < 1e-9, 'pico rompe piedra en 0.25 s');
+    ok(Math.abs(breakTime(OBSIDIAN, PICK) - .25) < 1e-9, 'pico universal (obsidiana también 0.25 s)');
+    ok(Math.abs(breakTime(PLANKS, SWORD) - 1.5) < 1e-9, 'mano ×1.5 intacto (tablones 1.5 s)');
+    ok(Math.abs(breakTime(OBSIDIAN, SWORD) - 9) < 1e-9, 'mano escala con la dureza (obsidiana 9 s)');
+    ok(breakTime(BEDROCK, PICK) === Infinity && breakTime(BEDROCK, SWORD) === Infinity,
+      'BEDROCK inviolable con y sin pico');
+  }
+
+  // 7b. animación de golpe del pico reutilizando swingT/SWING_DUR (como la espada)
+  const tp = grabObj('function tickPick(dt, now)');
+  ok(/mouseDown\[0\]/.test(tp) && /swingT=0/.test(tp), 'tickPick reinicia el golpe mientras se pica');
+  ok(/swingT=Math\.min\(1,swingT\+dt\/SWING_DUR\)/.test(tp), 'tickPick progresa el golpe como la espada');
+  ok(/swingT>=1/.test(tp) && /PICK_ROT/.test(tp), 'tickPick vuelve al idle (pose base) al soltar');
+  const ts = grabObj('function tickSword(dt, now)');
+  ok(/swingT/.test(ts) && /SWING_DUR/.test(ts), 'tickSword conserva su animación (regresión)');
+
+  // 7c. pose girada: cabeza hacia el fondo (~90° Y) y tamaño reducido
+  ok(/const PICK_POS = new THREE\.Vector3\(-\.42,-\.42,-\.7\)/.test(html), 'pico espejado a la izquierda');
+  ok(/const PICK_ROT = new THREE\.Euler\([^)]*Math\.PI\/2/.test(html), 'pose girada ~90° sobre Y');
+  ok(/pickG\.scale\.setScalar\(/.test(html), 'pico reducido de tamaño');
+}
 
 if (fails) { console.log(`\n💥 ${fails} chequeo(s) fallaron`); process.exit(1); }
 console.log('\n🎉 tests estáticos OK');

@@ -423,6 +423,7 @@ const AIR=0, GRASS=1, DIRT=2, STONE=3, LOG=4, PLANKS=5, LEAVES=6, SAND=7, GLASS=
       STAIR_SBRICK_E=55, STAIR_SBRICK_W=56, STAIR_SBRICK_S=57, STAIR_SBRICK_N=58;
 // Escaleras: stairDir = eje de subida (0:+X=E 1:-X=W 2:+Z=S 3:-Z=N); mitad baja al frente (-dir), alta al fondo.
 const SWORD = 100; // item (no es bloque, no se puede poner en el mundo)
+const PICK = 101;  // item (no es bloque, no se puede poner en el mundo)
 const SAVE_KEY = 'minicraft-save-v3';
 const CLIENT_V = 'v9'; // sello visible en menú/pausa: confirma qué build está corriendo
 
@@ -486,8 +487,9 @@ const DEFS = {
   [DOORZ2]: { name:'Puerta 🚪',  css:'linear-gradient(135deg,#d8b078,#8a5f30)', color:0xcfa672, door:1, faceZ:1, hard:.9, tiles:{top:8,side:26,bottom:8} },
   [DOORZ2_OPEN]:{ name:'Puerta abierta', css:'linear-gradient(135deg,#d8b078,#8a5f30)', color:0xcfa672, door:1, open:1, faceZ:1, hard:.9, tiles:{top:8,side:26,bottom:8} },
   [SWORD]:  { name:'Espada ⚔️',  css:'linear-gradient(135deg,#f4f6fa 0 60%,#c9a13b 60% 72%,#8a94a8 72% 100%)', color:0xdfe6f2, item:'sword' },
+  [PICK]:   { name:'Pico ⛏️',    css:'linear-gradient(135deg,#c3c8cf 0 30%,#8a5f30 30% 70%,#6b4a2f 70% 100%)', color:0xa8adb5, item:'pick' },
 };
-const INVENTORY = [GRASS,DIRT,STONE,COBBLE,SBRICK,LOG,PLANKS,BOOKS,LEAVES,SAND,SNOW,CLAY,WOOL,GLASS,BRICK,OBSIDIAN,PUMPKIN,MELON,HAY,GLOW,DOOR,SWORD,FLOWER_R,FLOWER_Y,TORCH,SLAB_STONE,SLAB_PLANKS,SLAB_COBBLE,SLAB_BRICK,SLAB_SBRICK,STAIR_STONE_E,STAIR_PLANKS_E,STAIR_COBBLE_E,STAIR_BRICK_E,STAIR_SBRICK_E];
+const INVENTORY = [GRASS,DIRT,STONE,COBBLE,SBRICK,LOG,PLANKS,BOOKS,LEAVES,SAND,SNOW,CLAY,WOOL,GLASS,BRICK,OBSIDIAN,PUMPKIN,MELON,HAY,GLOW,DOOR,SWORD,PICK,FLOWER_R,FLOWER_Y,TORCH,SLAB_STONE,SLAB_PLANKS,SLAB_COBBLE,SLAB_BRICK,SLAB_SBRICK,STAIR_STONE_E,STAIR_PLANKS_E,STAIR_COBBLE_E,STAIR_BRICK_E,STAIR_SBRICK_E];
 const DEFAULT_HOTBAR = [GRASS,DIRT,STONE,PLANKS,LOG,LEAVES,GLASS,BRICK,COBBLE];
 
 /* ============ MODO / VIDA ============ */
@@ -694,7 +696,7 @@ const pollenGeo = new THREE.BufferGeometry();
 }
 scene.add(new THREE.Points(pollenGeo, new THREE.PointsMaterial({ color:0xfffbe0, size:.18, transparent:true, opacity:.85 })));
 
-/* ============ ESPADA EN MANO (viewmodel) ============ */
+/* ============ ARMA/HERRAMIENTA EN MANO (viewmodel) ============ */
 scene.add(camera); // necesario para que se vean los hijos de la cámara
 const swordG = new THREE.Group();
 {
@@ -715,6 +717,30 @@ const swordG = new THREE.Group();
   swordG.visible = false;
   camera.add(swordG);
 }
+// Pico: mango de madera + cabeza de piedra en T. La cabeza es un travesaño ancho, así que el
+// grupo se gira ~90° sobre Y para que apunte al fondo de la pantalla (no de costado) y se
+// inclina como la espada. Pose base en constantes para tunear posición/rotación/escala.
+const pickG = new THREE.Group();
+const PICK_POS = new THREE.Vector3(-.42,-.42,-.7);
+const PICK_ROT = new THREE.Euler(.5,Math.PI/2+.18,-.35);
+const PICK_SCALE = .85;
+{
+  const stone = new THREE.MeshLambertMaterial({ color:0xa8adb5 });
+  const wood = new THREE.MeshLambertMaterial({ color:0x6b4a2f });
+  const add = (w,h,d,mat,x,y,z,rz=0) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w,h,d), mat);
+    m.position.set(x,y,z); m.rotation.z = rz; pickG.add(m); return m;
+  };
+  add(.055,.6,.055, wood, 0,.26,0);           // mango
+  add(.42,.075,.07, stone, 0,.56,0);          // cabeza (travesaño)
+  add(.075,.14,.07, stone, -.19,.5,0,.35);    // punta izquierda
+  add(.075,.14,.07, stone,  .19,.5,0,-.35);   // punta derecha
+  pickG.position.copy(PICK_POS);
+  pickG.rotation.copy(PICK_ROT);
+  pickG.scale.setScalar(PICK_SCALE);
+  pickG.visible = false;
+  camera.add(pickG);
+}
 let swingT = 1; // 0→1 durante el golpe
 const SWING_DUR = .38;
 function tickSword(dt, now){
@@ -731,6 +757,24 @@ function tickSword(dt, now){
   const k=Math.sin(swingT*Math.PI); // 0→1→0
   swordG.rotation.set(.18-k*1.5,-.18-k*.4,.12-k*.3);
   swordG.position.set(.42-k*.1,-.42+k*.15,-.7-k*.3);
+}
+// El pico reutiliza swingT/SWING_DUR: oscila mientras se pica (clic izq + bloque objetivo) y
+// vuelve al balanceo idle al soltar. Solo uno de los dos modelos es visible a la vez, así que
+// no compite con la espada (que también usa swingT).
+function tickPick(dt, now){
+  pickG.visible = hotbarIds[sel]===PICK && !dead;
+  if(!pickG.visible) return;
+  if(mouseDown[0] && swingT>=1 && raycast()) swingT=0; // reinicia el golpe mientras se mina
+  const idle = Math.sin(now*.0022)*.02;
+  if(swingT>=1){
+    pickG.rotation.set(PICK_ROT.x+idle,PICK_ROT.y,PICK_ROT.z);
+    pickG.position.set(PICK_POS.x,PICK_POS.y+idle*.5,PICK_POS.z);
+    return;
+  }
+  swingT=Math.min(1,swingT+dt/SWING_DUR);
+  const k=Math.sin(swingT*Math.PI); // 0→1→0: golpe de picar hacia adelante
+  pickG.rotation.set(PICK_ROT.x-k*1.15,PICK_ROT.y,PICK_ROT.z-k*.25);
+  pickG.position.set(PICK_POS.x,PICK_POS.y+k*.12,PICK_POS.z-k*.3);
 }
 // anillo de cooldown alrededor de la mira
 const cdRing = document.getElementById('cdRing');
@@ -1811,6 +1855,15 @@ function toast(msg){
   clearTimeout(el._t); el._t=setTimeout(()=>el.classList.remove('show'),1300);
 }
 function blockColor(b){ return DEFS[b]?DEFS[b].color:0x999999; }
+// Tiempo objetivo de rotura (s) según el ítem en mano.
+// Mano (o cualquier no-pico): dureza ×1.5. Pico: plano y universal (PICK_TIME, tuneable). BEDROCK: ∞.
+const HAND_MULT = 1.5, PICK_TIME = .25;
+function breakTime(blockId, heldItem){
+  const d = DEFS[blockId];
+  if(d?.unbreakable || d?.hard >= 1e9) return Infinity;
+  if(DEFS[heldItem]?.item === 'pick') return PICK_TIME;
+  return (d?.hard ?? 1) * HAND_MULT;
+}
 function resetBreak(){ breakKey=''; breakProg=0; crackMesh.visible=false; }
 function doBreak(pre){
   const h=pre||raycast(); if(!h) return;
@@ -1853,6 +1906,7 @@ function ocupadoPor(x,y,z){
 function doPlace(){
   const h=raycast(); if(!h) return;
   const id=hotbarIds[sel], dd=DEFS[id];
+  if(dd?.item) return; // los ítems (espada/pico) no son bloques: nunca se colocan en el mundo
   const x=h.x+h.nx, y=h.y+h.ny, z=h.z+h.nz;
   if(!inB(x,y,z)) return;
   const cur=get(x,y,z);
@@ -1978,15 +2032,15 @@ function tickBreak(dt){
   if(!h){ resetBreak(); return; }
   const key=h.x+','+h.y+','+h.z;
   if(key!==breakKey){ breakKey=key; breakProg=0; }
-  const hard=DEFS[h.b].hard??1;
-  if(hard>=1e9){ crackMesh.visible=false; return; }
+  const t=breakTime(h.b, hotbarIds[sel]);
+  if(!isFinite(t)){ crackMesh.visible=false; return; }
   breakProg+=dt;
-  const stage=Math.min(4,Math.floor(breakProg/hard*5));
+  const stage=Math.min(4,Math.floor(breakProg/t*5));
   crackMesh.visible=true;
   crackMesh.position.set(h.x+.5,h.y+.5,h.z+.5);
   crackMesh.material.map=crackTex[stage];
   crackMesh.material.needsUpdate=false;
-  if(breakProg>=hard) doBreak(h);
+  if(breakProg>=t) doBreak(h);
 }
 addEventListener('mousemove',e=>{
   if(state!=='play'||!locked()||dead) return;
@@ -2046,7 +2100,9 @@ function renderHotbar(){
 function select(i){
   sel=i; sfxPop();
   const d=DEFS[hotbarIds[sel]];
-  toast((d.item?'⚔️ ':'🧱 ')+d.name+(d.item?' (clic der para atacar)':''));
+  const ico = d.item==='sword' ? '⚔️ ' : (d.item==='pick' ? '⛏️ ' : '🧱 ');
+  const tip = d.item==='sword' ? ' (clic der para atacar)' : (d.item==='pick' ? ' (mantené click izq para picar)' : '');
+  toast(ico+d.name+tip);
   document.querySelectorAll('.slot').forEach((s,j)=>s.classList.toggle('sel',j===sel));
   refreshInvMarks();
 }
@@ -2238,7 +2294,7 @@ function applyModeUI(){
   renderHealth();
   document.getElementById('hint').innerHTML = isAdmin()
     ? '<b>W A S D</b> moverse · <b>Espacio</b> saltar<br><b>Click izq</b> romper · <b>Click der</b> poner<br><b>E</b> inventario · <b>F</b> volar · <b>Enter</b> chat · <b>P</b> pantalla'
-    : '<b>W A S D</b> moverse · <b>Espacio</b> saltar<br><b>Mantené click izq</b> para picar ⛏<br><b>E</b> inventario · <b>Enter</b> chat · <b>P</b> pantalla · ¡cuidado al caer!';
+    : '<b>W A S D</b> moverse · <b>Espacio</b> saltar<br><b>Mantené click izq</b> para picar ⛏ (con el <b>pico</b> en mano, al toque)<br><b>E</b> inventario · <b>Enter</b> chat · <b>P</b> pantalla · ¡cuidado al caer!';
 }
 function toggleFly(){
   if(!isAdmin()) return;
@@ -2402,7 +2458,7 @@ function loop(now){
       cross.classList.add('active'); }
     else { hl.visible=hlEdge.visible=false; cross.classList.remove('active'); }
   } else { hl.visible=hlEdge.visible=false; if(!mouseDown[0]) crackMesh.visible=false; }
-  tickSword(dt, now); tickCooldown(); tickDoors(dt); tickWater();
+  tickSword(dt, now); tickPick(dt, now); tickCooldown(); tickDoors(dt); tickWater();
   tickParts(dt); tickDmgNums(dt);
   renderer.render(scene,camera);
 }
