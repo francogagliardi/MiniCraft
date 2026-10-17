@@ -93,8 +93,8 @@
     border-radius:14px; border:2px solid #4fae4f; outline:none; box-shadow:0 10px 30px rgba(0,0,0,.3); }
   /* inventario */
   #inv { position:fixed; inset:0; z-index:40; display:flex; align-items:center; justify-content:center;
-    background:rgba(25,45,80,.45); backdrop-filter:blur(6px); transition:opacity .2s; }
-  #inv.hidden { opacity:0; pointer-events:none; }
+    background:rgba(25,45,80,.45); backdrop-filter:blur(6px); transition:opacity .2s, visibility .2s; }
+  #inv.hidden { opacity:0; pointer-events:none; visibility:hidden; }
   #inv .panel { background:rgba(255,255,255,.96); border-radius:24px; padding:26px 28px; width:min(600px,calc(100% - 40px));
     box-shadow:0 30px 80px rgba(20,50,100,.4); border:1px solid #fff; max-height:82vh; overflow:auto; }
   #inv h2 { font-size:22px; font-weight:900; color:#223; }
@@ -113,8 +113,10 @@
     background:linear-gradient(135deg,#57c256,#2f9e32); box-shadow:0 8px 20px rgba(47,158,50,.4); }
   /* overlays */
   .overlay { position:fixed; inset:0; z-index:50; display:flex; align-items:center; justify-content:center;
-    background:linear-gradient(160deg,#5aa9e6 0%,#8ecdf5 35%,#cdeaff 60%,#ffe9c4 100%); transition:opacity .4s; }
-  .overlay.hidden { opacity:0; pointer-events:none; }
+    background:linear-gradient(160deg,#5aa9e6 0%,#8ecdf5 35%,#cdeaff 60%,#ffe9c4 100%); transition:opacity .4s, visibility .4s; }
+  /* visibility:hidden (además de opacity:0) para que un botón con foco dentro de un overlay
+     oculto deje de ser focuseable: si no, Enter dispara su click y findSpawn() mueve al spawn. */
+  .overlay.hidden { opacity:0; pointer-events:none; visibility:hidden; }
   .float-cube { position:absolute; border-radius:14px; opacity:.85; animation:float 6s ease-in-out infinite;
     box-shadow:inset -8px -10px 0 rgba(0,0,0,.15), inset 8px 10px 0 rgba(255,255,255,.35), 0 20px 40px rgba(40,90,160,.25); }
   @keyframes float { 0%,100%{ transform:translateY(0) rotate(-6deg);} 50%{ transform:translateY(-26px) rotate(6deg);} }
@@ -1486,7 +1488,12 @@ addEventListener('keydown', e=>{
   if(e.code==='Space') e.preventDefault();
   keys[e.code]=true;
   if(e.code==='Enter'){
-    if((state==='play'||state==='pause')&&!dead) { openChat(); e.stopPropagation(); }
+    // Sin preventDefault el navegador dispara el click del botón que quedó con foco (JUGAR,
+    // Reaparecer): startGame()/respawn() llaman a findSpawn() y el jugador salta al spawn.
+    // Con el juego iniciado Enter es SIEMPRE del juego: chatear (vivo) o reaparecer (muerto).
+    if(started) e.preventDefault();
+    if(!dead&&(state==='play'||state==='pause')) { openChat(); e.stopPropagation(); }
+    else if(dead&&state==='play') respawn();
     return;
   }
   if(e.code==='Escape'&&state==='chat'){ closeChat(false); return; }

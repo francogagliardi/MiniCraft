@@ -164,15 +164,15 @@ ok(mh !== '' && pl !== '' && th !== '', 'handlers mousemove/pointerlockchange/po
   ok(/-1\.55/.test(th) && /\b1\.55\b/.test(th), 'pointermove conserva el rango de pitch (±1.55)');
 }
 
-// 4.1 el script `test` de server/package.json da de alta este archivo (13 en total)
+// 4.1 el script `test` de server/package.json da de alta este archivo (14 en total)
 {
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'server', 'package.json'), 'utf8'));
   const s = pkg.scripts.test;
-  const required = ['static','avatar','migrate','terrain','water','worldgen','zombie','zombie-client','zombie-protocol','avatar-held','lookguard','admin-hash','protocol'];
+  const required = ['static','avatar','migrate','terrain','water','worldgen','zombie','zombie-client','zombie-protocol','avatar-held','lookguard','admin-hash','enter-chat','protocol'];
   const missing = required.filter(n => !new RegExp(`test/${n}\\.mjs`).test(s));
   const count = (s.match(/test\/[\w-]+\.mjs/g) || []).length;
-  ok(missing.length === 0, `npm test da de alta los 13 archivos (faltan: ${missing.join(', ') || 'ninguno'})`);
-  ok(count === 13, `el script test enumera 13 archivos (${count})`);
+  ok(missing.length === 0, `npm test da de alta los 14 archivos (faltan: ${missing.join(', ') || 'ninguno'})`);
+  ok(count === 14, `el script test enumera 14 archivos (${count})`);
 }
 
 if (fails) console.log(`\n💥 ${fails} chequeo(s) fallaron`);
