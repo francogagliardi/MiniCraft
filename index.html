@@ -231,7 +231,6 @@
     <div class="pill" id="btnSound" title="Sonido">🔊</div>
     <div class="pill only-touch" id="btnShadow" title="Sombras">☀️</div>
     <div class="pill" id="btnFull" title="Pantalla completa (P)">⛶</div>
-    <div class="pill" id="btnReset" title="Mundo nuevo">↺ Nuevo</div>
   </div>
 </div>
 
@@ -2702,9 +2701,10 @@ function toggleFull(){
   }catch(e){}
 }
 document.getElementById('btnFull').onclick=e=>{e.stopPropagation();toggleFull();};
-document.getElementById('btnReset').onclick=e=>{e.stopPropagation();
-  if(mp){ toast('↺ Pedile al dueño del server que borre world.json'); return; }
-  if(confirm('¿Generar un mundo nuevo? Se borra tu construcción.')){ localStorage.removeItem(SAVE_KEY); location.reload(); }};
+// El botón "↺ Nuevo" (pill #btnReset) se removió a propósito: en multijugador no borraba
+// nada (solo mostraba un toast), y en solitario borraba el guardado local del navegador
+// sin vuelta atrás. El mundo compartido vive en world.json del server: para resetearlo de
+// verdad se borra ESE archivo, no hay (ni debe haber) botón en el cliente que lo haga.
 addEventListener('resize',()=>{
   camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix();
   renderer.setSize(innerWidth,innerHeight);
