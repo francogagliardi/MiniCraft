@@ -796,6 +796,16 @@ const widx = (x,y,z) => (y*W + z)*W + x;
 const inB = (x,y,z) => x>=0 && x<W && z>=0 && z<W && y>=0 && y<H;
 const get = (x,y,z) => inB(x,y,z) ? world[widx(x,y,z)] : AIR;
 const rawSet = (x,y,z,v) => { if(inB(x,y,z)) world[widx(x,y,z)] = v; };
+// Valor a escribir al romper una celda: agua solo si queda en/bajo el nivel del
+// mar Y toca agua en alguno de sus 6 vecinos ortogonales (evaluado ANTES del
+// break). Si no, aire: cavar tierra adentro bajo y=10 ya no inunda el hueco.
+function waterRefill(x,y,z){
+  if(y > WATER_Y) return AIR;
+  const wet = get(x,y+1,z)===WATER || get(x,y-1,z)===WATER ||
+    get(x+1,y,z)===WATER || get(x-1,y,z)===WATER ||
+    get(x,y,z+1)===WATER || get(x,y,z-1)===WATER;
+  return wet ? WATER : AIR;
+}
 function isOpaque(b){ const d = DEFS[b]; return d && d.cube && !!d.opaque; }
 function isSolid(b){ const d = DEFS[b]; if(!d||b===AIR) return false;
   if(d.door) return !d.open; // cerrada traba, abierta deja pasar
@@ -1874,7 +1884,7 @@ function doBreak(pre){
     for(const [cx,cy,cz] of doorCells(h.x,h.y,h.z)){
       burst(cx,cy,cz,blockColor(h.b));
       doorAnims.delete(cx+','+cy+','+cz);
-      const v = cy<=WATER_Y ? WATER : AIR;
+      const v = waterRefill(cx,cy,cz);
       rawSet(cx,cy,cz,v);
       if(!mp){ edits.push([widx(cx,cy,cz),v]); }
       else netSend({ t:'edit', x:cx, y:cy, z:cz, v });
@@ -1882,7 +1892,7 @@ function doBreak(pre){
     if(!mp) saveSoon();
   } else {
     if(!d.flower) burst(h.x,h.y,h.z,blockColor(h.b));
-    const v = h.y<=WATER_Y ? WATER : AIR;
+    const v = waterRefill(h.x,h.y,h.z);
     rawSet(h.x,h.y,h.z,v);
     if(!mp){ edits.push([widx(h.x,h.y,h.z),v]); saveSoon(); }
     else netSend({ t:'edit', x:h.x, y:h.y, z:h.z, v });
