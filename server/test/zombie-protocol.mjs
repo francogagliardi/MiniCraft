@@ -284,9 +284,9 @@ try {
   {
     const pkg = JSON.parse(fs.readFileSync(path.join(serverDir, 'package.json'), 'utf8'));
     const s = pkg.scripts.test;
-    const required = ['static', 'avatar', 'migrate', 'terrain', 'water', 'protocol', 'worldgen', 'zombie', 'zombie-client', 'zombie-protocol', 'avatar-held', 'lookguard', 'admin-hash', 'enter-chat'];
+    const required = ['static', 'avatar', 'migrate', 'terrain', 'water', 'protocol', 'worldgen', 'zombie', 'zombie-client', 'zombie-protocol', 'avatar-held', 'client-robot', 'bot-cazador', 'lookguard', 'admin-hash', 'enter-chat'];
     const missing = required.filter(n => !new RegExp(`test/${n}\\.mjs`).test(s));
-    ok(missing.length === 0, `npm test corre los 14 archivos (faltan: ${missing.join(', ') || 'ninguno'})`);
+    ok(missing.length === 0, `npm test corre los 16 archivos (faltan: ${missing.join(', ') || 'ninguno'})`);
   }
 
   for (const c of [a, b]) { try { c.ws.close(); } catch (e) {} }

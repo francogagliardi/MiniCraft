@@ -1863,6 +1863,68 @@ function tickDmgNums(dt){
   }
 }
 
+/* ============ ASPECTO ROBOT (skin:'robot' del avatar remoto) ============ */
+/* robot:start */
+// Modelo humanoide low-poly del bot cazador (aspecto `skin:'robot'`): mismo estilo de cajas
+// que `makeAvatar`/`makeZombie`, pero con cuerpo metálico gris, ojos que brillan solos
+// (emissive, sin luz extra en la escena), antena con luz en la punta y una luz en el pecho.
+// Devuelve las MISMAS piezas que `makeAvatar` espera (grupo + extremidades) para conservar el
+// comportamiento del avatar remoto (balanceo, pose de muerte, arma en mano y PvP).
+const ROBOT_COLORS = {
+  shell: 0x9aa3ad,   // chapa metálica gris
+  dark:  0x596169,   // juntas y articulaciones
+  trim:  0x2f7dff,   // detalles/energía
+  eye:   0x3ef2ff,   // ojos brillantes (emissive)
+  light: 0xffd447,   // luz de la antena / del pecho (emissive)
+};
+// `id` marca cada malla para el raycast del PvP; `register` (opcional) deja que el llamador
+// sume cada malla a su lista de blancos (avatarTargets). No conoce la escena ni el registro.
+function makeRobotModel(id, register){
+  const g = new THREE.Group();
+  const mats = [], meshes = [];
+  const B = (w,h,d,c,x,y,z) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w,h,d),
+      new THREE.MeshLambertMaterial({ color:c }));
+    m.position.set(x,y,z); m.castShadow = true; mats.push(m.material);
+    m.userData.avatarId = id; meshes.push(m); g.add(m);
+    if (register) register(m);
+    return m;
+  };
+  B(.54,.68,.32, ROBOT_COLORS.shell, 0,1.06,0);   // torso
+  B(.46,.14,.30, ROBOT_COLORS.dark,  0,.66,0);    // pelvis / junta
+  B(.30,.22,.06, ROBOT_COLORS.trim,  0,1.12,.18); // placa de energía del pecho
+  B(.44,.42,.40, ROBOT_COLORS.shell, 0,1.63,0);   // cabeza
+  B(.48,.12,.44, ROBOT_COLORS.dark,  0,1.84,0);   // casco
+  B(.34,.14,.05, ROBOT_COLORS.dark,  0,1.60,.21); // visor
+  const armL = B(.16,.60,.16, ROBOT_COLORS.dark, -.36,1.06,0);
+  const armR = B(.16,.60,.16, ROBOT_COLORS.dark,  .36,1.06,0);
+  const legL = B(.20,.66,.20, ROBOT_COLORS.dark, -.14,.33,0);
+  const legR = B(.20,.66,.20, ROBOT_COLORS.dark,  .14,.33,0);
+  // Ojos brillantes: material con `emissive` (se ve encendido de noche sin agregar ninguna
+  // luz). FUERA de `mats` para que el flash de daño no los apague, igual que los ojos del zombi.
+  const eyeMat = new THREE.MeshLambertMaterial({ color:0x101820, emissive:ROBOT_COLORS.eye });
+  const eyes = new THREE.Group();
+  const eyeL = new THREE.Mesh(new THREE.BoxGeometry(.08,.09,.03), eyeMat);
+  const eyeR = new THREE.Mesh(new THREE.BoxGeometry(.08,.09,.03), eyeMat);
+  eyeL.position.set(-.10,1.63,.21); eyeR.position.set(.10,1.63,.21);
+  eyes.add(eyeL,eyeR); g.add(eyes);
+  // Antena: varilla oscura + luz en la punta.
+  const antenna = new THREE.Group();
+  const rod = new THREE.Mesh(new THREE.BoxGeometry(.04,.30,.04),
+    new THREE.MeshLambertMaterial({ color:ROBOT_COLORS.dark }));
+  rod.position.set(0,.28,0);
+  const tip = new THREE.Mesh(new THREE.BoxGeometry(.09,.09,.09),
+    new THREE.MeshLambertMaterial({ color:0x201800, emissive:ROBOT_COLORS.light }));
+  tip.position.set(0,.46,0);
+  antenna.add(rod,tip); antenna.position.set(0,1.88,0); g.add(antenna);
+  // Luz del pecho.
+  const chest = new THREE.Mesh(new THREE.BoxGeometry(.10,.10,.04),
+    new THREE.MeshLambertMaterial({ color:0x0a1420, emissive:ROBOT_COLORS.light }));
+  chest.position.set(0,1.18,.21); g.add(chest);
+  return { g, mats, meshes, armL, armR, legL, legR, eyes, antenna, chest, colors:ROBOT_COLORS };
+}
+/* robot:end */
+
 /* ============ AVATARES MULTIJUGADOR ============ */
 const remotes = new Map(); // id -> avatar
 const avatarTargets = [];
@@ -1877,23 +1939,34 @@ function nameSprite(text, admin){
   s.scale.set(2.4,.6,1); s.renderOrder=10;
   return s;
 }
-function makeAvatar(id, name, admin){
+function makeAvatar(id, name, admin, skin){
   const g=new THREE.Group();
   const hue=(id*137)%360;
-  const shirt=new THREE.Color(`hsl(${hue},60%,45%)`), skin=0xf2c89b, pants=0x3a5a8c;
+  const shirt=new THREE.Color(`hsl(${hue},60%,45%)`), skinTone=0xf2c89b, pants=0x3a5a8c;
+  const robot = skin==='robot'; // aspecto declarado (net/avatar): robot o humano por defecto
   const mats=[];
-  const B=(w,h,d,c,x,y,z)=>{
-    const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),
-      new THREE.MeshLambertMaterial({ color:c }));
-    m.position.set(x,y,z); m.castShadow=true; mats.push(m.material);
-    m.userData.avatarId=id; g.add(m); avatarTargets.push(m); return m;
-  };
-  B(.5,.7,.3,shirt,0,1.05,0);
-  const head=B(.42,.42,.42,skin,0,1.65,0);
-  B(.44,.14,.44,new THREE.Color(`hsl(${hue},60%,30%)`),0,1.9,0);
-  B(.07,.08,.02,0x222222,-.1,1.66,.22); B(.07,.08,.02,0x222222,.1,1.66,.22);
-  const armL=B(.16,.62,.16,skin,-.35,1.05,0), armR=B(.16,.62,.16,skin,.35,1.05,0);
-  const legL=B(.2,.7,.2,pants,-.13,.35,0), legR=B(.2,.7,.2,pants,.13,.35,0);
+  let armL, armR, legL, legR;
+  if(robot){
+    // Bloque marcado /* robot:start */…/* robot:end */ (test client-robot). Sus mallas entran
+    // a avatarTargets vía `register` para conservar la superficie de golpe del PvP.
+    const r=makeRobotModel(id, m=>avatarTargets.push(m));
+    g.add(r.g);
+    for(const mm of r.mats) mats.push(mm);
+    armL=r.armL; armR=r.armR; legL=r.legL; legR=r.legR;
+  } else {
+    const B=(w,h,d,c,x,y,z)=>{
+      const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),
+        new THREE.MeshLambertMaterial({ color:c }));
+      m.position.set(x,y,z); m.castShadow=true; mats.push(m.material);
+      m.userData.avatarId=id; g.add(m); avatarTargets.push(m); return m;
+    };
+    B(.5,.7,.3,shirt,0,1.05,0);
+    B(.42,.42,.42,skinTone,0,1.65,0);
+    B(.44,.14,.44,new THREE.Color(`hsl(${hue},60%,30%)`),0,1.9,0);
+    B(.07,.08,.02,0x222222,-.1,1.66,.22); B(.07,.08,.02,0x222222,.1,1.66,.22);
+    armL=B(.16,.62,.16,skinTone,-.35,1.05,0); armR=B(.16,.62,.16,skinTone,.35,1.05,0);
+    legL=B(.2,.7,.2,pants,-.13,.35,0); legR=B(.2,.7,.2,pants,.13,.35,0);
+  }
   // Arma en mano del remoto (grupo 12): mismo builder que el viewmodel, colgada del brazo
   // derecho para que herede el balanceo/gesto. Arranca oculta y la muestra `held` del pm.
   // Queda FUERA de avatarTargets: el arma no cambia la superficie de golpe del PvP.
@@ -1910,7 +1983,7 @@ function makeAvatar(id, name, admin){
   const bar=new THREE.Sprite(new THREE.SpriteMaterial({ map:barTex, depthTest:false, transparent:true }));
   bar.scale.set(1.15,.16,1); bar.position.y=2.1; bar.renderOrder=10; g.add(bar);
   scene.add(g);
-  const a={ id, name, admin, g, mats, armL, armR, legL, legR, hp:10, dead:false, deadK:0, barC, barTex, bar,
+  const a={ id, name, admin, skin: robot?'robot':'human', g, mats, armL, armR, legL, legR, hp:10, dead:false, deadK:0, barC, barTex, bar,
     target:new THREE.Vector3(), yaw:0, t:Math.random()*10, flash:0,
     sword:handSword, pick:handPick, held:0, seq:0, seqSeen:0, swingK:1 };
   drawBar(a);
@@ -1927,7 +2000,8 @@ function drawBar(a){
 }
 function addRemote(p){
   if(remotes.has(p.id)) return;
-  const a=makeAvatar(p.id,p.name,p.mode==='admin');
+  // aspecto (`skin`): guarda para clientes viejos sin el campo ⇒ avatar humano por defecto
+  const a=makeAvatar(p.id,p.name,p.mode==='admin', typeof p.skin==='string'?p.skin:'');
   if(Number.isFinite(p.hp)){ a.hp=p.hp; drawBar(a); }
   if(p.dead===1){ a.dead=true; a.deadK=1; }
   a.g.position.set(p.pos[0],p.pos[1],p.pos[2]);
@@ -1935,6 +2009,7 @@ function addRemote(p){
   // arma + contador de golpes (welcome.players/join): guardas para clientes viejos sin los campos
   if(Number.isInteger(p.held)) a.held=p.held;
   if(Number.isInteger(p.seq)){ a.seq=p.seq; a.seqSeen=p.seq; }
+  if(typeof p.skin==='string') a.skin=p.skin; // aspecto declarado (join/welcome.players)
   remotes.set(p.id,a); renderPlist();
 }
 function removeRemote(id){
@@ -1995,6 +2070,7 @@ function applyPm(a,m){
   // ítem en mano + contador de golpes del remoto (guardas: un pm viejo sin campos no rompe)
   if(Number.isInteger(m.held)) a.held=m.held;
   if(Number.isInteger(m.seq)) a.seq=m.seq;
+  if(typeof m.skin==='string') a.skin=m.skin; // aspecto en el estado periódico (guardas para pm viejo)
 }
 // Tras un pedit remoto: si el bloque nuevo dejó al jugador local dentro, lo saca fuera.
 function pushLocalOutOfBlock(x,y,z){
@@ -2584,7 +2660,7 @@ function setupNetHandlers(){
     if(m.t==='pm'){ const a=remotes.get(m.id);
       if(a){ if(!Number.isInteger(m.held)) m.held=a.held;
         if(!Number.isInteger(m.seq)) m.seq=a.seq;
-        if(PM_BUFFER){ a.pmBuf.push({ p:m.p, yaw:m.yaw, held:m.held, seq:m.seq, t:performance.now() });
+        if(PM_BUFFER){ a.pmBuf.push({ p:m.p, yaw:m.yaw, held:m.held, seq:m.seq, skin:m.skin, t:performance.now() });
           if(a.pmBuf.length>PM_BUF_MAX) a.pmBuf.splice(0,a.pmBuf.length-PM_BUF_MAX); }
         else applyPm(a,m);
         if(Number.isFinite(m.hp)&&m.hp!==a.hp){ a.hp=m.hp; drawBar(a); }

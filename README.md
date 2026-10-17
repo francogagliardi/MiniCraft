@@ -23,9 +23,13 @@ chiquito en Node.js con WebSocket.
 ```
 MiniCraft/
 ├── index.html            ← todo el juego (cliente)
-├── Dockerfile            ← imagen para Easypanel / VPS
-├── docker-compose.yml    ← correr local con persistencia
+├── Dockerfile            ← imagen del server para Easypanel / VPS
+├── Dockerfile.bot        ← imagen del bot cazador (servicio aparte)
+├── docker-compose.yml    ← server + bot con persistencia
 ├── .dockerignore
+├── bot/
+│   ├── cazador.js        ← lógica pura del bot (presa, golpes, modos)
+│   └── index.js          ← cableado: WebSocket, reconexión y CLI
 ├── server/
 │   ├── server.js         ← HTTP + WebSocket multijugador
 │   ├── package.json
@@ -66,6 +70,53 @@ docker compose down
 ```
 
 Variables: `ADMIN_KEY_HASH` (producción, ver abajo), `ADMIN_KEY` (solo dev local), `PORT`.
+
+`docker compose up --build -d` levanta **dos** servicios: `minicraft` (el server) y
+`minicraft-bot` (el bot cazador, un cliente aparte). Para correr solo el server:
+`docker compose up --build -d minicraft`.
+
+## 🤖 Bot cazador (24/7)
+
+Un **robot humanoide** (`skin:'robot'`) entra como un jugador normal (modo `player`,
+**no** usa clave de admin) a perseguir y fulminar jugadores. Es un **huésped de solo
+lectura**: nunca rompe ni pone bloques (cero `edit`).
+
+- **A quién caza:** a cualquier jugador **no-admin** vivo. **Nunca** ataca admins.
+- **Cómo mata:** dos toques de `dmg: 6` separados ≥0.65 s (6+6=12 > 10 de vida), así
+  respeta la ventana de invulnerabilidad de 0.6 s del cliente: la víctima **ve dos
+  golpes rápidos** y muere en ~0.65 s. Va al **doble de velocidad** (9.6 u/s) y es
+  **invulnerable** (reporta siempre 10/0).
+- **Sin presas:** camina al punto de aparición y se queda quieto ahí (sigue latiendo).
+- **Comandos de chat (solo admin):** el bot autoriza por el **id del server**, nunca
+  por nombre (un impostor con el nombre del admin no lo comanda).
+
+| Comando | Efecto |
+|---|---|
+| `sigueme` (o `seguime`) | Sigue al admin que lo ordenó; si ese admin se va, vuelve a cazar |
+| `espera` | Se clava donde está (turreta): mata a quien se le acerque. No vuelve al spawn |
+
+El match es **exacto** (trim + sin distinguir mayúsculas, sin prefijo): el mensaje debe
+ser exactamente el comando. El bot anuncia por chat los cambios de modo y las kills.
+
+**Local:**
+
+```bash
+node bot/index.js                       # SERVER_URL por defecto ws://minicraft:3000
+SERVER_URL=ws://localhost:3000 BOT_NAME=OPSX-bot node bot/index.js
+```
+
+**Variables de entorno (bot):**
+
+| Var | Default | Qué hace |
+|---|---|---|
+| `SERVER_URL` | `ws://minicraft:3000` | WebSocket del server (interno en compose; en Easypanel `wss://tu-dominio`) |
+| `BOT_NAME` | `OPSX-bot` | Nombre con el que entra al mundo |
+
+**Easypanel (segundo servicio):** el server se despliega igual que antes; agregá un
+**segundo App** apuntando al mismo repo pero con **Build → Dockerfile** =
+`Dockerfile.bot`, sin dominios ni volumen, y en **Environment** poné
+`SERVER_URL=wss://minicraft.francogagliardi.me` y (opcional) `BOT_NAME`. El bot
+reconecta solo con backoff, así que sobrevive a los redeploys del server.
 
 ## ☁️ Deploy en Easypanel (VPS)
 
@@ -179,5 +230,10 @@ cd server && npm test
   autodescriptivo, anti pass-the-hash, precedencia hash-vs-claro, fail-closed,
   limitador del KDF (token bucket + concurrencia) y el e2e WS del cableado
   (incluido el flood del KDF y el no-bloqueo del event loop).
+- **Bot cazador** (`test/bot-cazador.mjs`): levanta el server de verdad y cablea el
+  bot con clientes falsos — mata a un no-admin con **dos toques separados** (el
+  cliente falso emula la ventana de 0.6 s, así un burst no pasa), ignora admins,
+  `sigueme`/`espera`, seguridad por id (impostor con el nombre del admin),
+  invulnerabilidad, velocidad doble, reconexión, cero `edit` y `skin:'robot'`.
 
 El workflow **CI** los corre en cada push/PR a `main`.

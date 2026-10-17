@@ -19,5 +19,18 @@ services:
       - minicraft-data:/data
     restart: unless-stopped
 
+  # Bot cazador: un CLIENTE más (no comparte el container del server). Reconecta
+  # solo con backoff, así que el orden de arranque no exige coordinación fina.
+  minicraft-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile.bot
+    image: minicraft-bot:latest
+    environment:
+      SERVER_URL: ws://minicraft:3000   # nombre interno del servicio del server
+      BOT_NAME: OPSX-bot
+    depends_on: [minicraft]
+    restart: unless-stopped
+
 volumes:
   minicraft-data:

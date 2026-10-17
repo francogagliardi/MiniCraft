@@ -141,6 +141,15 @@ process.on('SIGTERM', () => shutdown('SIGTERM'));
 const players = new Map(); // ws -> {id, name, mode, admin, pos}
 let nextId = 1;
 const cleanName = s => String(s || 'Aventurero').slice(0, 16).replace(/[<>&"]/g, '');
+// Aspecto declarado por el cliente (`skin`, aditivo — net/avatar): string corto,
+// saneado (sin basura) y en minúsculas; cualquier valor ausente o vacío cae al
+// aspecto humano por defecto. El render remoto elige el modelo según ese valor.
+const DEFAULT_SKIN = 'human';
+const cleanSkin = s => {
+  if (typeof s !== 'string') return DEFAULT_SKIN;
+  const v = s.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 16);
+  return v || DEFAULT_SKIN;
+};
 
 const wss = new WebSocket.Server({ server });
 function broadcast(msg, except) {
@@ -251,6 +260,7 @@ wss.on('connection', (ws) => {
         mode: admin ? 'admin' : 'player', admin,
         pos: [128.5, 20, 136.5], yaw: Math.PI, pitch: 0, hp: 10, dead: 0,
         held: 0, seq: 0, // ítem en mano + contador de golpes (PvP): el rival ve el arma y el gesto
+        skin: cleanSkin(m.skin), // aspecto declarado (aditivo): el resto ve el robot/piel pedida
       };
       players.set(ws, me);
       ws.lastMv = Date.now();
@@ -260,9 +270,9 @@ wss.on('connection', (ws) => {
         zom: horde.zombies.map(z => ({ i: z.i, p: [z.x, z.y, z.z], yaw: z.yaw, hp: z.hp, dead: z.dead, atk: z.atk || 0 })),
         adminDenied: wantAdmin && !admin,
         players: [...players.values()].filter(p => p !== me)
-          .map(p => ({ id: p.id, name: p.name, mode: p.mode, hp: p.hp ?? 10, dead: p.dead ?? 0, pos: p.pos, yaw: p.yaw, pitch: p.pitch, held: p.held ?? 0, seq: p.seq ?? 0 })),
+          .map(p => ({ id: p.id, name: p.name, mode: p.mode, hp: p.hp ?? 10, dead: p.dead ?? 0, pos: p.pos, yaw: p.yaw, pitch: p.pitch, held: p.held ?? 0, seq: p.seq ?? 0, skin: p.skin ?? DEFAULT_SKIN })),
       });
-      broadcast({ t: 'join', id: me.id, name: me.name, mode: me.mode, dead: 0, pos: me.pos, yaw: me.yaw, pitch: me.pitch, held: me.held, seq: me.seq }, ws);
+      broadcast({ t: 'join', id: me.id, name: me.name, mode: me.mode, dead: 0, pos: me.pos, yaw: me.yaw, pitch: me.pitch, held: me.held, seq: me.seq, skin: me.skin }, ws);
       broadcast({ t: 'chat', from: '🌿', text: `${me.name} se unió (${me.mode === 'admin' ? 'admin 🛠' : 'jugador 🌱'})` }, ws);
       console.log(`➕ ${me.name} (${me.mode}) — ${players.size} conectados`);
       helloInFlight = false;
@@ -279,7 +289,7 @@ wss.on('connection', (ws) => {
       // ítem en mano + contador de golpes: solo si vienen (un `mv` de cliente viejo no los trae)
       if (Number.isInteger(+m.held)) me.held = +m.held;
       if (Number.isInteger(+m.seq)) me.seq = +m.seq;
-      broadcast({ t: 'pm', id: me.id, p: me.pos, yaw: me.yaw, pitch: me.pitch, hp: me.hp ?? 10, dead: me.dead ?? 0, held: me.held, seq: me.seq }, ws);
+      broadcast({ t: 'pm', id: me.id, p: me.pos, yaw: me.yaw, pitch: me.pitch, hp: me.hp ?? 10, dead: me.dead ?? 0, held: me.held, seq: me.seq, skin: me.skin }, ws);
     } else if (m.t === 'edit') {
       const { x, y, z, v } = m;
       if (![x, y, z, v].every(n => Number.isInteger(n))) return;
@@ -306,7 +316,7 @@ wss.on('connection', (ws) => {
       if (res) send(ws, { t: 'zhitok', id, dmg: Zombie.SWORD_DMG, hp: res.hp, dead: res.dead });
     } else if (m.t === 'chat') {
       const text = String(m.text || '').slice(0, 140).replace(/[<>&"]/g, '');
-      if (text) broadcast({ t: 'chat', from: me.name, text });
+      if (text) broadcast({ t: 'chat', from: me.name, fromId: me.id, text });
     }
   });
   ws.on('close', () => {

@@ -1,0 +1,24 @@
+# Imagen del BOT CAZADOR (servicio `minicraft-bot`).
+# NO toca el Dockerfile del server: comparte SOLO la dependencia de terceros `ws`
+# (mismo lockfile que server/), nunca su grafo de require (no requiere server.js).
+#
+#   docker build -f Dockerfile.bot -t minicraft-bot .
+#   docker run --rm -e SERVER_URL=ws://host:3000 minicraft-bot
+
+# ---- deps (reusa el lockfile del server: un solo `ws`) ----
+FROM node:20-alpine AS deps
+WORKDIR /app
+COPY server/package.json server/package-lock.json ./
+RUN npm ci --omit=dev
+
+# ---- runtime ----
+FROM node:20-alpine
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY bot/ ./bot/
+COPY index.html ./
+
+ENV SERVER_URL=ws://minicraft:3000 \
+    BOT_NAME=OPSX-bot
+
+CMD ["node", "bot/index.js"]
