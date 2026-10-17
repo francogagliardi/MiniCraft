@@ -36,8 +36,8 @@ function shutdown(code) {
 }
 setTimeout(() => { console.log('❌ timeout global'); shutdown(1); }, 45000).unref();
 
-async function hello(name, mode, key = '') {
-  const ws = new WebSocket(`ws://localhost:${PORT}`);
+async function hello(name, mode, key = '', port = PORT) {
+  const ws = new WebSocket(`ws://localhost:${port}`);
   const seen = [];
   await new Promise((res, rej) => {
     ws.on('open', res); ws.on('error', rej);
@@ -162,6 +162,73 @@ try {
   a.ws.send(JSON.stringify({ t: 'chat', text: 'hola' }));
   const ch = await nextOf(b.seen, b.seen.length, 'chat');
   ok(ch.from === 'Atac' && ch.text === 'hola', 'chat');
+
+  // 7. sin fantasmas: sesión sin `mv` expira con `leave`, sesión viva con `mv` no
+  // (segundo server con intervalos acortados por env: HB 200ms / idle 800ms)
+  {
+    const PORT2 = 3211;
+    const WORLD2 = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'mc-world-')), 'world.json');
+    const srv2 = spawn(process.execPath, ['server.js'], {
+      cwd: serverDir,
+      env: { ...process.env, PORT: String(PORT2), ADMIN_KEY: 'test-key', WORLD_FILE: WORLD2, HB_INTERVAL_MS: '200', IDLE_TIMEOUT_MS: '800' },
+    });
+    srv2.stderr.on('data', d => process.stdout.write('[SRV2-ERR] ' + d));
+    let keepObs = null, keepVivo = null;
+    try {
+      {
+        const t0 = Date.now();
+        let ready2 = false;
+        while (Date.now() - t0 < 15000) {
+          try {
+            const probe = new WebSocket(`ws://localhost:${PORT2}`);
+            await new Promise((res, rej) => { probe.on('open', res); probe.on('error', rej); });
+            probe.close(); ready2 = true; break;
+          } catch (e) { await wait(200); }
+        }
+        ok(ready2, 'server con intervalos cortos levanta');
+      }
+      const hello2 = (name) => hello(name, 'player', '', PORT2);
+      const obs2 = await hello2('Obs2');
+      const ghost2 = await hello2('Fantasma');
+      const vivo = await hello2('Vivo');
+      const nObs = obs2.seen.length;
+      // observador y viva mandan `mv` periódico → no deben expirar
+      const mv = (c) => { try { c.ws.send(JSON.stringify({ t: 'mv', p: [90, 20, 90], yaw: 0, pitch: 0 })); } catch (e) {} };
+      keepObs = setInterval(() => mv(obs2), 150);
+      keepVivo = setInterval(() => mv(vivo), 150);
+      // el fantasma no manda nada → debe expirar con `leave` una sola vez
+      {
+        const t0 = Date.now();
+        let leaves = [];
+        while (Date.now() - t0 < TIMEOUT) {
+          leaves = obs2.seen.slice(nObs).filter(m => m.t === 'leave' && m.id === ghost2.m.id);
+          if (leaves.length >= 1) break;
+          await wait(100);
+        }
+        ok(leaves.length === 1, 'conexión muerta sin `mv` expira con un solo `leave`');
+      }
+      // la viva sigue: su `mv` llega al observador y no recibe `leave`
+      const nObs2 = obs2.seen.length;
+      vivo.ws.send(JSON.stringify({ t: 'mv', p: [91, 20, 91], yaw: 0, pitch: 0 }));
+      {
+        const t1 = Date.now();
+        let pmVivo = null;
+        while (Date.now() - t1 < TIMEOUT) {
+          pmVivo = obs2.seen.slice(nObs2).find(m => m.t === 'pm' && m.id === vivo.m.id);
+          if (pmVivo) break;
+          await wait(50);
+        }
+        ok(!!pmVivo, 'conexión viva que manda `mv` sigue activa (relay ok)');
+      }
+      ok(!obs2.seen.slice(nObs).some(m => m.t === 'leave' && m.id === vivo.m.id),
+        'conexión viva no expira');
+      for (const c of [obs2, ghost2, vivo]) try { c.ws.close(); } catch (e) {}
+    } finally {
+      if (keepObs) clearInterval(keepObs);
+      if (keepVivo) clearInterval(keepVivo);
+      try { srv2.kill(); } catch (e) {}
+    }
+  }
 
   for (const c of [boss, a, b]) c.ws.close();
 } catch (e) {

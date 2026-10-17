@@ -2327,6 +2327,10 @@ function loop(now){
 requestAnimationFrame(loop);
 setInterval(save,15000);
 addEventListener('beforeunload',save);
+// Sin fantasmas: cerrar el WS al salir (flecha atrás/cierre/recarga) para que
+// el server difunda `leave` de inmediato en vez de dejar la sesión colgada.
+addEventListener('pagehide',()=>{ try{ NET?.close(); }catch(e){} });
+addEventListener('beforeunload',()=>{ try{ NET?.close(); }catch(e){} });
 </script>
 </body>
 </html>

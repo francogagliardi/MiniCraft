@@ -11,6 +11,10 @@ const PORT = +(process.env.PORT || 3000);
 const ADMIN_KEY = process.env.ADMIN_KEY || 'minicraft-admin-2026';
 const STATIC = process.env.MINICRAFT_DIR || path.join(__dirname, '..');
 const SAVE_FILE = process.env.WORLD_FILE || path.join(__dirname, 'world.json');
+// Presencia sin fantasmas: heartbeat ping/pong + expiración idle sin `mv`.
+// Defaults de producción 30s/90s; por env se acortan solo en tests.
+const HB_MS = Math.max(50, +(process.env.HB_INTERVAL_MS || 30000));
+const IDLE_MS = Math.max(100, +(process.env.IDLE_TIMEOUT_MS || 90000));
 
 // Asegura que la carpeta de persistencia exista (ej: /data en Easypanel/Docker).
 try { fs.mkdirSync(path.dirname(SAVE_FILE), { recursive: true }); } catch (e) {}
@@ -71,9 +75,42 @@ function broadcast(msg, except) {
 function send(ws, msg) {
   if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
 }
+// Limpieza compartida e idempotente: un solo `leave` por jugador,
+// la invoquen `close`, el heartbeat o el chequeo idle.
+function removePlayer(ws) {
+  const p = players.get(ws);
+  if (!p) return false;
+  players.delete(ws);
+  broadcast({ t: 'leave', id: p.id });
+  broadcast({ t: 'chat', from: '🌿', text: `${p.name} se fue` });
+  console.log(`➖ ${p.name} — ${players.size} conectados`);
+  return true;
+}
+
+// Heartbeat + idle: ping cada HB_MS (terminate sin pong) y
+// terminate + leave a sesiones sin `mv` durante IDLE_MS.
+setInterval(() => {
+  const now = Date.now();
+  for (const ws of [...wss.clients]) {
+    if (ws.isAlive === false) {
+      removePlayer(ws);
+      try { ws.terminate(); } catch (e) {}
+      continue;
+    }
+    ws.isAlive = false;
+    try { ws.ping(); } catch (e) {}
+    if (players.has(ws) && now - (ws.lastMv || 0) > IDLE_MS) {
+      removePlayer(ws);
+      try { ws.terminate(); } catch (e) {}
+    }
+  }
+}, HB_MS);
 
 wss.on('connection', (ws) => {
   let me = null;
+  ws.isAlive = true;
+  ws.lastMv = Date.now();
+  ws.on('pong', () => { ws.isAlive = true; });
   ws.on('message', (raw) => {
     let m;
     try { m = JSON.parse(raw); } catch (e) { return; }
@@ -87,6 +124,7 @@ wss.on('connection', (ws) => {
         pos: [128.5, 20, 136.5], yaw: Math.PI, pitch: 0, hp: 10, dead: 0,
       };
       players.set(ws, me);
+      ws.lastMv = Date.now();
       send(ws, {
         t: 'welcome', id: me.id, seed: SEED, edits, admin,
         adminDenied: wantAdmin && !admin,
@@ -102,6 +140,7 @@ wss.on('connection', (ws) => {
 
     if (m.t === 'mv') {
       if (!Array.isArray(m.p)) return;
+      ws.lastMv = Date.now();
       me.pos = m.p; me.yaw = m.yaw; me.pitch = m.pitch;
       if (Number.isFinite(+m.hp)) me.hp = Math.max(0, Math.min(10, +m.hp));
       if (m.dead === 1 || m.dead === 0) me.dead = m.dead;
@@ -127,11 +166,7 @@ wss.on('connection', (ws) => {
     }
   });
   ws.on('close', () => {
-    if (!me) return;
-    players.delete(ws);
-    broadcast({ t: 'leave', id: me.id });
-    broadcast({ t: 'chat', from: '🌿', text: `${me.name} se fue` });
-    console.log(`➖ ${me.name} — ${players.size} conectados`);
+    removePlayer(ws);
   });
 });
 
