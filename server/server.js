@@ -22,9 +22,15 @@ const IDLE_MS = Math.max(100, +(process.env.IDLE_TIMEOUT_MS || 90000));
 const DAY_MS = 300000, NIGHT_MS = 180000, CYCLE_MS = DAY_MS + NIGHT_MS, DAWN_MS = 25000, DUSK_MS = 25000;
 const NIGHT_MIN = 0.50, NIGHT_START = DAY_MS / CYCLE_MS;
 const TOD_INTERVAL_MS = Math.max(50, +(process.env.TOD_INTERVAL_MS || 4000));
+// Tick de la horda zombi (server-auth). Knobs por env para los tests. ZOMBIE_FORCE_NIGHT
+// es un atajo SOLO de test de isNight(); no reformatea el patrón `phaseNow() >= NIGHT_START`
+// que exige static.mjs §8d.
+const ZOMBIE_TICK_MS = Math.max(25, +(process.env.ZOMBIE_TICK_MS || 50));
+const ZOMBIE_SNAP_MS = Math.max(25, +(process.env.ZOMBIE_SNAP_MS || 100));
+const FORCE_NIGHT = process.env.ZOMBIE_FORCE_NIGHT === '1';
 const T0 = Date.now();
 function phaseNow() { return ((Date.now() - T0) % CYCLE_MS) / CYCLE_MS; }
-const isNight = () => phaseNow() >= NIGHT_START;
+const isNight = () => FORCE_NIGHT || phaseNow() >= NIGHT_START;
 
 // Asegura que la carpeta de persistencia exista (ej: /data en Easypanel/Docker).
 try { fs.mkdirSync(path.dirname(SAVE_FILE), { recursive: true }); } catch (e) {}
@@ -61,6 +67,42 @@ try {
     console.log(`💾 Mundo cargado: seed ${SEED}, ${edits.length} ediciones`);
   }
 } catch (e) { console.log('🌱 Mundo nuevo con seed', SEED); }
+
+// ---- réplica del mundo para la simulación de criaturas ----
+// El server extrae el bloque worldgen de index.html (el MISMO código que ejecuta el
+// cliente) y lo evalúa: así conoce el terreno exacto y colisiona sin drift. Fail
+// fast y ruidoso si el bloque falta: mejor no arrancar que simular otro mundo.
+const WG_START = '/* worldgen:start */', WG_END = '/* worldgen:end */';
+function loadWorldGen(dir) {
+  const html = fs.readFileSync(path.join(dir, 'index.html'), 'utf8');
+  const i = html.indexOf(WG_START), j = html.indexOf(WG_END);
+  if (i < 0 || j < i) throw new Error('worldgen: marcadores ausentes en index.html');
+  return new Function(html.slice(i, j) + '\n;return {WG_W,WG_H,WG_SURFACE,WG_OX,WG_OZ,hash2,vnoise,fbm,hAt,mulberry,genWorld,mobBlocked,topSolidY,freeForMob};')();
+}
+const WG = loadWorldGen(STATIC);
+const world = new Uint8Array(WG.WG_W * WG.WG_H * WG.WG_W);
+{
+  const t0 = Date.now();
+  WG.genWorld(world, SEED);
+  for (const e of edits) { // parcheo de las ediciones ya validadas (idx = (y*208+z)*208+x)
+    if (!Array.isArray(e)) continue;
+    const [idx, v] = e;
+    if (Number.isInteger(idx) && idx >= 0 && idx < world.length && Number.isInteger(v)) world[idx] = v;
+  }
+  console.log(`🗺️  Mundo replicado (${WG.WG_W}×${WG.WG_H}×${WG.WG_W} = ${world.length} celdas) en ${Date.now() - t0} ms`);
+}
+
+// ---- horda de zombis (server-auth) ----
+// Módulo puro: recibe la réplica del mundo, los predicados del bloque worldgen y un
+// RNG propio. El server solo tickea, difunde el estado y aplica los eventos.
+const Zombie = require('./zombie.js');
+const horde = Zombie.createHorde({
+  world, mobBlocked: WG.mobBlocked,
+  topSolidY: (x, z) => WG.topSolidY(world, x, z),
+  freeForMob: (x, y, z) => WG.freeForMob(world, x, y, z),
+  rng: WG.mulberry((SEED ^ 0x2b1d) >>> 0),
+  W: WG.WG_W, H: WG.WG_H, surface: WG.WG_SURFACE,
+});
 
 function save() {
   try { fs.writeFileSync(SAVE_FILE, JSON.stringify({ seed: SEED, edits })); } catch (e) {}
@@ -119,6 +161,37 @@ setInterval(() => {
 // Difusión de la hora del ciclo (aditiva: los clientes viejos la ignoran).
 setInterval(() => { broadcast({ t: 'tod', v: phaseNow() }); }, TOD_INTERVAL_MS);
 
+// ---- tick de la horda: la IA corre aparte y el server cablea los eventos a los ws ----
+let zLast = [], zSnapN = 0;
+function wsById(id) {
+  for (const [ws, p] of players) if (p.id === id) return ws;
+  return null;
+}
+let ztPrev = Date.now();
+setInterval(() => {
+  const now = Date.now();
+  const dt = Math.min(0.1, (now - ztPrev) / 1000); // dt real, clamp ante un stall
+  ztPrev = now;
+  const arr = [];
+  for (const p of players.values()) arr.push({ id: p.id, pos: p.pos, dead: p.dead || 0 });
+  const res = horde.tick(dt, { night: isNight(), now, players: arr });
+  zLast = res.zs; // se difunde en el snapshot; el tick NO emite red por sí solo
+  for (const ev of res.events) {
+    const target = wsById(ev.to);
+    if (!target) continue;
+    if (ev.t === 'phit') send(target, { t: 'phit', from: ev.from, fromId: ev.fromId, dmg: ev.dmg, dx: ev.dx, dz: ev.dz });
+    else if (ev.t === 'zhitok') send(target, { t: 'zhitok', id: ev.id, dmg: ev.dmg, hp: ev.hp, dead: ev.dead });
+  }
+}, ZOMBIE_TICK_MS);
+
+// Difusión periódica del estado de la horda (mismo espíritu que `tod`): sin zombis y
+// sin cambio de cantidad no se emite, para no spamear mensajes vacíos.
+setInterval(() => {
+  if (zLast.length === 0 && zSnapN === 0) return;
+  zSnapN = zLast.length;
+  broadcast({ t: 'zs', z: zLast });
+}, ZOMBIE_SNAP_MS);
+
 wss.on('connection', (ws) => {
   let me = null;
   ws.isAlive = true;
@@ -135,17 +208,19 @@ wss.on('connection', (ws) => {
         id: nextId++, name: cleanName(m.name),
         mode: admin ? 'admin' : 'player', admin,
         pos: [128.5, 20, 136.5], yaw: Math.PI, pitch: 0, hp: 10, dead: 0,
+        held: 0, seq: 0, // ítem en mano + contador de golpes (PvP): el rival ve el arma y el gesto
       };
       players.set(ws, me);
       ws.lastMv = Date.now();
       send(ws, {
         t: 'welcome', id: me.id, seed: SEED, edits, admin,
         tod: phaseNow(), cyc: CYCLE_MS,
+        zom: horde.zombies.map(z => ({ i: z.i, p: [z.x, z.y, z.z], yaw: z.yaw, hp: z.hp, dead: z.dead, atk: z.atk || 0 })),
         adminDenied: wantAdmin && !admin,
         players: [...players.values()].filter(p => p !== me)
-          .map(p => ({ id: p.id, name: p.name, mode: p.mode, hp: p.hp ?? 10, dead: p.dead ?? 0, pos: p.pos, yaw: p.yaw, pitch: p.pitch })),
+          .map(p => ({ id: p.id, name: p.name, mode: p.mode, hp: p.hp ?? 10, dead: p.dead ?? 0, pos: p.pos, yaw: p.yaw, pitch: p.pitch, held: p.held ?? 0, seq: p.seq ?? 0 })),
       });
-      broadcast({ t: 'join', id: me.id, name: me.name, mode: me.mode, dead: 0, pos: me.pos, yaw: me.yaw, pitch: me.pitch }, ws);
+      broadcast({ t: 'join', id: me.id, name: me.name, mode: me.mode, dead: 0, pos: me.pos, yaw: me.yaw, pitch: me.pitch, held: me.held, seq: me.seq }, ws);
       broadcast({ t: 'chat', from: '🌿', text: `${me.name} se unió (${me.mode === 'admin' ? 'admin 🛠' : 'jugador 🌱'})` }, ws);
       console.log(`➕ ${me.name} (${me.mode}) — ${players.size} conectados`);
       return;
@@ -158,13 +233,18 @@ wss.on('connection', (ws) => {
       me.pos = m.p; me.yaw = m.yaw; me.pitch = m.pitch;
       if (Number.isFinite(+m.hp)) me.hp = Math.max(0, Math.min(10, +m.hp));
       if (m.dead === 1 || m.dead === 0) me.dead = m.dead;
-      broadcast({ t: 'pm', id: me.id, p: me.pos, yaw: me.yaw, pitch: me.pitch, hp: me.hp ?? 10, dead: me.dead ?? 0 }, ws);
+      // ítem en mano + contador de golpes: solo si vienen (un `mv` de cliente viejo no los trae)
+      if (Number.isInteger(+m.held)) me.held = +m.held;
+      if (Number.isInteger(+m.seq)) me.seq = +m.seq;
+      broadcast({ t: 'pm', id: me.id, p: me.pos, yaw: me.yaw, pitch: me.pitch, hp: me.hp ?? 10, dead: me.dead ?? 0, held: me.held, seq: me.seq }, ws);
     } else if (m.t === 'edit') {
       const { x, y, z, v } = m;
       if (![x, y, z, v].every(n => Number.isInteger(n))) return;
       if (x < 0 || x >= 208 || z < 0 || z >= 208 || y < 0 || y >= 40 || v < 0 || v > 64) return;
       if (v === 11 || y === 0) return; // bedrock solo la pone el generador
-      edits.push([(y * 208 + z) * 208 + x, v]);
+      const idx = (y * 208 + z) * 208 + x;
+      edits.push([idx, v]);
+      world[idx] = v; // mantener la réplica del mundo en sync con las ediciones
       if (edits.length > 300000) edits.splice(0, edits.length - 300000);
       broadcast({ t: 'pedit', x, y, z, v, by: me.name }, ws);
     } else if (m.t === 'hit') {
@@ -174,6 +254,13 @@ wss.on('connection', (ws) => {
         send(target, { t: 'phit', from: me.name, fromId: me.id, dmg, dx: +m.dx || 0, dz: +m.dz || 0 });
         send(ws, { t: 'hitok', id: m.id, dmg }); // confirmación al atacante
       }
+    } else if (m.t === 'zhit') {
+      // Golpe del jugador a una criatura: el server es la autoridad del daño. Sin
+      // zombi/alcance/cooldown válido se rechaza en silencio (sin respuestas).
+      const id = +m.id;
+      if (!Number.isInteger(id)) return;
+      const res = horde.hit(me.id, id, Date.now(), me.pos);
+      if (res) send(ws, { t: 'zhitok', id, dmg: Zombie.SWORD_DMG, hp: res.hp, dead: res.dead });
     } else if (m.t === 'chat') {
       const text = String(m.text || '').slice(0, 140).replace(/[<>&"]/g, '');
       if (text) broadcast({ t: 'chat', from: me.name, text });

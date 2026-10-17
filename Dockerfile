@@ -8,7 +8,7 @@ RUN npm ci --omit=dev
 FROM node:20-alpine
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
-COPY server/server.js ./
+COPY server/*.js ./
 COPY index.html ./
 RUN mkdir -p /data
 

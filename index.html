@@ -409,6 +409,13 @@ if (TOUCH) {
 import * as THREE from 'three';
 
 /* ============ CONFIG ============ */
+// Seed del mundo: hash2 la lee como global (el server la inyecta al evaluar el bloque).
+let SEED = (Math.random()*1e9)|0;
+/* worldgen:start */
+// Bloque COMPARTIDO: el cliente lo ejecuta inline y el servidor lo extrae de este
+// index.html y lo evalúa con new Function (mismo patrón que net/avatar). Debe ser
+// autocontenido (sin DEFS, sin THREE, sin document): cambiar el generador acá lo
+// cambia para ambos a la vez ⇒ cero drift por construcción.
 const W = 208, H = 40, CH = 16, WATER_Y = 10;
 const OX = 48, OZ = 48; // offset del mundo viejo: ocupa el array 48..207; tierra nueva al N/O (0..47)
 const AIR=0, GRASS=1, DIRT=2, STONE=3, LOG=4, PLANKS=5, LEAVES=6, SAND=7, GLASS=8,
@@ -421,6 +428,81 @@ const AIR=0, GRASS=1, DIRT=2, STONE=3, LOG=4, PLANKS=5, LEAVES=6, SAND=7, GLASS=
       STAIR_COBBLE_E=47, STAIR_COBBLE_W=48, STAIR_COBBLE_S=49, STAIR_COBBLE_N=50,
       STAIR_BRICK_E=51, STAIR_BRICK_W=52, STAIR_BRICK_S=53, STAIR_BRICK_N=54,
       STAIR_SBRICK_E=55, STAIR_SBRICK_W=56, STAIR_SBRICK_S=57, STAIR_SBRICK_N=58;
+const WG_W = W, WG_H = H, WG_SURFACE = WATER_Y, WG_OX = OX, WG_OZ = OZ;
+function mulberry(seed){ let a = seed>>>0; return () => {
+  a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a>>>15, 1|a);
+  t = t + Math.imul(t ^ t>>>7, 61|t) ^ t; return ((t ^ t>>>14)>>>0)/4294967296; }; }
+function hash2(x,z){
+  let h = (x*374761393 + z*668265263 + SEED*974634) | 0;
+  h = Math.imul(h ^ h>>>13, 1274126177);
+  return (((h ^ h>>>16)>>>0)%1000)/1000;
+}
+function vnoise(x,z){
+  const xi=Math.floor(x), zi=Math.floor(z), xf=x-xi, zf=z-zi;
+  const s = t => t*t*(3-2*t), u=s(xf), v=s(zf);
+  return hash2(xi,zi)*(1-u)*(1-v)+hash2(xi+1,zi)*u*(1-v)+hash2(xi,zi+1)*(1-u)*v+hash2(xi+1,zi+1)*u*v;
+}
+function fbm(x,z){ return vnoise(x,z)*.55 + vnoise(x*2.3+7,z*2.3+3)*.3 + vnoise(x*5.1+13,z*5.1+9)*.15; }
+const hAt = (x,z) => Math.floor(5 + fbm(x*.028, z*.028)*17 + fbm(x*.11+40, z*.11+40)*3);
+// Puro y autocontenido: escribe el mundo en `buf` (Uint8Array W*H*W) y fija el
+// SEED global que lee hash2. El cliente lo llama con su `world`; el server con su
+// propia réplica. Mismo algoritmo que el generador original del cliente.
+function genWorld(buf, seed){
+  SEED = seed;
+  buf.fill(AIR);
+  const _widx = (x,y,z) => (y*WG_W + z)*WG_W + x;
+  const _inB = (x,y,z) => x>=0 && x<WG_W && z>=0 && z<WG_W && y>=0 && y<WG_H;
+  const _set = (x,y,z,v) => { if(_inB(x,y,z)) buf[_widx(x,y,z)] = v; };
+  const _get = (x,y,z) => _inB(x,y,z) ? buf[_widx(x,y,z)] : AIR;
+  const rng = mulberry(SEED);
+  for(let x=0;x<W;x++) for(let z=0;z<W;z++){
+    const h = Math.min(hAt(x-OX,z-OZ), H-8);
+    _set(x,0,z,BEDROCK);
+    for(let y=1;y<=h;y++){
+      _set(x,y,z, y<h-3 ? STONE : y<h ? DIRT : (h<=WATER_Y+1 ? SAND : GRASS));
+    }
+    for(let y=h+1;y<=WATER_Y;y++) _set(x,y,z,WATER);
+  }
+  let placed=0, guard=0;
+  while(placed<65 && guard++<4000){
+    const x=4+(rng()*(W-8)|0), z=4+(rng()*(W-8)|0), h=hAt(x-OX,z-OZ);
+    if(h<=WATER_Y+1 || _get(x,h,z)!==GRASS) continue;
+    const th=4;
+    for(let y=h+1;y<=h+th;y++) _set(x,y,z,LOG);
+    for(let dx=-2;dx<=2;dx++) for(let dz=-2;dz<=2;dz++) for(let dy=0;dy<3;dy++){
+      if(Math.abs(dx)===2&&Math.abs(dz)===2&&dy>0) continue;
+      const bx=x+dx, by=h+th-1+dy, bz=z+dz;
+      if(_inB(bx,by,bz)&&_get(bx,by,bz)===AIR) _set(bx,by,bz,LEAVES);
+    }
+    _set(x,h+th+2,z,LEAVES); placed++;
+  }
+  let fl=0; guard=0;
+  while(fl<450 && guard++<20000){
+    const x=2+(rng()*(W-4)|0), z=2+(rng()*(W-4)|0), h=hAt(x-OX,z-OZ);
+    if(h<=WATER_Y+1 || _get(x,h,z)!==GRASS || _get(x,h+1,z)!==AIR) continue;
+    _set(x,h+1,z, rng()<.5?FLOWER_R:FLOWER_Y); fl++;
+  }
+}
+// Predicado de colisión de mob: versión mínima de isSolid (sin DEFS). No bloquean
+// el aire, el agua, las flores, la antorcha ni las puertas abiertas; todo lo demás
+// sí (losas y escaleras son cubos completos para el mob). El test de drift lo
+// contrasta id por id contra DEFS.
+function mobBlocked(v){
+  return !(v===AIR || v===WATER || v===FLOWER_R || v===FLOWER_Y || v===TORCH ||
+    v===DOOR_OPEN || v===DOOR2_OPEN || v===DOORZ_OPEN || v===DOORZ2_OPEN);
+}
+// Altura del bloque sólido más alto de la columna + 1 (0 si la columna no tiene suelo).
+function topSolidY(buf, x, z){
+  if(x<0||x>=WG_W||z<0||z>=WG_W) return 0;
+  for(let y=WG_H-1;y>=0;y--) if(mobBlocked(buf[(y*WG_W + z)*WG_W + x])) return y+1;
+  return 0;
+}
+// El cuerpo del mob ocupa 2 bloques (pies en `y`, cabeza en `y+1`): ambos libres.
+function freeForMob(buf, x, y, z){
+  if(x<0||x>=WG_W||z<0||z>=WG_W||y<0||y+1>=WG_H) return false;
+  return !mobBlocked(buf[(y*WG_W + z)*WG_W + x]) && !mobBlocked(buf[((y+1)*WG_W + z)*WG_W + x]);
+}
+/* worldgen:end */
 // Escaleras: stairDir = eje de subida (0:+X=E 1:-X=W 2:+Z=S 3:-Z=N); mitad baja al frente (-dir), alta al fondo.
 const SWORD = 100; // item (no es bloque, no se puede poner en el mundo)
 const PICK = 101;  // item (no es bloque, no se puede poner en el mundo)
@@ -501,10 +583,8 @@ let deathPos = null, deathT = 0, deathShown = false;
 let myName = 'Aventurero';
 
 /* ============ RNG ============ */
-function mulberry(seed){ let a = seed>>>0; return () => {
-  a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a>>>15, 1|a);
-  t = t + Math.imul(t ^ t>>>7, 61|t) ^ t; return ((t ^ t>>>14)>>>0)/4294967296; }; }
-let SEED = (Math.random()*1e9)|0;
+// mulberry + SEED viven en el bloque worldgen compartido (arriba). SEED se conserva
+// como global porque hash2 lo lee (y el server lo re-inyecta al evaluar el bloque).
 
 /* ============ ATLAS 8x5 ============ */
 let texSeed = 12345;
@@ -808,44 +888,59 @@ const pollenGeo = new THREE.BufferGeometry();
 scene.add(new THREE.Points(pollenGeo, new THREE.PointsMaterial({ color:0xfffbe0, size:.18, transparent:true, opacity:.85 })));
 
 /* ============ ARMA/HERRAMIENTA EN MANO (viewmodel) ============ */
-scene.add(camera); // necesario para que se vean los hijos de la cámara
-const swordG = new THREE.Group();
-{
+// Builders compartidos (grupo 12): el viewmodel (espada/pico en 1ª persona) y el arma en la
+// mano de los avatares remotos usan EL MISMO modelo. Devuelven un Group con el pivote en la
+// empuñadura, así se puede colgar de la cámara o del brazo de un avatar sin duplicar geometría.
+function makeSwordModel(){
+  const g = new THREE.Group();
   const steel = new THREE.MeshLambertMaterial({ color:0xdfe6f2 });
   const gold = new THREE.MeshLambertMaterial({ color:0xc9a13b });
   const wood = new THREE.MeshLambertMaterial({ color:0x6b4a2f });
   const add = (w,h,d,mat,x,y,z,rz=0) => {
     const m = new THREE.Mesh(new THREE.BoxGeometry(w,h,d), mat);
-    m.position.set(x,y,z); m.rotation.z = rz; swordG.add(m); return m;
+    m.position.set(x,y,z); m.rotation.z = rz; g.add(m); return m;
   };
   add(.075,.62,.035, steel, 0,.42,0);            // hoja
   add(.075,.1,.035, steel, 0,.75,0, Math.PI/4);  // punta
   add(.22,.055,.07, gold, 0,.08,0);              // guardia
   add(.06,.2,.05, wood, 0,-.05,0);               // mango
   add(.09,.07,.06, gold, 0,-.18,0);              // pomo
-  swordG.position.set(.42,-.42,-.7);
-  swordG.rotation.set(.18,-.18,.12);
-  swordG.visible = false;
-  camera.add(swordG);
+  g.traverse(o=>{ if(o.isMesh) o.castShadow=true; });
+  return g;
 }
 // Pico: mango de madera + cabeza de piedra en T. La cabeza es un travesaño ancho, así que el
 // grupo se gira ~90° sobre Y para que apunte al fondo de la pantalla (no de costado) y se
 // inclina como la espada. Pose base en constantes para tunear posición/rotación/escala.
-const pickG = new THREE.Group();
-const PICK_POS = new THREE.Vector3(-.42,-.42,-.7);
-const PICK_ROT = new THREE.Euler(.5,Math.PI/2+.18,-.35);
-const PICK_SCALE = .85;
-{
+function makePickModel(){
+  const g = new THREE.Group();
   const stone = new THREE.MeshLambertMaterial({ color:0xa8adb5 });
   const wood = new THREE.MeshLambertMaterial({ color:0x6b4a2f });
   const add = (w,h,d,mat,x,y,z,rz=0) => {
     const m = new THREE.Mesh(new THREE.BoxGeometry(w,h,d), mat);
-    m.position.set(x,y,z); m.rotation.z = rz; pickG.add(m); return m;
+    m.position.set(x,y,z); m.rotation.z = rz; g.add(m); return m;
   };
   add(.055,.6,.055, wood, 0,.26,0);           // mango
   add(.42,.075,.07, stone, 0,.56,0);          // cabeza (travesaño)
   add(.075,.14,.07, stone, -.19,.5,0,.35);    // punta izquierda
   add(.075,.14,.07, stone,  .19,.5,0,-.35);   // punta derecha
+  g.traverse(o=>{ if(o.isMesh) o.castShadow=true; });
+  return g;
+}
+scene.add(camera); // necesario para que se vean los hijos de la cámara
+const swordG = new THREE.Group();
+{
+  swordG.add(makeSwordModel());
+  swordG.position.set(.42,-.42,-.7);
+  swordG.rotation.set(.18,-.18,.12);
+  swordG.visible = false;
+  camera.add(swordG);
+}
+const pickG = new THREE.Group();
+const PICK_POS = new THREE.Vector3(-.42,-.42,-.7);
+const PICK_ROT = new THREE.Euler(.5,Math.PI/2+.18,-.35);
+const PICK_SCALE = .85;
+{
+  pickG.add(makePickModel());
   pickG.position.copy(PICK_POS);
   pickG.rotation.copy(PICK_ROT);
   pickG.scale.setScalar(PICK_SCALE);
@@ -926,50 +1021,9 @@ const solidAt = (x,y,z) => {
   if(!inB(x,y,z)) return x<0||x>=W||z<0||z>=W;
   return isSolid(world[widx(x,y,z)]);
 };
-function hash2(x,z){
-  let h = (x*374761393 + z*668265263 + SEED*974634) | 0;
-  h = Math.imul(h ^ h>>>13, 1274126177);
-  return (((h ^ h>>>16)>>>0)%1000)/1000;
-}
-function vnoise(x,z){
-  const xi=Math.floor(x), zi=Math.floor(z), xf=x-xi, zf=z-zi;
-  const s = t => t*t*(3-2*t), u=s(xf), v=s(zf);
-  return hash2(xi,zi)*(1-u)*(1-v)+hash2(xi+1,zi)*u*(1-v)+hash2(xi,zi+1)*(1-u)*v+hash2(xi+1,zi+1)*u*v;
-}
-function fbm(x,z){ return vnoise(x,z)*.55 + vnoise(x*2.3+7,z*2.3+3)*.3 + vnoise(x*5.1+13,z*5.1+9)*.15; }
-const hAt = (x,z) => Math.floor(5 + fbm(x*.028, z*.028)*17 + fbm(x*.11+40, z*.11+40)*3);
-
-function genWorld(){
-  world.fill(AIR); edits.length = 0;
-  const rng = mulberry(SEED);
-  for(let x=0;x<W;x++) for(let z=0;z<W;z++){
-    const h = Math.min(hAt(x-OX,z-OZ), H-8);
-    rawSet(x,0,z,BEDROCK);
-    for(let y=1;y<=h;y++){
-      rawSet(x,y,z, y<h-3 ? STONE : y<h ? DIRT : (h<=WATER_Y+1 ? SAND : GRASS));
-    }
-    for(let y=h+1;y<=WATER_Y;y++) rawSet(x,y,z,WATER);
-  }
-  let placed=0, guard=0;
-  while(placed<65 && guard++<4000){
-    const x=4+(rng()*(W-8)|0), z=4+(rng()*(W-8)|0), h=hAt(x-OX,z-OZ);
-    if(h<=WATER_Y+1 || get(x,h,z)!==GRASS) continue;
-    const th=4;
-    for(let y=h+1;y<=h+th;y++) rawSet(x,y,z,LOG);
-    for(let dx=-2;dx<=2;dx++) for(let dz=-2;dz<=2;dz++) for(let dy=0;dy<3;dy++){
-      if(Math.abs(dx)===2&&Math.abs(dz)===2&&dy>0) continue;
-      const bx=x+dx, by=h+th-1+dy, bz=z+dz;
-      if(inB(bx,by,bz)&&get(bx,by,bz)===AIR) rawSet(bx,by,bz,LEAVES);
-    }
-    rawSet(x,h+th+2,z,LEAVES); placed++;
-  }
-  let fl=0; guard=0;
-  while(fl<450 && guard++<20000){
-    const x=2+(rng()*(W-4)|0), z=2+(rng()*(W-4)|0), h=hAt(x-OX,z-OZ);
-    if(h<=WATER_Y+1 || get(x,h,z)!==GRASS || get(x,h+1,z)!==AIR) continue;
-    rawSet(x,h+1,z, rng()<.5?FLOWER_R:FLOWER_Y); fl++;
-  }
-}
+// Wrapper del cliente sobre el genWorld del bloque compartido: limpia las
+// ediciones y regenera el mundo en el buffer local `world` con la seed actual.
+function newWorld(){ edits.length = 0; genWorld(world, SEED); }
 
 /* ============ MESHING ============ */
 const matOpaque = new THREE.MeshLambertMaterial({ map:atlasTex, vertexColors:true });
@@ -1834,6 +1888,15 @@ function makeAvatar(id, name, admin){
   B(.07,.08,.02,0x222222,-.1,1.66,.22); B(.07,.08,.02,0x222222,.1,1.66,.22);
   const armL=B(.16,.62,.16,skin,-.35,1.05,0), armR=B(.16,.62,.16,skin,.35,1.05,0);
   const legL=B(.2,.7,.2,pants,-.13,.35,0), legR=B(.2,.7,.2,pants,.13,.35,0);
+  // Arma en mano del remoto (grupo 12): mismo builder que el viewmodel, colgada del brazo
+  // derecho para que herede el balanceo/gesto. Arranca oculta y la muestra `held` del pm.
+  // Queda FUERA de avatarTargets: el arma no cambia la superficie de golpe del PvP.
+  const handSword=makeSwordModel(), handPick=makePickModel();
+  handSword.position.set(0,-.34,.08); handPick.position.set(0,-.34,.08);
+  handSword.rotation.set(Math.PI,.1,0); handPick.rotation.set(Math.PI,.1,0);
+  handSword.scale.setScalar(.8); handPick.scale.setScalar(.8);
+  handSword.visible=false; handPick.visible=false;
+  armR.add(handSword,handPick);
   const tag=nameSprite(name+(admin?' 🛠':''), admin); tag.position.y=2.45; g.add(tag);
   // barrita de vida sobre la cabeza
   const barC=document.createElement('canvas'); barC.width=72; barC.height=10;
@@ -1842,7 +1905,8 @@ function makeAvatar(id, name, admin){
   bar.scale.set(1.15,.16,1); bar.position.y=2.1; bar.renderOrder=10; g.add(bar);
   scene.add(g);
   const a={ id, name, admin, g, mats, armL, armR, legL, legR, hp:10, dead:false, deadK:0, barC, barTex, bar,
-    target:new THREE.Vector3(), yaw:0, t:Math.random()*10, flash:0 };
+    target:new THREE.Vector3(), yaw:0, t:Math.random()*10, flash:0,
+    sword:handSword, pick:handPick, held:0, seq:0, seqSeen:0, swingK:1 };
   drawBar(a);
   return a;
 }
@@ -1862,6 +1926,9 @@ function addRemote(p){
   if(p.dead===1){ a.dead=true; a.deadK=1; }
   a.g.position.set(p.pos[0],p.pos[1],p.pos[2]);
   a.target.copy(a.g.position); a.yaw=p.yaw||0; a.pmBuf=[];
+  // arma + contador de golpes (welcome.players/join): guardas para clientes viejos sin los campos
+  if(Number.isInteger(p.held)) a.held=p.held;
+  if(Number.isInteger(p.seq)){ a.seq=p.seq; a.seqSeen=p.seq; }
   remotes.set(p.id,a); renderPlist();
 }
 function removeRemote(id){
@@ -1917,7 +1984,12 @@ function outOfCell(px,py,pz,r,h,x,y,z,blocked){
   return { x:c.ax==='x'?c.v:px, y:py, z:c.ax==='z'?c.v:pz };
 }
 // Aplica un pm ya maduro al target/yaw del avatar remoto.
-function applyPm(a,m){ a.target.set(m.p[0],m.p[1],m.p[2]); a.yaw=m.yaw; }
+function applyPm(a,m){
+  a.target.set(m.p[0],m.p[1],m.p[2]); a.yaw=m.yaw;
+  // ítem en mano + contador de golpes del remoto (guardas: un pm viejo sin campos no rompe)
+  if(Number.isInteger(m.held)) a.held=m.held;
+  if(Number.isInteger(m.seq)) a.seq=m.seq;
+}
 // Tras un pedit remoto: si el bloque nuevo dejó al jugador local dentro, lo saca fuera.
 function pushLocalOutOfBlock(x,y,z){
   if(!isSolid(get(x,y,z))) return false;
@@ -1926,6 +1998,14 @@ function pushLocalOutOfBlock(x,y,z){
   if(!out) return false;
   p.x=out.x; p.z=out.z;
   return true;
+}
+// Pose de muerte compartida avatar/zombi: se desploma de espaldas (y se levanta al
+// revivir), extremidades quietas al pasar la mitad y barra de vida oculta.
+function poseDead(o,wantDead,dt){
+  o.deadK+=Math.max(-dt*1.6,Math.min(dt*1.6,wantDead-o.deadK));
+  o.g.rotation.x=-o.deadK*Math.PI/2;
+  if(o.deadK>.5){ o.legL.rotation.x=o.legR.rotation.x=o.armL.rotation.x=o.armR.rotation.x=0; }
+  o.bar.visible=wantDead===0;
 }
 /* net/avatar:end */
 function tickAvatar(a,dt){
@@ -1943,15 +2023,20 @@ function tickAvatar(a,dt){
   a.g.rotation.y=yawToward(a.g.rotation.y, a.yaw+Math.PI, dt, 10);
   const sw=(dist>.05&&a.deadK<.5)?Math.sin(a.t*11)*.6:0;
   a.legL.rotation.x=sw; a.legR.rotation.x=-sw; a.armL.rotation.x=-sw; a.armR.rotation.x=sw;
-  // animación de muerte: se desploma de espaldas (y se levanta al revivir)
-  const wantDead=a.dead?1:0;
-  a.deadK+=Math.max(-dt*1.6,Math.min(dt*1.6,wantDead-a.deadK));
-  a.g.rotation.x=-a.deadK*Math.PI/2;
-  if(a.deadK>.5){ a.legL.rotation.x=a.legR.rotation.x=a.armL.rotation.x=a.armR.rotation.x=0; }
-  a.bar.visible=!a.dead;
+  poseDead(a, a.dead?1:0, dt); // animación de muerte compartida con los zombis
   if(a.flash>0){ a.flash-=dt;
     for(const m of a.mats) m.emissive.setHex(0xff2222);
     if(a.flash<=0) for(const m of a.mats) m.emissive.setHex(0x000000);
+  }
+  // Arma del rival (grupo 12): `held` elige el modelo (mismos ids que la hotbar) y un `seq`
+  // que CRECE dispara el gesto de golpe (SWING_DUR, igual que el zombi/viewmodel). Un seq que
+  // baja (reconexión que lo resetea) solo re-sincroniza: no se interpreta como golpe.
+  a.sword.visible=a.held===SWORD && a.deadK<.5;
+  a.pick.visible=a.held===PICK && a.deadK<.5;
+  if(a.seq!==a.seqSeen){ if(a.seq>a.seqSeen) a.swingK=0; a.seqSeen=a.seq; }
+  if(a.swingK<1 && a.deadK<.5){
+    a.swingK=Math.min(1,a.swingK+dt/SWING_DUR);
+    a.armR.rotation.x=-Math.sin(a.swingK*Math.PI)*1.4;
   }
 }
 const raycaster=new THREE.Raycaster();
@@ -1961,6 +2046,109 @@ function avatarHit(){
   if(!hits.length) return null;
   const a=remotes.get(hits[0].object.userData.avatarId);
   return a?{ a, dist:hits[0].distance }:null;
+}
+
+/* ============ ZOMBIS (server-auth): modelo, registro, interpolación y golpe ============ */
+// El estado (posición/yaw/vida/muerte) llega del server en `zom`/`zs`; el cliente solo
+// interpola, dibuja y pide el golpe. Sin server no hay `zs` ⇒ no hay zombis.
+const zombies=new Map(); // i -> zombi
+const zombieTargets=[];  // mallas para el raycast del ataque (espacio aparte de avatars)
+// Barra de vida del zombi: siempre sobre hp/6.
+function drawZBar(z){
+  const x=z.barC.getContext('2d');
+  const f=Math.max(0,Math.min(1,z.hp/6));
+  x.clearRect(0,0,72,10);
+  x.fillStyle='rgba(10,15,25,.65)'; x.fillRect(0,0,72,10);
+  x.fillStyle=f>.5?'#57d95e':f>.25?'#ffca4f':'#ff5544';
+  x.fillRect(2,2,68*f,6);
+  z.barTex.needsUpdate=true;
+}
+// Molde de makeAvatar: humanoide verdoso sin etiqueta de nombre, con barra de vida.
+function makeZombie(id){
+  const g=new THREE.Group();
+  const skin=0x6a9a4a, dark=0x3f6b2f, torso=0x2f4a24;
+  const mats=[];
+  const B=(w,h,d,c,x,y,z)=>{
+    const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),
+      new THREE.MeshLambertMaterial({ color:c }));
+    m.position.set(x,y,z); m.castShadow=true; mats.push(m.material);
+    m.userData.zombieId=id; g.add(m); zombieTargets.push(m); return m;
+  };
+  B(.5,.7,.3,torso,0,1.05,0);
+  B(.42,.42,.42,skin,0,1.65,0);
+  // Ojos rojos brillantes: material BÁSICO (ignora la iluminación de la escena), así que
+  // se ven encendidos de noche sin agregar ninguna luz por zombi. Van colgados del grupo
+  // pero FUERA de zombieTargets/mats: son solo brillo visual (no cambian la superficie de golpe).
+  const eyeMat=new THREE.MeshBasicMaterial({ color:0xff2a2a });
+  const eyeL=new THREE.Mesh(new THREE.BoxGeometry(.07,.08,.02),eyeMat);
+  const eyeR=new THREE.Mesh(new THREE.BoxGeometry(.07,.08,.02),eyeMat);
+  eyeL.position.set(-.1,1.66,.22); eyeR.position.set(.1,1.66,.22);
+  g.add(eyeL,eyeR);
+  const armL=B(.16,.62,.16,skin,-.35,1.05,0), armR=B(.16,.62,.16,skin,.35,1.05,0);
+  const legL=B(.2,.7,.2,dark,-.13,.35,0), legR=B(.2,.7,.2,dark,.13,.35,0);
+  const barC=document.createElement('canvas'); barC.width=72; barC.height=10;
+  const barTex=new THREE.CanvasTexture(barC); barTex.colorSpace=THREE.SRGBColorSpace;
+  const bar=new THREE.Sprite(new THREE.SpriteMaterial({ map:barTex, depthTest:false, transparent:true }));
+  bar.scale.set(1.15,.16,1); bar.position.y=2.1; bar.renderOrder=10; g.add(bar);
+  scene.add(g);
+  const z={ id, g, mats, armL, armR, legL, legR, hp:6, dead:false, deadK:0, atk:0, atkSeen:0, swingK:1, barC, barTex, bar,
+    target:new THREE.Vector3(), yaw:0, t:Math.random()*10 };
+  drawZBar(z);
+  return z;
+}
+function removeZombie(id){
+  const z=zombies.get(id); if(!z) return;
+  for(const m of z.g.children){ const i=zombieTargets.indexOf(m); if(i>=0) zombieTargets.splice(i,1); }
+  z.g.traverse(o=>{ const i=zombieTargets.indexOf(o); if(i>=0) zombieTargets.splice(i,1); });
+  scene.remove(z.g); zombies.delete(id);
+}
+// Upsert por id: crea la malla si es nueva y setea target/yaw/vida/muerte.
+function applyZs(m){
+  if(!m||!Number.isInteger(m.i)||!Array.isArray(m.p)) return;
+  let z=zombies.get(m.i), fresh=false;
+  if(!z){ z=makeZombie(m.i); zombies.set(m.i,z); fresh=true; }
+  z.target.set(m.p[0],m.p[1],m.p[2]); z.yaw=m.yaw||0;
+  if(fresh) z.g.position.copy(z.target); // primer frame: sin salto desde el origen
+  if(Number.isFinite(m.hp)&&m.hp!==z.hp){ z.hp=m.hp; drawZBar(z); }
+  // contador de golpes del server: un zombi que ya venía golpeado al entrar NO anima
+  // (atkSeen se inicializa con el atk de entrada, no con 0)
+  if(Number.isInteger(m.atk)){ z.atk=m.atk; if(fresh) z.atkSeen=m.atk; }
+  z.dead=m.dead===1;
+}
+// Snapshot completo: aplica todos y borra los que desaparecieron del array.
+function applyZsList(list){
+  if(!Array.isArray(list)) return;
+  const seen=new Set();
+  for(const m of list){ applyZs(m); if(m&&Number.isInteger(m.i)) seen.add(m.i); }
+  for(const id of [...zombies.keys()]) if(!seen.has(id)) removeZombie(id);
+}
+// Interpola hacia el estado del server reutilizando el suavizado de net/avatar. El yaw
+// del zombi llega en la convención del modelo (+Z): NO se suma π (a diferencia del avatar).
+function tickZombie(z,dt){
+  z.t+=dt;
+  const d=z.target.clone().sub(z.g.position); d.y=0;
+  const dist=d.length();
+  if(avatarShouldSnap(dist)) z.g.position.copy(z.target);
+  else z.g.position.lerp(z.target, avatarLerpFactor(dt));
+  z.g.rotation.y=yawToward(z.g.rotation.y, z.yaw, dt, 10);
+  const sw=(dist>.05&&z.deadK<.5)?Math.sin(z.t*11)*.6:0;
+  z.legL.rotation.x=sw; z.legR.rotation.x=-sw; z.armL.rotation.x=-sw; z.armR.rotation.x=sw;
+  // Animación de ataque disparada por el cambio del contador `atk` del server (mismo patrón
+  // que swingT/SWING_DUR del viewmodel): pisa el balanceo caminante del brazo derecho
+  // mientras dura el gesto. Un zombi muerto (deadK≥.5) no anima golpe: poseDead manda.
+  if(z.atk!==z.atkSeen){ z.swingK=0; z.atkSeen=z.atk; }
+  if(z.swingK<1 && z.deadK<.5){
+    z.swingK=Math.min(1,z.swingK+dt/SWING_DUR);
+    z.armR.rotation.x=-Math.sin(z.swingK*Math.PI)*1.4;
+  }
+  poseDead(z, z.dead?1:0, dt);
+}
+function zombieHit(){
+  raycaster.set(camera.position,lookDir()); raycaster.far=4.6;
+  const hits=raycaster.intersectObjects(zombieTargets,false);
+  if(!hits.length) return null;
+  const z=zombies.get(hits[0].object.userData.zombieId);
+  return z?{ z, dist:hits[0].distance }:null;
 }
 function animalHit(){
   raycaster.set(camera.position,lookDir()); raycaster.far=6;
@@ -2083,20 +2271,30 @@ function doPlace(){
   editBlock(x,y,z,id); sfxPlace();
 }
 let lastSword=0;
+let swingSeq=0; // contador de golpes reales (PvP + criatura): viaja en `seq` para que el rival anime
 function swordAttack(){
   const now=performance.now()/1000;
   if(now-lastSword<1){ return; } // en cooldown: ni animación ni daño (el anillo lo muestra)
   swingT=0; // la animación solo suena/ocurre cuando el golpe es real
   tone(900,300,.08,'sine',.07); // whoosh
   const av=avatarHit();
-  if(!av) return;
-  lastSword=now;
+  if(av){
+    lastSword=now; swingSeq++;
+    sfxHit();
+    const dx=av.a.g.position.x-player.pos.x, dz=av.a.g.position.z-player.pos.z;
+    const l=Math.hypot(dx,dz)||1;
+    if(mp) netSend({ t:'hit', id:av.a.id, dmg:2, dx:dx/l, dz:dz/l });
+    else { av.a.flash=.25; burst(av.a.g.position.x-.5,av.a.g.position.y+1.4,av.a.g.position.z-.5,0xffd94f,10); }
+    toast(`⚔️ ¡Un corazón a ${av.a.name}!`);
+    return;
+  }
+  // criaturas hostiles: el server es la autoridad del daño (el cliente solo pide el golpe)
+  const zo=zombieHit();
+  if(!zo) return;
+  lastSword=now; swingSeq++;
   sfxHit();
-  const dx=av.a.g.position.x-player.pos.x, dz=av.a.g.position.z-player.pos.z;
-  const l=Math.hypot(dx,dz)||1;
-  if(mp) netSend({ t:'hit', id:av.a.id, dmg:1, dx:dx/l, dz:dz/l });
-  else { av.a.flash=.25; burst(av.a.g.position.x-.5,av.a.g.position.y+1.4,av.a.g.position.z-.5,0xffd94f,10); }
-  toast(`⚔️ ¡Al medio corazón a ${av.a.name}!`);
+  if(mp) netSend({ t:'zhit', id:zo.z.id });
+  toast('⚔️ ¡Un corazón a la criatura!');
 }
 let noSwordT=0;
 function needSword(){
@@ -2332,6 +2530,7 @@ function connectMP(wantedMode){
         // ciclo día/noche: adoptar la hora y la duración del server (primera fase directa)
         if(Number.isFinite(m.cyc)) cycleMs=m.cyc;
         if(Number.isFinite(m.tod)) onTod(m.tod);
+        if(Array.isArray(m.zom)) applyZsList(m.zom); // zombis ya presentes al entrar
         resolve({ solo:false, data:m });
       }
     };
@@ -2343,9 +2542,11 @@ function setupNetHandlers(){
   NET.onmessage=(ev)=>{
     let m; try{ m=JSON.parse(ev.data); }catch(e){ return; }
     if(m.t==='pm'){ const a=remotes.get(m.id);
-      if(a){ if(PM_BUFFER){ a.pmBuf.push({ p:m.p, yaw:m.yaw, t:performance.now() });
+      if(a){ if(!Number.isInteger(m.held)) m.held=a.held;
+        if(!Number.isInteger(m.seq)) m.seq=a.seq;
+        if(PM_BUFFER){ a.pmBuf.push({ p:m.p, yaw:m.yaw, held:m.held, seq:m.seq, t:performance.now() });
           if(a.pmBuf.length>PM_BUF_MAX) a.pmBuf.splice(0,a.pmBuf.length-PM_BUF_MAX); }
-        else applyPm(a,{ p:m.p, yaw:m.yaw });
+        else applyPm(a,m);
         if(Number.isFinite(m.hp)&&m.hp!==a.hp){ a.hp=m.hp; drawBar(a); }
         if((m.dead===1)!==a.dead){ a.dead=m.dead===1; } } }
     else if(m.t==='pedit'){ const was=get(m.x,m.y,m.z); rawSet(m.x,m.y,m.z,m.v);
@@ -2375,11 +2576,25 @@ function setupNetHandlers(){
       tone(1250,900,.07,'square',.13);
       if(a) spawnDmgNum(a.g.position.x,a.g.position.y+2.2,a.g.position.z,'-'+m.dmg,'#ffb14f');
     }
+    else if(m.t==='zs'){ applyZsList(m.z); }
+    else if(m.t==='zhitok'){
+      // el server confirma el golpe a la criatura: feedback inmediato para el atacante
+      const z=zombies.get(m.id);
+      const hm=document.getElementById('hitm'); hm.style.display='block';
+      clearTimeout(hm._t); hm._t=setTimeout(()=>hm.style.display='none',160);
+      tone(1250,900,.07,'square',.13);
+      if(z){
+        spawnDmgNum(z.g.position.x,z.g.position.y+1.9,z.g.position.z,'-'+m.dmg,'#ffb14f');
+        if(Number.isFinite(m.hp)&&m.hp!==z.hp){ z.hp=m.hp; drawZBar(z); }
+        if(m.dead===1||m.dead===0) z.dead=m.dead===1;
+      }
+    }
   };
   NET.onclose=()=>{
     if(mp){ mp=false; NET=null;
       toast('🔌 Desconectado del servidor');
       for(const id of [...remotes.keys()]) removeRemote(id);
+      for(const id of [...zombies.keys()]) removeZombie(id);
     }
   };
   setInterval(()=>{
@@ -2389,7 +2604,8 @@ function setupNetHandlers(){
 function sendMove(){
   if(!mp||!NET||NET.readyState!==1) return;
   netSend({ t:'mv', p:[+player.pos.x.toFixed(2),+player.pos.y.toFixed(2),+player.pos.z.toFixed(2)],
-    yaw:+player.yaw.toFixed(3), pitch:+player.pitch.toFixed(3), hp, dead:dead?1:0 });
+    yaw:+player.yaw.toFixed(3), pitch:+player.pitch.toFixed(3), hp, dead:dead?1:0,
+    held:hotbarIds[sel], seq:swingSeq });
 }
 
 /* ============ ESTADO + LOCK ============ */
@@ -2464,7 +2680,7 @@ function load(){
   try{ const s=localStorage.getItem(SAVE_KEY); if(!s) return false;
     const d=JSON.parse(s);
     if(!d||typeof d.seed!=='number'||!Array.isArray(d.edits)) return false;
-    SEED=d.seed; genWorld();
+    SEED=d.seed; newWorld();
     for(const e of (d.edits||[])){
       if(!Array.isArray(e)) continue; // edición corrupta: se salta, no se cuelga
       const [i,v]=e;
@@ -2501,7 +2717,7 @@ async function startGame(wantedMode){
     const d=res.data;
     if(d.adminDenied){ toast('🔑 Clave admin incorrecta: entrás como jugador'); mode='player'; }
     else mode=d.admin?'admin':'player';
-    SEED=d.seed; genWorld();
+    SEED=d.seed; newWorld();
     for(const e of (d.edits||[])){
       if(!Array.isArray(e)) continue; // edición corrupta: se salta, no se cuelga
       const [i,v]=e;
@@ -2512,7 +2728,7 @@ async function startGame(wantedMode){
     setupNetHandlers();
     chatMsg('🌿',`Conectado como ${myName} (${mode}) · ${d.players.length} jugador(es) en línea`);
   } else {
-    if(!load()) genWorld();
+    if(!load()) newWorld();
     normalizeDoors(); // puertas viejas de 1 bloque crecen a 2 (mundo intacto)
     repairDoors(); // pares con bisagras del mismo lado se alternan L,R
     buildAllChunks(); buildGlobals();
@@ -2577,6 +2793,7 @@ function loop(now){
   for(const c of clouds){ c.position.x+=c.userData.v*dt; if(c.position.x>W+30)c.position.x=-30; }
   for(const a of animals) tickAnimal(a,dt);
   for(const a of remotes.values()) tickAvatar(a,dt);
+  for(const z of zombies.values()) tickZombie(z,dt);
   if(started&&state==='play'&&canAct()&&!dead){
     const h=raycast(), cross=document.getElementById('cross');
     if(h){ hl.visible=hlEdge.visible=true; hl.position.set(h.x+.5,h.y+.5,h.z+.5); hlEdge.position.copy(hl.position);
