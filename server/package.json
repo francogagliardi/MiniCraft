@@ -4,7 +4,7 @@
   "description": "Servidor multijugador para Minicraft (HTTP + WebSocket)",
   "scripts": {
     "start": "node server.js",
-    "test": "node test/static.mjs && node test/avatar.mjs && node test/migrate.mjs && node test/terrain.mjs && node test/water.mjs && node test/worldgen.mjs && node test/zombie.mjs && node test/zombie-client.mjs && node test/zombie-protocol.mjs && node test/avatar-held.mjs && node test/protocol.mjs"
+    "test": "node test/static.mjs && node test/avatar.mjs && node test/migrate.mjs && node test/terrain.mjs && node test/water.mjs && node test/worldgen.mjs && node test/zombie.mjs && node test/zombie-client.mjs && node test/zombie-protocol.mjs && node test/avatar-held.mjs && node test/lookguard.mjs && node test/protocol.mjs"
   },
   "license": "MIT",
   "dependencies": {

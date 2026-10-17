@@ -2361,10 +2361,43 @@ function tickBreak(dt){
   crackMesh.material.needsUpdate=false;
   if(breakProg>=t) doBreak(h);
 }
+/* look:start */
+// Saneo del delta de mirada (spec player/look). Bloque autocontenido y puro: el test
+// lookguard.mjs lo EXTRAE de este HTML y lo evalúa (mismo patrón que net/avatar y worldgen).
+const LOOK_MAX_PX = 1000;    // px por evento; >= esto se considera espurio
+const LOOK_WARN_MAX = 3;     // máximo de descartes que se detallan en consola
+let lookSpikes = 0;          // contador acumulado de descartes (diagnóstico)
+let lookSpikesWarned = 0;
+let lookLockPending = false; // true = queda un evento posterior al lock por ignorar
+// true = el delta (dx,dy) es plausible; false = descartar el evento entero.
+// El borde es exclusivo: |dx| === LOOK_MAX_PX ya se descarta.
+function lookDeltaOk(dx,dy){
+  return Number.isFinite(dx) && Number.isFinite(dy) &&
+         Math.abs(dx) < LOOK_MAX_PX && Math.abs(dy) < LOOK_MAX_PX;
+}
+// true = hay que ignorar ESTE evento (es el primero tras (re)adquirir el lock);
+// consume la marca, así que el evento siguiente ya se procesa normalmente.
+function lookLockSkip(){
+  if(!lookLockPending) return false;
+  lookLockPending=false;
+  return true;
+}
+// Registra un descarte: SIEMPRE cuenta; los primeros LOOK_WARN_MAX los detalla en consola.
+function noteLookSpike(dx,dy,src){
+  lookSpikes++;
+  if(lookSpikesWarned < LOOK_WARN_MAX){
+    lookSpikesWarned++;
+    console.warn(`[look] delta de mirada descartado #${lookSpikes} (${src}): dx=${dx} dy=${dy}`);
+  }
+}
+/* look:end */
 addEventListener('mousemove',e=>{
   if(state!=='play'||!locked()||dead) return;
-  player.yaw-=e.movementX*.0024;
-  player.pitch=Math.max(-1.55,Math.min(1.55,player.pitch-e.movementY*.0024));
+  if(lookLockSkip()) return; // 1er evento tras el lock: delta espurio
+  const mx=e.movementX, my=e.movementY;
+  if(!lookDeltaOk(mx,my)){ noteLookSpike(mx,my,'mouse'); return; } // descartar el evento entero
+  player.yaw-=mx*.0024;
+  player.pitch=Math.max(-1.55,Math.min(1.55,player.pitch-my*.0024));
 });
 // Touch: arrastrar = mirar, toque rápido = atacar/picar (click izq), mantener = picar
 let lookTouchId = null, tapT0 = 0, tapX = 0, tapY = 0, lookLX = 0, lookLY = 0, tapMoved = false, holdTimer = null;
@@ -2389,7 +2422,8 @@ canvas.addEventListener('pointermove', (e) => {
   if (state !== 'play' || dead) return;
   if (Math.hypot(e.clientX - tapX, e.clientY - tapY) > 12) tapMoved = true;
   const dx = e.clientX - lookLX, dy = e.clientY - lookLY;
-  lookLX = e.clientX; lookLY = e.clientY;
+  lookLX = e.clientX; lookLY = e.clientY;                        // la referencia SIEMPRE se actualiza
+  if (!lookDeltaOk(dx, dy)) { noteLookSpike(dx, dy, 'touch'); return; } // descartar el evento entero
   player.yaw -= dx * .0042;
   player.pitch = Math.max(-1.55, Math.min(1.55, player.pitch - dy * .0042));
   e.preventDefault();
@@ -2619,7 +2653,7 @@ function tryLock(){
 canvas.addEventListener('click',()=>{ if(started&&state==='play'&&!locked()&&!dead) tryLock(); });
 document.addEventListener('pointerlockchange',()=>{
   mouseDown={0:false,2:false}; rAction='place'; resetBreak();
-  if(locked()){ menu.classList.add('hidden'); pause.classList.add('hidden');
+  if(locked()){ lookLockPending=true; menu.classList.add('hidden'); pause.classList.add('hidden');
     if(state==='pause') state='play';
     if(state==='play'){ invEl.classList.add('hidden'); document.getElementById('chatbox').style.display='none'; } }
   else if(started){
