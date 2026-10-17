@@ -1,14 +1,39 @@
 // Minicraft server — HTTP estático + WebSocket multijugador.
 // Uso:  npm install   →   node server.js
-// Env:  PORT (3000), ADMIN_KEY ('' = sin clave), MINICRAFT_DIR (por defecto: carpeta padre)
+// Env:  PORT (3000), MINICRAFT_DIR (por defecto: carpeta padre)
+//   Admin:  ADMIN_KEY_HASH  →  PRODUCCIÓN: hash PBKDF2 (generalo con server/hash-key.mjs)
+//           ADMIN_KEY       →  solo dev local: clave EN CLARO, legible por quien acceda al host
+//   Precedencia: si hay ADMIN_KEY_HASH, se usa SOLO el hash y se ignora ADMIN_KEY en claro.
+//   Sin ninguna de las dos (o vacías): modo admin DESHABILITADO (fail closed).
+//   Sin default público: la vieja clave publicada en el README fue removida.
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const WebSocket = require('ws');
+const AdminAuth = require('./admin-auth.js');
 
 const PORT = +(process.env.PORT || 3000);
-// Cambiala con la variable de entorno ADMIN_KEY. Compartila solo con tus admins.
-const ADMIN_KEY = process.env.ADMIN_KEY || 'minicraft-admin-2026';
+// Número por env con default (knobs del limitador, overridables en tests).
+const envNum = (v, d) => (v === undefined || v === '' || !Number.isFinite(+v)) ? d : +v;
+// Limitador del KDF (anti-DoS): derivación async + token bucket global + cota de
+// derivaciones concurrentes. Defaults del design §10: 3 tokens / 0.5 por segundo / 2.
+const adminLimiter = AdminAuth.createAdminLimiter({
+  capacity: envNum(process.env.ADMIN_RATE_CAPACITY, 3),
+  refillPerSec: envNum(process.env.ADMIN_RATE_REFILL_PER_SEC, 0.5),
+  maxConcurrent: envNum(process.env.ADMIN_RATE_MAX_CONCURRENT, 2),
+});
+// Config de admin resuelta una sola vez (la precedencia vive en el módulo, no acá).
+// Sin default: sin configuración el admin queda CERRADO, nunca abierto.
+const adminCfg = AdminAuth.resolveConfig(process.env, { limiter: adminLimiter });
+// Aviso rate-limited del rechazo por limitador: no inunda los logs (spec).
+const RATE_WARN_MS = 10000;
+let lastRateWarn = 0;
+function warnAdminRateLimited() {
+  const now = Date.now();
+  if (now - lastRateWarn < RATE_WARN_MS) return;
+  lastRateWarn = now;
+  console.warn('   ⚠️ intento de admin rechazado por el limitador del KDF (rate limited)');
+}
 const STATIC = process.env.MINICRAFT_DIR || path.join(__dirname, '..');
 const SAVE_FILE = process.env.WORLD_FILE || path.join(__dirname, 'world.json');
 // Presencia sin fantasmas: heartbeat ping/pong + expiración idle sin `mv`.
@@ -194,16 +219,33 @@ setInterval(() => {
 
 wss.on('connection', (ws) => {
   let me = null;
+  let helloInFlight = false; // guard anti-race: la verificación admin es async
   ws.isAlive = true;
   ws.lastMv = Date.now();
   ws.on('pong', () => { ws.isAlive = true; });
-  ws.on('message', (raw) => {
+  ws.on('message', async (raw) => {
     let m;
     try { m = JSON.parse(raw); } catch (e) { return; }
 
     if (m.t === 'hello') {
+      // Higiene + anti-race: con la verificación async (PBKDF2) dos `hello`
+      // seguidos podrían pasar ambos el chequeo antes de crear la sesión. La
+      // marca se pone ANTES de cualquier await. El cliente real nunca reenvía
+      // `hello` por el mismo socket (index.html:2556-2558).
+      if (me || helloInFlight) return;
+      helloInFlight = true;
       const wantAdmin = m.mode === 'admin';
-      const admin = wantAdmin && (ADMIN_KEY === '' || m.key === ADMIN_KEY);
+      // Deriva PBKDF2 SOLO en intentos de admin con clave no vacía (el resto se
+      // rechaza barato). `verifyAdminKey` aplica precedencia hash→claro→fail-closed
+      // y, cuando hay hash, el limitador (bucket + concurrencia) ANTES de derivar.
+      let admin = false;
+      if (wantAdmin && typeof m.key === 'string' && m.key.length > 0) {
+        const limitedAntes = AdminAuth.stats.limited;
+        try { admin = await AdminAuth.verifyAdminKey(m.key, adminCfg); }
+        catch (e) { console.warn('   ⚠️ error verificando la clave admin: ' + e.message); admin = false; }
+        // Rechazo por limitador (no por clave mala): se registra, pero rate-limited.
+        if (!admin && AdminAuth.stats.limited > limitedAntes) warnAdminRateLimited();
+      }
       me = {
         id: nextId++, name: cleanName(m.name),
         mode: admin ? 'admin' : 'player', admin,
@@ -223,6 +265,7 @@ wss.on('connection', (ws) => {
       broadcast({ t: 'join', id: me.id, name: me.name, mode: me.mode, dead: 0, pos: me.pos, yaw: me.yaw, pitch: me.pitch, held: me.held, seq: me.seq }, ws);
       broadcast({ t: 'chat', from: '🌿', text: `${me.name} se unió (${me.mode === 'admin' ? 'admin 🛠' : 'jugador 🌱'})` }, ws);
       console.log(`➕ ${me.name} (${me.mode}) — ${players.size} conectados`);
+      helloInFlight = false;
       return;
     }
     if (!me) return;
@@ -271,8 +314,23 @@ wss.on('connection', (ws) => {
   });
 });
 
+// Aviso de arranque según el estado de configuración (nunca expone el secreto).
+// Fail closed ≠ no arrancar: el juego sigue sirviendo aunque el admin quede cerrado.
+function logAdminConfig() {
+  if (adminCfg.mode === 'hash') {
+    console.log('   🔐 Clave admin: verificada por hash (PBKDF2-SHA256)');
+    if (adminCfg.hasClaro) {
+      console.warn('   ⚠️ ADMIN_KEY en claro IGNORADA por precedencia del hash — borrá ADMIN_KEY: la clave en claro sigue estando en el host y es legible');
+    }
+  } else if (adminCfg.mode === 'claro') {
+    console.warn('   ⚠️ Clave admin en claro: legible por quien acceda al host. Usá ADMIN_KEY_HASH.');
+  } else {
+    console.warn('   ⚠️ Modo admin DESHABILITADO: configurá ADMIN_KEY_HASH.');
+  }
+}
+
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`⛏ Minicraft server en http://localhost:${PORT}`);
   console.log(`   STATIC=${STATIC} SAVE_FILE=${SAVE_FILE}`);
-  console.log(`   Clave admin: ${ADMIN_KEY ? '(configurada)' : '(vacia)'}`);
+  logAdminConfig();
 });

@@ -46,8 +46,13 @@ node server.js
 ```
 
 Abrí http://localhost:3000 en tu navegador **y** en una ventana de
-incógnito, con nombres distintos. Clave admin por defecto:
-`minicraft-admin-2026` (cambiala con `ADMIN_KEY`).
+incógnito, con nombres distintos.
+
+**Modo admin:** no hay clave por defecto. En desarrollo local podés setear
+`ADMIN_KEY=<tu-clave>` (queda **en claro** en el entorno: solo dev). En
+**producción** usá `ADMIN_KEY_HASH` (ver [Clave admin](#-clave-admin-hash-pbkdf2)):
+el server no acepta ninguna clave publicada acá, y sin configuración el modo
+admin queda **deshabilitado**.
 
 ## 🐳 Docker
 
@@ -60,7 +65,7 @@ docker compose logs -f
 docker compose down
 ```
 
-Variables: `ADMIN_KEY` (recomendado cambiarla), `PORT`.
+Variables: `ADMIN_KEY_HASH` (producción, ver abajo), `ADMIN_KEY` (solo dev local), `PORT`.
 
 ## ☁️ Deploy en Easypanel (VPS)
 
@@ -68,8 +73,11 @@ Variables: `ADMIN_KEY` (recomendado cambiarla), `PORT`.
    **New → App → From GitHub → MiniCraft**.
 2. En **Build**, elegí **Dockerfile** (usa el de la raíz).
 3. En **Environment**, agregá:
-   - `ADMIN_KEY` = una clave larga solo para vos
+   - `ADMIN_KEY_HASH` = el hash PBKDF2 de tu clave admin (ver
+     [Clave admin](#-clave-admin-hash-pbkdf2))
    - (opcional) `PORT` = `3000`
+   - **NO** agregues `ADMIN_KEY` en claro: cualquiera con acceso al host
+     (root, `docker inspect`, panel de Easypanel) la leería.
 4. En **Domains/Ports**, exponé el puerto **`3000`**.
 5. En **Volumes**, montá un volumen en **`/data`**
    (ahí vive `world.json`, así no perdés el mundo en cada deploy).
@@ -121,9 +129,41 @@ Variables: `ADMIN_KEY` (recomendado cambiarla), `PORT`.
 | Var | Default | Qué hace |
 |---|---|---|
 | `PORT` | `3000` | Puerto HTTP + WebSocket |
-| `ADMIN_KEY` | `minicraft-admin-2026` | Clave del modo admin (**cambiala en producción**) |
+| `ADMIN_KEY_HASH` | *(vacío)* | **Producción.** Hash PBKDF2 de la clave admin (`pbkdf2_sha256$...`). Si está, se usa **solo** eso y se ignora `ADMIN_KEY` en claro. |
+| `ADMIN_KEY` | *(vacío)* | Solo **dev local**: clave admin EN CLARO (legible por quien acceda al host). Fallback de desarrollo/tests. |
 | `MINICRAFT_DIR` | `..` (local) / `/app` (docker) | De dónde servir `index.html` |
 | `WORLD_FILE` | `server/world.json` (local) / `/data/world.json` (docker) | Dónde persistir el mundo |
+
+### 🔐 Clave admin (PBKDF2)
+
+En **producción la clave no se guarda**: el entorno guarda un **hash
+PBKDF2-SHA256** (`ADMIN_KEY_HASH`) y el server deriva el hash de lo que recibe
+para compararlo. Leer la config del host (`docker inspect`, `/proc/<pid>/environ`,
+panel de Easypanel) **no entrega una credencial usable**: mandar el hash como
+clave **no entra** (el server hashea lo que recibe) y, con salt + 210000
+iteraciones, crackearlo offline tampoco es barato.
+
+Generá el hash con la herramienta local (nunca imprime la clave):
+
+```bash
+node server/hash-key.mjs "tu-clave-admin-nueva"     # o sin argumento: la pide por stdin (sin eco)
+# imprime:  ADMIN_KEY_HASH=pbkdf2_sha256$210000$<saltB64>$<hashB64>
+```
+
+Pegá esa línea en **Easypanel → Environment** y **borrá** cualquier `ADMIN_KEY`
+en claro (la precedencia hace ganar al hash, pero la clave en claro sigue siendo
+legible en el host hasta que se borre: el server lo advierte al arrancar).
+
+- **Precedencia:** si hay `ADMIN_KEY_HASH`, se usa **solo** el hash.
+- **Fail closed:** sin hash y sin `ADMIN_KEY` no vacía, el modo admin queda
+  **deshabilitado** (una variable vacía **no** abre el admin; antes sí).
+- **El camino en claro existe solo como fallback de código** (dev local y los
+  tests de protocolo, que corren con `ADMIN_KEY: 'test-key'`); en **producción se
+  cierra por configuración**: se borra `ADMIN_KEY` y se deja **solo**
+  `ADMIN_KEY_HASH`, con lo que no queda ninguna clave en claro en el host.
+
+> **Rotá la clave si estuvo expuesta.** El hash no des-expone nada: si la clave
+> vieja estuvo en claro en el host, hay que **cambiarla** (paso operativo, no de código).
 
 ## 🧪 Tests
 
@@ -135,5 +175,9 @@ cd server && npm test
   atlas, winding de caras, inventario y hotbar.
 - **Protocolo** (`test/protocol.mjs`): levanta el server de verdad y
   verifica welcome, movimiento, bloques, daño PvP, muerte, chat y admin key.
+- **Admin / hash** (`test/admin-hash.mjs`): verificación PBKDF2, formato
+  autodescriptivo, anti pass-the-hash, precedencia hash-vs-claro, fail-closed,
+  limitador del KDF (token bucket + concurrencia) y el e2e WS del cableado
+  (incluido el flood del KDF y el no-bloqueo del event loop).
 
 El workflow **CI** los corre en cada push/PR a `main`.

@@ -6,7 +6,13 @@ services:
       - "3000:3000"
     environment:
       PORT: 3000
-      ADMIN_KEY: ${ADMIN_KEY:-minicraft-admin-2026}
+      # Admin: en producción usá ADMIN_KEY_HASH (hash PBKDF2 generado con
+      # `node server/hash-key.mjs`). ADMIN_KEY en claro es SOLO para dev local.
+      # Sin ninguna de las dos (o vacías) el modo admin queda DESHABILITADO
+      # (fail closed). El default público que había antes fue removido a
+      # propósito: era una clave conocida por cualquiera (estaba en el README).
+      ADMIN_KEY: ${ADMIN_KEY:-}
+      ADMIN_KEY_HASH: ${ADMIN_KEY_HASH:-}
       MINICRAFT_DIR: /app
       WORLD_FILE: /data/world.json
     volumes:
