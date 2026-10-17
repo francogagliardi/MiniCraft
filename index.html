@@ -1248,6 +1248,7 @@ const sfxPop=()=>tone(500,700,.06,'sine',.15);
 const sfxStep=()=>tone(180,140,.05,'sine',.045);
 const sfxOink=()=>{ tone(170,95,.1,'square',.13); tone(150,85,.12,'square',.13,.12); };
 const sfxBaa=()=>{ tone(430,330,.28,'triangle',.14); tone(540,420,.22,'sine',.08,.05); };
+const sfxCluck=()=>{ tone(900,520,.07,'square',.12); tone(700,420,.06,'square',.1,.06); };
 const sfxHurt=()=>tone(200,70,.2,'sawtooth',.2);
 const sfxDie=()=>{ tone(300,50,.6,'sawtooth',.22); };
 const sfxHit=()=>tone(500,200,.1,'square',.16);
@@ -1546,15 +1547,39 @@ function makeSheep(x,y,z){
   return { g, head, legs, kind:'sheep', tx:x, tz:z, wait:2, vy:0, onGround:false, stuck:0, t:Math.random()*10, petCd:0,
     say:()=>{ sfxBaa(); toast('🐑 ¡Beee!'); } };
 }
+function makeChicken(x,y,z){
+  const g=new THREE.Group();
+  const white=0xf7f7f2, red=0xe23b3b, yellow=0xf2c231, dark=0x3a3a3a;
+  box(.36,.34,.44,white,0,.3,0,g);
+  const head=new THREE.Group(); head.position.set(0,.46,.22); g.add(head);
+  box(.2,.2,.2,white,0,0,0,head);
+  box(.06,.12,.14,red,0,.13,0,head);
+  box(.1,.06,.12,yellow,0,-.02,.14,head);
+  box(.06,.07,.03,dark,-.07,.04,.1,head);
+  box(.06,.07,.03,dark,.07,.04,.1,head);
+  box(.05,.2,.26,white,-.19,.32,.02,g).rotation.z=.35;
+  box(.05,.2,.26,white,.19,.32,.02,g).rotation.z=-.35;
+  const legs=[box(.07,.18,.07,yellow,-.1,.09,.12,g),box(.07,.18,.07,yellow,.1,.09,.12,g)];
+  g.position.set(x,y,z);
+  return { g, head, legs, kind:'chicken', tx:x, tz:z, wait:2, vy:0, onGround:false, stuck:0, t:Math.random()*10, petCd:0,
+    say:()=>{ sfxCluck(); toast('🐔 ¡Clo clo!'); } };
+}
 function spawnAnimals(rng){
-  let pigs=0, sheep=0, guard=0;
-  while((pigs<8||sheep<6)&&guard++<3000){
+  const TARGET={ pig:8, sheep:6, chicken:6 };
+  let pigs=0, sheep=0, chickens=0, guard=0;
+  while((pigs<TARGET.pig||sheep<TARGET.sheep||chickens<TARGET.chicken)&&guard++<3000){
     const x=6+(rng()*(W-12)|0), z=6+(rng()*(W-12)|0), h=hAt(x-OX,z-OZ);
     if(h<=WATER_Y+1||get(x,h,z)!==GRASS) continue;
     if(get(x,h+1,z)!==AIR||get(x,h+2,z)!==AIR) continue;
     if(collidesAt(x+.5,h+1.01,z+.5,.32,1.2)) continue;
-    const a = pigs<=sheep ? makePig(x+.5,h+1.01,z+.5) : makeSheep(x+.5,h+1.01,z+.5);
-    if(a.kind==='pig') pigs++; else sheep++;
+    // tipo más sub-poblado (count/target); empate: cerdo → oveja → gallina
+    const opt = pigs/TARGET.pig<=sheep/TARGET.sheep
+      ? (pigs/TARGET.pig<=chickens/TARGET.chicken ? 'pig' : 'chicken')
+      : (sheep/TARGET.sheep<=chickens/TARGET.chicken ? 'sheep' : 'chicken');
+    const a = opt==='pig' ? makePig(x+.5,h+1.01,z+.5)
+            : opt==='sheep' ? makeSheep(x+.5,h+1.01,z+.5)
+            : makeChicken(x+.5,h+1.01,z+.5);
+    if(a.kind==='pig') pigs++; else if(a.kind==='sheep') sheep++; else chickens++;
     a.g.traverse(o=>o.userData.animal=a);
     animals.push(a); petTargets.push(a.g); scene.add(a.g);
   }
@@ -1582,7 +1607,7 @@ function tickAnimal(a,dt){
   else { if(a.vy<0)a.onGround=true; a.vy=0; }
   if(a.g.position.y<0)a.g.position.y=H-1;
   const sw=moving?Math.sin(a.t*11)*.55:0;
-  a.legs[0].rotation.x=sw; a.legs[3].rotation.x=sw; a.legs[1].rotation.x=-sw; a.legs[2].rotation.x=-sw;
+  a.legs.forEach((l,i)=>{ l.rotation.x=(i===0||i===3)?sw:-sw; });
   a.head.rotation.x=moving?Math.sin(a.t*11)*.08:Math.sin(a.t*1.4)*.1;
 }
 function pet(a){
