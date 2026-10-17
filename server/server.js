@@ -16,6 +16,16 @@ const SAVE_FILE = process.env.WORLD_FILE || path.join(__dirname, 'world.json');
 const HB_MS = Math.max(50, +(process.env.HB_INTERVAL_MS || 30000));
 const IDLE_MS = Math.max(100, +(process.env.IDLE_TIMEOUT_MS || 90000));
 
+// ---- ciclo día/noche: el server es dueño del reloj ----
+// Ancla al boot + Date.now(): el reloj es puro y NO se persiste en world.json.
+// Todos los jugadores ven la misma hora (necesario para el futuro zombi server-auth).
+const DAY_MS = 300000, NIGHT_MS = 180000, CYCLE_MS = DAY_MS + NIGHT_MS, DAWN_MS = 25000, DUSK_MS = 25000;
+const NIGHT_MIN = 0.50, NIGHT_START = DAY_MS / CYCLE_MS;
+const TOD_INTERVAL_MS = Math.max(50, +(process.env.TOD_INTERVAL_MS || 4000));
+const T0 = Date.now();
+function phaseNow() { return ((Date.now() - T0) % CYCLE_MS) / CYCLE_MS; }
+const isNight = () => phaseNow() >= NIGHT_START;
+
 // Asegura que la carpeta de persistencia exista (ej: /data en Easypanel/Docker).
 try { fs.mkdirSync(path.dirname(SAVE_FILE), { recursive: true }); } catch (e) {}
 
@@ -106,6 +116,9 @@ setInterval(() => {
   }
 }, HB_MS);
 
+// Difusión de la hora del ciclo (aditiva: los clientes viejos la ignoran).
+setInterval(() => { broadcast({ t: 'tod', v: phaseNow() }); }, TOD_INTERVAL_MS);
+
 wss.on('connection', (ws) => {
   let me = null;
   ws.isAlive = true;
@@ -127,6 +140,7 @@ wss.on('connection', (ws) => {
       ws.lastMv = Date.now();
       send(ws, {
         t: 'welcome', id: me.id, seed: SEED, edits, admin,
+        tod: phaseNow(), cyc: CYCLE_MS,
         adminDenied: wantAdmin && !admin,
         players: [...players.values()].filter(p => p !== me)
           .map(p => ({ id: p.id, name: p.name, mode: p.mode, hp: p.hp ?? 10, dead: p.dead ?? 0, pos: p.pos, yaw: p.yaw, pitch: p.pitch })),

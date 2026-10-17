@@ -657,7 +657,8 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x8ecdf5);
 scene.fog = new THREE.Fog(0xbfe3ff, 34, 180);
 const camera = new THREE.PerspectiveCamera(74, innerWidth/innerHeight, .1, 600);
-scene.add(new THREE.HemisphereLight(0xd8ecff, 0x8a7a5a, .95));
+const hemi = new THREE.HemisphereLight(0xd8ecff, 0x8a7a5a, .95);
+scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xfff2d8, 1.9);
 sun.position.set(W/2+40, 60, W/2+25); sun.castShadow = !LOW;
 sun.shadow.mapSize.set(LOW ? 1024 : 2048, LOW ? 1024 : 2048);
@@ -666,13 +667,123 @@ sun.shadow.camera.updateProjectionMatrix();
 sun.shadow.bias = -0.0004;
 sun.target.position.set(W/2, 0, W/2);
 scene.add(sun, sun.target);
-scene.add(new THREE.Mesh(new THREE.SphereGeometry(280,16,12), new THREE.ShaderMaterial({
+// Luz de luna: direccional azulada y tenue, sin sombras (no pelea con el shadow map del sol).
+const moonLight = new THREE.DirectionalLight(0x9db4ff, 0.0);
+moonLight.castShadow = false;
+moonLight.target.position.set(W/2, 0, W/2);
+scene.add(moonLight, moonLight.target);
+const skyMat = new THREE.ShaderMaterial({
   side:THREE.BackSide, depthWrite:false, fog:false,
   uniforms:{ top:{value:new THREE.Color(0x4fa3e8)}, bot:{value:new THREE.Color(0xe8f6ff)} },
   vertexShader:'varying vec3 vP; void main(){ vP=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}',
-  fragmentShader:'varying vec3 vP; uniform vec3 top,bot;\nvoid main(){ float h=normalize(vP).y*.5+.5; gl_FragColor=vec4(mix(bot,top,smoothstep(.02,.65,h)),1.);}' })));
+  fragmentShader:'varying vec3 vP; uniform vec3 top,bot;\nvoid main(){ float h=normalize(vP).y*.5+.5; gl_FragColor=vec4(mix(bot,top,smoothstep(.02,.65,h)),1.);}' });
+scene.add(new THREE.Mesh(new THREE.SphereGeometry(280,16,12), skyMat));
+// Sol y luna: sprites que recorren el arco del cielo (posición calculada por tickSky).
 const sunSprite = new THREE.Mesh(new THREE.CircleGeometry(12,24), new THREE.MeshBasicMaterial({ color:0xfff6c9, fog:false }));
-sunSprite.position.set(W/2+120, 130, W/2-240); sunSprite.lookAt(W/2,0,W/2); scene.add(sunSprite);
+sunSprite.position.set(W/2, 130, W/2); scene.add(sunSprite);
+const moonSprite = new THREE.Mesh(new THREE.CircleGeometry(9,24), new THREE.MeshBasicMaterial({ color:0xdfe6ff, fog:false }));
+moonSprite.position.set(W/2, 130, W/2); scene.add(moonSprite);
+
+/* ===== ciclo día/noche (server-authoritative; en modo solo corre local) =====
+   El server es dueño del reloj y difunde su fase (`tod`); el cliente avanza su
+   propia fase desde cada difusión (sin reloj del sistema) y la corrige suave
+   contra el objetivo EXTRAPOLADO (todNow, a la misma tasa que el avance local),
+   con snap ante desfases grandes (reconexión). Mismas constantes que server.js. */
+const DAY_MS=300000, NIGHT_MS=180000, CYCLE_MS=DAY_MS+NIGHT_MS, DAWN_MS=25000, DUSK_MS=25000;
+const NIGHT_MIN=0.50, NIGHT_START=DAY_MS/CYCLE_MS;
+const TOD_SNAP_DELTA=0.05, TOD_CORRECT_K=0.5;
+// límites de fase: amanecer [0,DAWN_V), día, atardecer [DUSK_V,NIGHT_START), noche
+const DAWN_V=DAWN_MS/CYCLE_MS, DUSK_V=(DAY_MS-DUSK_MS)/CYCLE_MS;
+let dayV=0, dayTarget=0, todAt=0, hasTod=false, cycleMs=CYCLE_MS;
+// nivel de luz L∈[NIGHT_MIN,1]: amanecer NIGHT_MIN→1, día 1, atardecer 1→NIGHT_MIN, noche NIGHT_MIN
+function light(v){
+  if(v<DAWN_V) return NIGHT_MIN+(1-NIGHT_MIN)*(v/DAWN_V);
+  if(v<DUSK_V) return 1;
+  if(v<NIGHT_START) return 1-(1-NIGHT_MIN)*((v-DUSK_V)/(NIGHT_START-DUSK_V));
+  return NIGHT_MIN;
+}
+// señal compartida con el server: de noche cuando v >= 0.625 (para el futuro zombi)
+function isNight(v){ return v>=NIGHT_START; }
+// avance local de la fase (misma tasa que el server) + corrección suave hacia la fase recibida
+function cycleAdvance(v,dt,cyc){ return (v+dt*1000/cyc)%1; }
+function cycleCorrect(v,target,dt){ let d=target-v; d-=Math.round(d); return (v+d*Math.min(1,TOD_CORRECT_K*dt)+1)%1; }
+// target extrapolado: entre difusiones el objetivo avanza a la MISMA tasa que la fase local
+// (si usáramos el `tod` congelado, la corrección frenaría la fase hasta ~0 y saltaría en cada mensaje)
+function todNow(now,cyc){ return (dayTarget+(now-todAt)/cyc)%1; }
+// al llegar un `tod`: primera vez adopción directa; desfase grande → snap; si no, el loop corrige suave
+function onTod(v, now){
+  if(!(v>=0&&v<1)) return;
+  if(now===undefined) now=performance.now();
+  dayTarget=v; todAt=now;
+  if(!hasTod){ dayV=v; hasTod=true; return; }
+  let d=v-dayV; d-=Math.round(d);
+  if(Math.abs(d)>TOD_SNAP_DELTA) dayV=v;
+}
+// paleta día/noche (valores exactos del design)
+const BG_DAY=new THREE.Color(0x8ecdf5), BG_NIGHT=new THREE.Color(0x0f1c33);
+const FOG_DAY=new THREE.Color(0xbfe3ff), FOG_NIGHT=new THREE.Color(0x16233d);
+const SKY_TOP_DAY=new THREE.Color(0x4fa3e8), SKY_TOP_NIGHT=new THREE.Color(0x0a1730);
+const SKY_BOT_DAY=new THREE.Color(0xe8f6ff), SKY_BOT_NIGHT=new THREE.Color(0x1d3358);
+const HEMI_SKY_DAY=new THREE.Color(0xd8ecff), HEMI_SKY_NIGHT=new THREE.Color(0x2a3f66);
+const HEMI_GROUND_DAY=new THREE.Color(0x8a7a5a), HEMI_GROUND_NIGHT=new THREE.Color(0x2e2718);
+const HEMI_DAY=0.95, SUN_DAY=1.9, WATER_FOG=0x1a6fd0;
+// único punto de aplicación de la atmósfera: compone día/noche con "bajo el agua"
+// (sumergido manda el azul del agua; en superficie manda el ciclo). L∈[NIGHT_MIN,1].
+let airL=-1, airUnder=null;
+function applyAtmosphere(L){
+  const d=(L-NIGHT_MIN)/(1-NIGHT_MIN); // 0=noche plena → 1=día pleno (para color y sol)
+  if(under){
+    scene.fog.color.setHex(WATER_FOG); scene.fog.near=1; scene.fog.far=26;
+    scene.background.setHex(WATER_FOG);
+  } else {
+    scene.fog.color.copy(FOG_NIGHT).lerp(FOG_DAY,d);
+    scene.fog.near=34; scene.fog.far=180;
+    scene.background.copy(BG_NIGHT).lerp(BG_DAY,d);
+  }
+  skyMat.uniforms.top.value.copy(SKY_TOP_NIGHT).lerp(SKY_TOP_DAY,d);
+  skyMat.uniforms.bot.value.copy(SKY_BOT_NIGHT).lerp(SKY_BOT_DAY,d);
+  hemi.color.copy(HEMI_SKY_NIGHT).lerp(HEMI_SKY_DAY,d);
+  hemi.groundColor.copy(HEMI_GROUND_NIGHT).lerp(HEMI_GROUND_DAY,d);
+  hemi.intensity=HEMI_DAY*L;
+}
+
+/* ===== sol y luna sobre el arco del cielo =====
+   El sol recorre su arco durante el día (este → cenit → oeste) y la luna el mismo
+   arco durante la noche (este → cenit → oeste, misma dirección que el sol); cada uno
+   se oculta cuando no es su turno.
+   Las posiciones se recalculan por frame (movimiento continuo) mientras la paleta se
+   aplica por tramos (applyAtmosphere). */
+const SKY_R=230, SKY_TILT=70, SKY_Y0=6, LIGHT_R=80;
+const SUN_SHADOW_MIN_Y=14, MOON_LIGHT=0.18;
+// p∈[0,1] recorre medio arco: 0=horizonte este, 0.5=cenit, 1=horizonte oeste.
+// `flip` invierte el sentido (oeste→este) para arcos que deban ir al revés (hoy ambos usan false).
+function skyArc(p, flip, radius, tilt, out){
+  const a=Math.PI*(flip?1-p:p);
+  out.set(W/2+Math.cos(a)*radius, SKY_Y0+Math.sin(a)*radius, W/2+(flip?-tilt:tilt));
+  return out;
+}
+// progreso dentro del día / de la noche (0..1), clampado a los extremos
+function dayProg(v){ return Math.min(1, Math.max(0, v/NIGHT_START)); }
+function nightProg(v){ return Math.min(1, Math.max(0, (v-NIGHT_START)/(1-NIGHT_START))); }
+// mueve el sol, la luna y sus luces según la fase (llamado cada frame)
+function tickSky(v){
+  const d=(light(v)-NIGHT_MIN)/(1-NIGHT_MIN); // 0=noche plena → 1=día pleno
+  const night=isNight(v);
+  // sol: arco del día; visible con luz suficiente y oculto de noche
+  skyArc(dayProg(v), false, SKY_R, SKY_TILT, sunSprite.position);
+  sunSprite.lookAt(W/2, SKY_Y0, W/2);
+  sunSprite.visible = !night && d>0.15;
+  // la luz direccional sigue la misma dirección (a distancia de sombra); sin sombras ni intensidad si el sol está bajo/oculto
+  skyArc(dayProg(v), false, LIGHT_R, SKY_TILT, sun.position);
+  sun.intensity = SUN_DAY*d;
+  sun.castShadow = !LOW && !night && sun.position.y>SUN_SHADOW_MIN_Y;
+  // luna: mismo sentido que el sol (este→oeste), visible solo de noche; su luz tenue sólo ilumina de noche
+  skyArc(nightProg(v), false, SKY_R, SKY_TILT, moonSprite.position);
+  moonSprite.lookAt(W/2, SKY_Y0, W/2);
+  moonSprite.visible = night;
+  skyArc(nightProg(v), false, LIGHT_R, SKY_TILT, moonLight.position);
+  moonLight.intensity = night ? MOON_LIGHT : 0;
+}
 
 const clouds = [];
 {
@@ -2218,6 +2329,9 @@ function connectMP(wantedMode){
       let m; try{ m=JSON.parse(ev.data); }catch(e){ return; }
       if(m.t==='welcome'){
         clearTimeout(to); mp=true; myId=m.id; NET=ws;
+        // ciclo día/noche: adoptar la hora y la duración del server (primera fase directa)
+        if(Number.isFinite(m.cyc)) cycleMs=m.cyc;
+        if(Number.isFinite(m.tod)) onTod(m.tod);
         resolve({ solo:false, data:m });
       }
     };
@@ -2238,6 +2352,7 @@ function setupNetHandlers(){
       pushLocalOutOfBlock(m.x,m.y,m.z); refreshAt(m.x,m.z);
       if(isDoor(was)&&isDoor(m.v)&&doorOpen(was)!==doorOpen(m.v)){
         doorAnims.set(m.x+','+m.y+','+m.z,{p:0,from:doorOpen(was)?1:0,to:doorOpen(m.v)?1:0}); } }
+    else if(m.t==='tod'){ onTod(m.v); }
     else if(m.t==='join'){ addRemote(m); chatMsg('🌿',`${m.name} se unió`); }
     else if(m.t==='leave'){ removeRemote(m.id); }
     else if(m.t==='chat'){ chatMsg(m.from,m.text); tone(700,900,.07,'sine',.1); }
@@ -2443,8 +2558,8 @@ function tickWater(){
   if(uw===under) return;
   under=uw;
   waterEl.style.opacity=under?1:0;
-  if(under){ scene.fog.color.setHex(0x1a6fd0); scene.fog.near=1; scene.fog.far=26; scene.background.setHex(0x1a6fd0); }
-  else { scene.fog.color.setHex(0xbfe3ff); scene.fog.near=34; scene.fog.far=180; scene.background.setHex(0x8ecdf5); }
+  // la atmósfera la compone applyAtmosphere (agua manda sumergido; si no, el ciclo)
+  const L=light(dayV); airL=L; airUnder=under; applyAtmosphere(L);
 }
 function loop(now){
   requestAnimationFrame(loop);
@@ -2469,6 +2584,12 @@ function loop(now){
     else { hl.visible=hlEdge.visible=false; cross.classList.remove('active'); }
   } else { hl.visible=hlEdge.visible=false; if(!mouseDown[0]) crackMesh.visible=false; }
   tickSword(dt, now); tickPick(dt, now); tickCooldown(); tickDoors(dt); tickWater();
+  // ciclo día/noche: avanzar la fase local, mover sol/luna y aplicar la atmósfera si cambió
+  dayV=cycleAdvance(dayV,dt,cycleMs);
+  if(hasTod) dayV=cycleCorrect(dayV,todNow(now,cycleMs),dt);
+  tickSky(dayV);
+  { const L=light(dayV);
+    if(under!==airUnder || Math.abs(L-airL)>0.002){ airL=L; airUnder=under; applyAtmosphere(L); } }
   tickParts(dt); tickDmgNums(dt);
   renderer.render(scene,camera);
 }

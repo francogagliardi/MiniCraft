@@ -86,6 +86,15 @@ try {
   const boss = await hello('Jefe', 'admin', 'test-key');
   ok(boss.m.admin === true && boss.m.mode === undefined, 'admin con clave → aceptado');
   ok(typeof boss.m.seed === 'number' && Array.isArray(boss.m.edits), 'welcome trae seed + edits');
+  // ciclo-dia-noche: welcome expone la hora del ciclo (tod) y su duración (cyc)
+  ok(typeof boss.m.tod === 'number' && boss.m.tod >= 0 && boss.m.tod < 1, 'welcome trae tod en [0,1)');
+  {
+    // cyc = DAY_MS + NIGHT_MS declarado por el server (tuneable)
+    const srvSrc = fs.readFileSync(path.join(serverDir, 'server.js'), 'utf8');
+    const dm = srvSrc.match(/const DAY_MS = (\d+), NIGHT_MS = (\d+), CYCLE_MS = DAY_MS \+ NIGHT_MS/);
+    const expCyc = dm ? +dm[1] + +dm[2] : null;
+    ok(!!dm && boss.m.cyc === expCyc, `welcome trae cyc = DAY_MS+NIGHT_MS (${expCyc})`);
+  }
 
   // 2. jugador y lista de jugadores
   const a = await hello('Atac', 'player');
@@ -170,7 +179,7 @@ try {
     const WORLD2 = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'mc-world-')), 'world.json');
     const srv2 = spawn(process.execPath, ['server.js'], {
       cwd: serverDir,
-      env: { ...process.env, PORT: String(PORT2), ADMIN_KEY: 'test-key', WORLD_FILE: WORLD2, HB_INTERVAL_MS: '200', IDLE_TIMEOUT_MS: '800' },
+      env: { ...process.env, PORT: String(PORT2), ADMIN_KEY: 'test-key', WORLD_FILE: WORLD2, HB_INTERVAL_MS: '200', IDLE_TIMEOUT_MS: '800', TOD_INTERVAL_MS: '150' },
     });
     srv2.stderr.on('data', d => process.stdout.write('[SRV2-ERR] ' + d));
     let keepObs = null, keepVivo = null;
@@ -189,6 +198,18 @@ try {
       }
       const hello2 = (name) => hello(name, 'player', '', PORT2);
       const obs2 = await hello2('Obs2');
+      // ciclo-dia-noche: el server difunde `tod` periódicamente (TOD_INTERVAL_MS corto por env)
+      {
+        const t0 = Date.now();
+        let tod = null;
+        while (Date.now() - t0 < TIMEOUT) {
+          tod = obs2.seen.find(m => m.t === 'tod');
+          if (tod) break;
+          await wait(50);
+        }
+        ok(!!tod && typeof tod.v === 'number' && tod.v >= 0 && tod.v < 1,
+          'difusión periódica de tod (v en [0,1))');
+      }
       const ghost2 = await hello2('Fantasma');
       const vivo = await hello2('Vivo');
       const nObs = obs2.seen.length;
@@ -228,6 +249,18 @@ try {
       if (keepVivo) clearInterval(keepVivo);
       try { srv2.kill(); } catch (e) {}
     }
+  }
+
+  // 8. el reloj del ciclo NO se persiste: world.json queda como { seed, edits }
+  // (el server guarda cada 15 s; el resto de la suite ya corrió, así que esperamos poco)
+  {
+    const t0 = Date.now();
+    while (Date.now() - t0 < 17000 && !fs.existsSync(WORLD)) await wait(200);
+    let w = null;
+    try { w = JSON.parse(fs.readFileSync(WORLD, 'utf8')); } catch (e) {}
+    ok(!!w && typeof w.seed === 'number' && Array.isArray(w.edits), 'world.json escrito con { seed, edits }');
+    ok(!!w && Object.keys(w).sort().join(',') === 'edits,seed',
+      'world.json sin campos de ciclo/reloj (' + (w ? Object.keys(w).join(',') : 'sin archivo') + ')');
   }
 
   for (const c of [boss, a, b]) c.ws.close();
