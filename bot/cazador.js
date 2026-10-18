@@ -40,6 +40,18 @@ const SPAWN_STOP = 1.0;   // CAZA sin presas: umbral de quietud en el spawn
 const DEFAULT_SPAWN = [128.5, 20, 136.5];
 const VOID_Y = -10;       // por debajo: teletransporte al spawn (igual que el cliente)
 
+// ---- hora de Argentina para los logs (change hora-argentina-logs) ----
+// COPIA DELIBERADA de la de `server/server.js`: `bot/` y `server/` son grafos de
+// `require` separados a propósito (`Dockerfile.bot` nunca copia `server.js`), así
+// que el helper se duplica en vez de compartirse (design, Decisión 3). Formatter
+// hoisteado: uno por proceso (el bot pega cada ~0.65 s), no uno por llamada.
+/* hora-ar:start */
+const FMT_AR = new Intl.DateTimeFormat('es-AR', {
+  timeZone: 'America/Argentina/Buenos_Aires', hour: '2-digit', minute: '2-digit', hour12: false,
+});
+const horaAr = (now = Date.now()) => `[${FMT_AR.format(new Date(now))}] `;
+/* hora-ar:end */
+
 const hypot = (dx, dz) => Math.sqrt(dx * dx + dz * dz);
 
 /** Normaliza un jugador de `welcome.players` / `join` a la forma interna. */
@@ -161,7 +173,7 @@ function createHunter(cfg = {}) {
     lastHitAt.set(victim.id, now());
     hitVictims.add(victim.id);
     send({ t: 'hit', id: victim.id, dmg: DMG, dx: dx / d, dz: dz / d });
-    log(`⚔️  golpe a ${victim.name} (d=${d.toFixed(2)}, seq=${seq})`);
+    log(horaAr(now()) + `⚔️  golpe a ${victim.name} (d=${d.toFixed(2)}, seq=${seq})`);
   }
   function maybeAttack(victim) {
     if (!victim) return;
@@ -403,6 +415,6 @@ function parseWorld(html) {
 }
 
 module.exports = {
-  createHunter, parseWorld, normPlayer,
+  createHunter, parseWorld, normPlayer, horaAr,
   MAX_HP, SPEED, RANGE, DMG, HIT_GAP_MS, MV_MS, SWORD, DEFAULT_SPAWN, VOID_Y,
 };

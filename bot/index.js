@@ -38,7 +38,11 @@ function createBotClient(cfg = {}) {
   const WS = cfg.WebSocket || WebSocket;
   const now = cfg.now || Date.now;
   const rng = cfg.rng || Math.random;
-  const log = cfg.log || ((...a) => console.log('[bot]', ...a));
+  // Logger por defecto SIN tag: el mensaje ya trae su prefijo `[HH:MM] ` y la hora
+  // debe ser el PRIMER carácter de la línea (change hora-argentina-logs). El tag
+  // `[bot]` era redundante: en Easypanel cada servicio tiene su propia vista de logs
+  // y el contenedor ya está identificado como `minicraft-bot`.
+  const log = cfg.log || ((...a) => console.log(...a));
   const mvMs = cfg.mvMs ?? 150;
   const bBase = cfg.backoffBaseMs ?? 1000;
   const bCap = cfg.backoffCapMs ?? 30000;

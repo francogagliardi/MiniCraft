@@ -41,6 +41,18 @@ const SAVE_FILE = process.env.WORLD_FILE || path.join(__dirname, 'world.json');
 const HB_MS = Math.max(50, +(process.env.HB_INTERVAL_MS || 30000));
 const IDLE_MS = Math.max(100, +(process.env.IDLE_TIMEOUT_MS || 90000));
 
+// ---- hora de Argentina para los logs (change hora-argentina-logs) ----
+// El timestamp que muestra Easypanel lo agrega el log driver de Docker (UTC o la
+// hora del browser), no la app: la hora tiene que ir DENTRO del texto. Por eso no
+// se usa la env `TZ` y se formatea con `Intl` sobre la zona de Argentina (UTC−3
+// todo el año, sin DST). Formatter hoisteado: uno por proceso, no uno por llamada.
+/* hora-ar:start */
+const FMT_AR = new Intl.DateTimeFormat('es-AR', {
+  timeZone: 'America/Argentina/Buenos_Aires', hour: '2-digit', minute: '2-digit', hour12: false,
+});
+const horaAr = (now = Date.now()) => `[${FMT_AR.format(new Date(now))}] `;
+/* hora-ar:end */
+
 // ---- ciclo día/noche: el server es dueño del reloj ----
 // Ancla al boot + Date.now(): el reloj es puro y NO se persiste en world.json.
 // Todos los jugadores ven la misma hora (necesario para el futuro zombi server-auth).
@@ -169,7 +181,7 @@ function removePlayer(ws) {
   players.delete(ws);
   broadcast({ t: 'leave', id: p.id });
   broadcast({ t: 'chat', from: '🌿', text: `${p.name} se fue` });
-  console.log(`➖ ${p.name} — ${players.size} conectados`);
+  console.log(horaAr() + `➖ ${p.name} — ${players.size} conectados`);
   return true;
 }
 
@@ -274,7 +286,7 @@ wss.on('connection', (ws) => {
       });
       broadcast({ t: 'join', id: me.id, name: me.name, mode: me.mode, dead: 0, pos: me.pos, yaw: me.yaw, pitch: me.pitch, held: me.held, seq: me.seq, skin: me.skin }, ws);
       broadcast({ t: 'chat', from: '🌿', text: `${me.name} se unió (${me.mode === 'admin' ? 'admin 🛠' : 'jugador 🌱'})` }, ws);
-      console.log(`➕ ${me.name} (${me.mode}) — ${players.size} conectados`);
+      console.log(horaAr() + `➕ ${me.name} (${me.mode}) — ${players.size} conectados`);
       helloInFlight = false;
       return;
     }
