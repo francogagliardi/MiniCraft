@@ -8,7 +8,14 @@
 #      (tambien se acepta EASYPANEL_WEBHOOK como alias)
 #   3. Listo: cada push a main corre tests y si pasan redespliega solo.
 #
-# Si el secret no existe, este workflow no falla: avisa y termina.
+# El BOT es una app APARTE en Easypanel (mismo repo, build con `Dockerfile.bot`,
+# ver README). Su imagen NO la buildea el webhook del server, asi que tiene su
+# propio deploy webhook: guardalo como EASYPANEL_BOT_WEBHOOK y este workflow le
+# pega tambien. Sin ese secret el bot se omite (con aviso) y se despliega a mano.
+# Si en cambio desplegas los dos servicios con el docker-compose.yml de la raiz,
+# alcanza con el webhook de esa app: no configures el del bot.
+#
+# Si ningun secret existe, este workflow no falla: avisa y termina.
 name: Deploy
 
 on:
@@ -38,38 +45,66 @@ jobs:
         working-directory: server
         run: npm test
 
-      - name: Resolver webhook configurado
+      - name: Resolver webhooks configurados
         id: webhook
         env:
           EASYPANEL_DEPLOY_WEBHOOK: ${{ secrets.EASYPANEL_DEPLOY_WEBHOOK }}
           EASYPANEL_WEBHOOK: ${{ secrets.EASYPANEL_WEBHOOK }}
+          EASYPANEL_BOT_WEBHOOK: ${{ secrets.EASYPANEL_BOT_WEBHOOK }}
         run: |
-          URL="${EASYPANEL_DEPLOY_WEBHOOK:-$EASYPANEL_WEBHOOK}"
-          if [ -z "$URL" ]; then
+          # El server acepta el alias EASYPANEL_WEBHOOK (compatibilidad hacia atras).
+          SERVER_URL="${EASYPANEL_DEPLOY_WEBHOOK:-$EASYPANEL_WEBHOOK}"
+          # Log sin exponer el token: muestra solo protocolo + host + inicio del path
+          redact() { echo "$1" | sed -E 's#(https?://[^/]+/).*#\1... [redacted]#'; }
+
+          if [ -z "$SERVER_URL" ]; then
             echo "configured=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::Secret EASYPANEL_DEPLOY_WEBHOOK no configurado: deploy omitido."
+            echo "::warning::Secret EASYPANEL_DEPLOY_WEBHOOK no configurado: deploy del server omitido."
           else
             echo "configured=true" >> "$GITHUB_OUTPUT"
-            # Log sin exponer el token: muestra solo protocolo + host + inicio del path
-            REDACTED=$(echo "$URL" | sed -E 's#(https?://[^/]+/).*#\1... [redacted]#')
-            echo "Webhook detectado: $REDACTED"
+            echo "Webhook del server detectado: $(redact "$SERVER_URL")"
             # Guarda la URL en un archivo para el paso siguiente sin imprimirla
-            printf '%s' "$URL" > /tmp/easypanel_webhook_url
+            printf '%s' "$SERVER_URL" > /tmp/easypanel_webhook_url
+          fi
+
+          # El bot es una app aparte (Dockerfile.bot): webhook propio, opcional.
+          if [ -z "$EASYPANEL_BOT_WEBHOOK" ]; then
+            echo "bot=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Secret EASYPANEL_BOT_WEBHOOK no configurado: el bot no se redespliega solo."
+          else
+            echo "bot=true" >> "$GITHUB_OUTPUT"
+            echo "Webhook del bot detectado: $(redact "$EASYPANEL_BOT_WEBHOOK")"
+            printf '%s' "$EASYPANEL_BOT_WEBHOOK" > /tmp/easypanel_bot_webhook_url
           fi
 
       - name: Sin webhook configurado
-        if: steps.webhook.outputs.configured == 'false'
+        if: steps.webhook.outputs.configured == 'false' && steps.webhook.outputs.bot == 'false'
         run: |
-          echo "Secret EASYPANEL_DEPLOY_WEBHOOK no configurado: deploy omitido."
+          echo "Ningun webhook configurado: deploy omitido."
           echo "Ver README (seccion Deploy automatico) para activarlo."
 
-      - name: Trigger deploy webhook
-        if: steps.webhook.outputs.configured == 'true'
+      - name: Trigger deploy webhooks
+        if: steps.webhook.outputs.configured == 'true' || steps.webhook.outputs.bot == 'true'
         run: |
-          URL="$(cat /tmp/easypanel_webhook_url)"
-          rm -f /tmp/easypanel_webhook_url
-          echo "Llamando al webhook de Easypanel (POST, timeout 60s)..."
-          # -v para diagnosticar si el VPS no es alcanzable desde GitHub runners;
-          # el token va en la URL pero GitHub enmascara los secrets en los logs.
-          curl -fsSL -X POST "$URL" --max-time 60 -v
-          echo "Webhook aceptado por Easypanel."
+          set -uo pipefail
+          # Un POST por cada app que tenga webhook. El archivo es el canal para pasar
+          # la URL entre pasos sin imprimirla; se borra apenas se usa.
+          # Los dos webhooks son INDEPENDIENTES: si el del server falla, igual se
+          # intenta el del bot (que es lo que se quiere deployar). El job termina
+          # rojo si cualquiera fallo: un deploy roto y verde es peor que un job rojo.
+          FAILED=0
+          for f in /tmp/easypanel_webhook_url /tmp/easypanel_bot_webhook_url; do
+            [ -f "$f" ] || continue
+            URL="$(cat "$f")"
+            rm -f "$f"
+            echo "Llamando a un webhook de Easypanel (POST, timeout 60s)..."
+            # -v para diagnosticar si el VPS no es alcanzable desde GitHub runners;
+            # el token va en la URL pero GitHub enmascara los secrets en los logs.
+            if curl -fsSL -X POST "$URL" --max-time 60 -v; then
+              echo "Webhook aceptado por Easypanel."
+            else
+              echo "::error::Un webhook de Easypanel rechazo el POST (curl exit $?)."
+              FAILED=1
+            fi
+          done
+          [ "$FAILED" -eq 0 ] || exit 1

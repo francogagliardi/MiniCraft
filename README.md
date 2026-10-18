@@ -136,12 +136,18 @@ reconecta solo con backoff, así que sobrevive a los redeploys del server.
 
 ### 🔄 Deploy automático (push a main → se actualiza solo)
 
-1. Pusheá a `main`: corre el workflow **CI** (tests estáticos + protocolo).
-2. Si pasa ✅, el workflow **Deploy** llama al deploy webhook de Easypanel.
+1. Pusheá a `main`: corren los workflows **CI** y **Deploy** (los dos testean).
+2. Si los tests pasan ✅, **Deploy** llama al deploy webhook de Easypanel.
 3. Para activarlo: en Easypanel copiá la **Deploy Webhook URL** de la app
    y guardala en GitHub → repo **Settings → Secrets and variables →
    Actions** → secret `EASYPANEL_DEPLOY_WEBHOOK`.
-4. Sin ese secret el deploy se omite (no falla) y desplegás a mano.
+4. **El bot es una app aparte** (mismo repo, build con `Dockerfile.bot`): su
+   imagen **no** la buildea el webhook del server. Copiá la Deploy Webhook URL
+   de la app del bot y guardala como secret `EASYPANEL_BOT_WEBHOOK`; el workflow
+   le pega a los dos. *(Si en cambio desplegás los dos servicios con el
+   `docker-compose.yml` de la raíz, es **una sola app**: no configures el webhook
+   del bot, porque ya queda cubierto.)*
+5. Sin esos secrets el deploy se omite (no falla) y desplegás a mano.
 
 <!-- test deploy webhook: 2026-10-02 -->
 
