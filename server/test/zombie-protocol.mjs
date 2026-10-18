@@ -203,6 +203,22 @@ try {
   const others = (zsA.z.filter(z => z.i !== farZ.i));
   const targetId = others.length ? others[0].i : null;
   const nPh = a.seen.length;
+  // OJO: la cadencia es POR ZOMBI (`z.lastAtk` en zombie.js:180), y TODOS los zombis se
+  // llaman 'Zombi'. Filtrar por el nombre mezcla atacantes distintos: dos zombis pueden
+  // golpear a la víctima con <1 s entre sí SIN violar nada. El server manda `fromId` en
+  // cada `phit` (server.js:231), así que hay que agrupar por atacante y medir el cooldown
+  // donde de verdad se aplica: entre dos golpes del MISMO zombi.
+  const phitsOf = (seen) => seen.slice(nPh).filter(m => m.t === 'phit' && m.from === 'Zombi');
+  // Gaps entre golpes consecutivos del mismo atacante (todos los que golpearon ≥2 veces).
+  const selfGaps = (list) => {
+    const by = new Map();
+    for (const f of list) {
+      const k = f.fromId ?? f.from;
+      if (!by.has(k)) by.set(k, []);
+      by.get(k).push(f._t);
+    }
+    return [...by.values()].filter(t => t.length >= 2).flatMap(t => t.slice(1).map((v, i) => v - t[i]));
+  };
   await waitUntil(() => {
     const s = zsLatest(a);
     const z = targetId !== null
@@ -211,15 +227,18 @@ try {
     if (z) {
       a.ws.send(JSON.stringify({ t: 'mv', p: [z.p[0] + 1.0, z.p[1], z.p[2]], yaw: 0, pitch: 0, hp: 10, dead: 0 }));
     }
-    return a.seen.slice(nPh).filter(m => m.t === 'phit' && m.from === 'Zombi').length >= 2;
+    // Se espera a que el MISMO zombi golpee dos veces: es lo único que mide el cooldown.
+    return selfGaps(phitsOf(a.seen)).length >= 1;
   }, TIMEOUT);
-  const phits = a.seen.slice(nPh).filter(m => m.t === 'phit' && m.from === 'Zombi');
+  const phits = phitsOf(a.seen);
   ok(phits.length >= 1 && phits[0].dmg === 2 && (phits[0].dx !== 0 || phits[0].dz !== 0),
     'la víctima recibe phit (from Zombi, dmg 2, dx/dz no nulos)');
-  if (phits.length >= 2) {
-    ok(phits[1]._t - phits[0]._t >= 950, 'dos phit seguidos no llegan antes de 1 s (ATTACK_CD_MS)');
+  const gaps = selfGaps(phits);
+  if (gaps.length) {
+    ok(gaps.every(g => g >= 950),
+      `dos phit del MISMO zombi no llegan antes de 1 s (ATTACK_CD_MS) (gaps: ${gaps.join(', ')} ms)`);
   } else {
-    ok(false, 'no llegaron dos phit para medir la cadencia');
+    ok(false, 'no llegaron dos phit del mismo zombi para medir la cadencia');
   }
 
   // 11.8 el contador `atk` del zombi que golpeó sube y lo ven los DOS clientes en el zs
