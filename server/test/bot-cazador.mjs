@@ -84,6 +84,11 @@ const lastPos = (h) => { const l = mvFrames(h); return l.length ? l[l.length - 1
 // es exactamente la posición de ataque.
 const posAtHit = (h, hit) => { const m = h.frames.find(f => f.t === 'mv' && f._t >= hit._t); return m ? m.p : lastPos(h); };
 const stopBot = (h) => { try { h.client.stop(); } catch (e) {} };
+// Readiness: el bot entra al server recién cuando llega su `welcome` (ahí recibe su id).
+// El server ya lo registró antes de mandarlo (`players.set` precede al `welcome`), así que
+// esperar el id garantiza que un `welcome.players` posterior lo incluya. Sin esta espera el
+// test asumía un orden de llegada (bot antes que el testigo) que NO está garantizado.
+const botReady = (h) => until(() => h.client.getId() !== null, TIMEOUT);
 
 // ---- cliente falso (víctima / admin / impostor) ----
 async function fakePlayer(name, opts = {}) {
@@ -205,6 +210,9 @@ try {
   {
     const adminA = await fakePlayer('Boss', { admin: true });
     const botA = startBot();
+    // (i) `welcome.players` trae solo a los YA registrados: esperamos que el bot esté
+    // adentro antes de que entre el testigo (si no, el snapshot puede no traerlo).
+    await botReady(botA);
     const adminB = await fakePlayer('Witness', { admin: true });
     // admin pegado al lado del bot (spawn plano en [100.5,·,100.5])
     adminA.pos = [101.5, GROUND, 100.5]; mvLoop(adminA);
@@ -227,7 +235,7 @@ try {
   // =====================================================================
   {
     const botB = startBot();
-    await wait(400);
+    await botReady(botB);
     const victim = await fakePlayer('Victima', { pos: [100.5 + 16, GROUND, 100.5] });
     ok(victim.botId !== null, '(a) la víctima resolvió el id del bot');
     // (e) la víctima le pega al bot: además de cazarla, el bot debe seguir en 10/0
@@ -237,22 +245,25 @@ try {
     ok(killed, `(a) la víctima murió (hp=${victim.hp}, dead=${victim.dead})`);
     ok(victim.hp === 0, `(a) la vida de la víctima llegó a 0 (${victim.hp})`);
     const vHits = hits(botB).filter(f => f.id === victim.id);
-    ok(vHits.length === 2, `(a) exactamente dos toques contra la víctima (${vHits.length})`);
+    // La REGLA (spec bots/hunter) es: "no otro `hit` a la MISMA víctima antes de 0.65 s,
+    // repitiendo hasta verla muerta" — se afirma el ESPACIADO del wire y que muera con DOS
+    // impactos aplicados (10/6), no el conteo exacto. El cliente falso emula la ventana
+    // `godT` de 0.6 s MEDIDA AL RECIBIR, así que bajo carga un `phit` puede descartarse
+    // aunque el bot lo mande ≥0.65 s después y el bot necesite un toque más (spec: repite).
+    const vGaps = vHits.map((f, i) => (i ? f._t - vHits[i - 1]._t : 0));
+    ok(vHits.length >= 2, `(a) la víctima recibió dos o más toques del bot (${vHits.length})`);
     ok(victim.phitApplied.length === 2, `(a) la víctima aplicó dos phit (${victim.phitApplied.length}); ignoró ${victim.phitIgnored} dentro de la ventana`);
-    if (vHits.length === 2) {
-      const gap = vHits[1]._t - vHits[0]._t;
-      ok(gap >= 650, `(a) los dos toques están separados ≥0.65 s (${gap} ms)`);
-      ok(vHits.every(f => f.dmg === 6), '(a) cada `hit` lleva dmg:6 (techo del clamp del server)');
-      const dists = vHits.map(f => { const p = posAtHit(botB, f); return hypot(p[0] - victim.pos[0], p[2] - victim.pos[2]); });
-      ok(dists.every(d => d <= 4.6 + 1e-6), `(a) cada golpe dentro de alcance ≤4.6 (${dists.map(d => d.toFixed(2)).join(', ')})`);
-      const seqs = vHits.map(f => f._t);
-      ok(seqs[1] > seqs[0], '(a) los toques son de ticks distintos (no un burst)');
-    } else {
-      ok(false, '(a) se esperaban dos toques separados');
-    }
-    // secuencia de gesto: `seq` del mv final ≥ 2 (un avance por toque)
+    ok(vGaps.slice(1).every(g => g >= 650), `(a) ningún toque a menos de 0.65 s del anterior (gaps ${vGaps.slice(1).join(', ')} ms)`);
+    ok(vHits.every(f => f.dmg === 6), '(a) cada `hit` lleva dmg:6 (techo del clamp del server)');
+    const dists = vHits.map(f => { const p = posAtHit(botB, f); return hypot(p[0] - victim.pos[0], p[2] - victim.pos[2]); });
+    ok(dists.every(d => d <= 4.6 + 1e-6), `(a) cada golpe dentro de alcance ≤4.6 (${dists.map(d => d.toFixed(2)).join(', ')})`);
+    ok(vHits.length >= 2 && vHits[1]._t > vHits[0]._t, '(a) los toques son de ticks distintos (no un burst)');
+    // secuencia de gesto: el `mv` del wire llega a seq ≥ 2 (un avance por toque). El `mv`
+    // sale a CADENCIA (150 ms) y puede no caer en el tick del 2º golpe: se espera a que el
+    // wire lo refleje, en vez de leer un snapshot (la lectura inmediata veía seq=1).
+    const seqSeen = await until(() => mvFrames(botB).some(f => f.seq >= 2), 2000);
     const lastMv = mvFrames(botB).pop();
-    ok(!!lastMv && lastMv.seq >= 2, `(a) cada toque avanzó seq (seq final=${lastMv && lastMv.seq})`);
+    ok(seqSeen, `(a) cada toque avanzó seq en el wire (seq final=${lastMv && lastMv.seq})`);
     // anuncio de la muerte por chat (llega cuando el server difunde el `pm dead:1` de la víctima)
     ok(await until(() => chats(botB).some(f => /Fulminé/.test(f.text) && f.text.indexOf('Victima') >= 0), 2500),
       '(a) el bot anunció la kill por chat');
@@ -270,7 +281,7 @@ try {
   {
     const admin = await fakePlayer('Boss', { admin: true, pos: [128.5, GROUND, 128.5] });
     const botC = startBot();
-    await wait(400);
+    await botReady(botC);
     // impostor: MISMO NOMBRE que el admin pero NO admin (otro id del server)
     const imp = await fakePlayer('Boss', { pos: [190, GROUND, 190] });
     mvLoop(imp);
@@ -323,8 +334,9 @@ try {
     const impDead = await until(() => imp.dead === 1, 6000);
     ok(impDead, `(c) en ESPERA mata a quien se le acerca (hp ${impBefore}→${imp.hp})`);
     const impHits = hits(botC).filter(f => f.id === imp.id);
-    ok(impHits.length === 2 && (impHits[1]._t - impHits[0]._t) >= 650,
-      `(c) el bicho de la turreta también son dos toques separados (${impHits.length})`);
+    const impGaps = impHits.map((f, i) => (i ? f._t - impHits[i - 1]._t : 0));
+    ok(impHits.length >= 2 && impGaps.slice(1).every(g => g >= 650),
+      `(c) el bicho de la turreta: toques separados ≥0.65 s (${impHits.length} toques, gaps ${impGaps.slice(1).join(', ')} ms)`);
     ok(botC.client.getBot().getPos()[0] === frozen[0] && botC.client.getBot().getPos()[2] === frozen[2],
       '(c) matar en ESPERA no movió al bot');
     // el bot anunció sus cambios de modo
