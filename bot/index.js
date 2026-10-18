@@ -104,8 +104,13 @@ function createBotClient(cfg = {}) {
     const delay = Math.min(bCap, backoffMs) + Math.round(Math.min(bCap, backoffMs) * 0.25 * rng());
     backoffMs = Math.min(bCap, Math.round(backoffMs * bFactor));
     log(`reconectando en ${delay} ms`);
+    // OJO: SIN `unref()` — critico, no lo "limpie" nadie. Al desconectarse se para el
+    // ticker (`stopTicker`, en `ws.on('close')`), asi que este timer es lo UNICO que
+    // mantiene vivo el event loop mientras espera el reintento. Con `unref()` el loop
+    // queda vacio y Node SALE con codigo 0: el bot loguea "reconectando" y se APAGA en
+    // vez de reconectar (reproducido matando el server). En produccion duele porque cada
+    // redeploy del server tumba el socket del bot y lo dejaba muerto.
     reconnectTimer = setTimeout(() => { reconnectTimer = null; connect(); }, delay);
-    if (reconnectTimer.unref) reconnectTimer.unref();
   }
 
   function connect() {
