@@ -46,9 +46,12 @@ const IDLE_MS = Math.max(100, +(process.env.IDLE_TIMEOUT_MS || 90000));
 // hora del browser), no la app: la hora tiene que ir DENTRO del texto. Por eso no
 // se usa la env `TZ` y se formatea con `Intl` sobre la zona de Argentina (UTC−3
 // todo el año, sin DST). Formatter hoisteado: uno por proceso, no uno por llamada.
+// Va `hourCycle:'h23'` y NO `hour12:false`: con `hour12:false` el ICU de Node 20
+// resuelve el ciclo `h24` y la medianoche sale `24:00` (en Node 24 sale `00:00`),
+// lo que rompia el test en CI. `h23` es explicito y da `00:00` en las dos.
 /* hora-ar:start */
 const FMT_AR = new Intl.DateTimeFormat('es-AR', {
-  timeZone: 'America/Argentina/Buenos_Aires', hour: '2-digit', minute: '2-digit', hour12: false,
+  timeZone: 'America/Argentina/Buenos_Aires', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
 });
 const horaAr = (now = Date.now()) => `[${FMT_AR.format(new Date(now))}] `;
 /* hora-ar:end */

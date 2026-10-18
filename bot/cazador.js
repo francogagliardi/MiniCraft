@@ -45,9 +45,11 @@ const VOID_Y = -10;       // por debajo: teletransporte al spawn (igual que el c
 // `require` separados a propósito (`Dockerfile.bot` nunca copia `server.js`), así
 // que el helper se duplica en vez de compartirse (design, Decisión 3). Formatter
 // hoisteado: uno por proceso (el bot pega cada ~0.65 s), no uno por llamada.
+// Misma trampa que en el server: `hourCycle:'h23'` y NO `hour12:false` (con
+// `hour12:false` el ICU de Node 20 da la medianoche como `24:00`).
 /* hora-ar:start */
 const FMT_AR = new Intl.DateTimeFormat('es-AR', {
-  timeZone: 'America/Argentina/Buenos_Aires', hour: '2-digit', minute: '2-digit', hour12: false,
+  timeZone: 'America/Argentina/Buenos_Aires', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
 });
 const horaAr = (now = Date.now()) => `[${FMT_AR.format(new Date(now))}] `;
 /* hora-ar:end */
