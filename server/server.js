@@ -327,7 +327,7 @@ wss.on('connection', (ws) => {
       // zombi/alcance/cooldown válido se rechaza en silencio (sin respuestas).
       const id = +m.id;
       if (!Number.isInteger(id)) return;
-      const res = horde.hit(me.id, id, Date.now(), me.pos);
+      const res = horde.hit(me.id, id, Date.now(), me.pos, me.skin);
       if (res) send(ws, { t: 'zhitok', id, dmg: Zombie.SWORD_DMG, hp: res.hp, dead: res.dead });
     } else if (m.t === 'chat') {
       const text = String(m.text || '').slice(0, 140).replace(/[<>&"]/g, '');

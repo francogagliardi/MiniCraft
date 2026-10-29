@@ -179,6 +179,9 @@ try {
     };
     const src = grabFn('findSpawn');
     ok(src.length > 0, 'findSpawn() presente en index.html (extraído por llaves balanceadas)');
+    // La caja del jugador ahora sale del aspecto: para el bot (human) se inyecta la real del cliente.
+    const s0 = html.indexOf('/* skins:start */'), s1 = html.indexOf('/* skins:end */');
+    const SK = new Function(html.slice(s0, s1) + '; return {playerBox};')();
     const seeds = [457473416, 123456789, 987654321, 42, 2026];
     let allMatch = !!src;
     const shown = [];
@@ -186,13 +189,15 @@ try {
       const w = parseWorld(html).gen(seed, []);
       const clientFn = new Function(
         'W', 'H', 'WATER_Y', 'OX', 'OZ', 'hAt', 'get', 'AIR', 'WATER', 'collidesAt', 'THREE',
+        'playerBox', 'mySkin',
         src + '; return findSpawn;'
       )(
         w.W, w.H, w.WG.WG_SURFACE, w.WG.WG_OX, w.WG.WG_OZ, w.WG.hAt,
         (x, y, z) => { const b = w.get(x, y, z); return b === null ? w.WG.AIR : b; },
         w.WG.AIR, w.WG.WATER,
         (px, py, pz, r, hgt) => w._collidesAt(px, py, pz, r, hgt),
-        { Vector3: function (x, y, z) { return { x, y, z }; } }
+        { Vector3: function (x, y, z) { return { x, y, z }; } },
+        SK.playerBox, 'human'
       );
       const a = clientFn();
       const b = w.findSpawn();
@@ -391,6 +396,85 @@ try {
     const edits = allBotFrames.filter(f => f.t === 'edit');
     ok(allBotFrames.length > 0, `(h) se registraron frames salientes del bot (${allBotFrames.length})`);
     ok(edits.length === 0, `(h) el bot nunca mandó un \`edit\` (${edits.length})`);
+  }
+
+  // =====================================================================
+  // 7. (BOT_SKIN) el aspecto del bot es configurable y viaja en el hello
+  //    Sin server real: WebSocket falso (mismo patrón que hora-argentina.mjs)
+  //    para aislar el cableado de `bot/index.js`.
+  // =====================================================================
+  {
+    // WebSocket falso: sólo la superficie que usa el cableado (on/send/close/terminate).
+    class FakeWS {
+      constructor() {
+        this.readyState = FakeWS.OPEN;
+        this.handlers = {};
+        setTimeout(() => this.fire('open'), 0); // `open` async, como el real
+      }
+      on(ev, fn) { (this.handlers[ev] = this.handlers[ev] || []).push(fn); return this; }
+      fire(ev, ...a) { for (const fn of (this.handlers[ev] || [])) fn(...a); }
+      send() {}
+      close() { this.fire('close'); }
+      terminate() { this.fire('close'); }
+    }
+    FakeWS.OPEN = 1;
+
+    // Arranca el bot real con el socket falso y devuelve el primer `hello` (y sus frames).
+    const helloDe = async (cfg = {}) => {
+      const frames = [];
+      const client = createBotClient({
+        url: 'ws://fake', name: BOT_NAME, WebSocket: FakeWS,
+        worldBuilder: () => flatWorld(), mvMs: 100000, log: () => {},
+        backoffBaseMs: 10, backoffCapMs: 20,
+        onOutgoing: f => frames.push(Object.assign({}, f, { _t: Date.now() })),
+        ...cfg,
+      });
+      client.start();
+      const hello = await until(() => frames.find(f => f.t === 'hello'));
+      return { client, frames, hello };
+    };
+
+    const prevSkin = process.env.BOT_SKIN;
+    delete process.env.BOT_SKIN; // el caso "default" no debe heredar el entorno del CI
+    try {
+      {
+        const h = await helloDe({ skin: 'giant' });
+        ok(!!h.hello && h.hello.skin === 'giant',
+          `(BOT_SKIN) cfg.skin:'giant' ⇒ hello con skin:'giant' (${h.hello && h.hello.skin})`);
+        h.client.stop();
+      }
+      {
+        const h = await helloDe();
+        ok(!!h.hello && h.hello.skin === 'robot',
+          `(BOT_SKIN) sin cfg ni env ⇒ hello con skin:'robot' (${h.hello && h.hello.skin})`);
+        h.client.stop();
+      }
+      {
+        process.env.BOT_SKIN = 'fat';
+        const h = await helloDe();
+        ok(!!h.hello && h.hello.skin === 'fat',
+          `(BOT_SKIN) BOT_SKIN=fat ⇒ hello con skin:'fat' (${h.hello && h.hello.skin})`);
+        h.client.stop();
+      }
+      {
+        process.env.BOT_SKIN = 'fat';
+        const h = await helloDe({ skin: 'small' });
+        ok(!!h.hello && h.hello.skin === 'small',
+          `(BOT_SKIN) cfg.skin gana sobre BOT_SKIN (${h.hello && h.hello.skin})`);
+        h.client.stop();
+      }
+      {
+        const h = await helloDe({ skin: 'giant' });
+        h.client.terminate();
+        const re = await until(() => h.frames.filter(f => f.t === 'hello').length >= 2, 5000);
+        const hellos = h.frames.filter(f => f.t === 'hello');
+        ok(!!re && hellos.every(f => f.skin === 'giant'),
+          `(BOT_SKIN) al reconectar reenvía el mismo aspecto (${hellos.map(f => f.skin).join(',')})`);
+        h.client.stop();
+      }
+    } finally {
+      if (prevSkin === undefined) delete process.env.BOT_SKIN; else process.env.BOT_SKIN = prevSkin;
+    }
   }
 } catch (e) {
   console.log('❌ excepción: ' + (e && e.stack || e));

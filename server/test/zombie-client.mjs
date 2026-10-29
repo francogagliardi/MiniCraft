@@ -108,7 +108,8 @@ for (const needle of ['makeZombie', 'zombies', 'zombieTargets', 'applyZs', 'appl
 {
   const zh = grabFn('zombieHit');
   ok(/zombieTargets/.test(zh), 'zombieHit hace raycast contra zombieTargets');
-  ok(/far\s*=\s*4\.6/.test(zh), 'zombieHit usa far=4.6 (mismo alcance que los avatars)');
+  ok(/far\s*=\s*reachFor\s*\(\s*4\.6\s*,\s*mySkin\s*\)/.test(zh),
+    'zombieHit usa far=reachFor(4.6, mySkin) (alcance escalado por aspecto)');
   ok(/remotes/.test(zh) === false, 'zombieHit no toca el registro de jugadores (espacios separados)');
   const sw = grabFn('swordAttack');
   ok(/zombieHit\s*\(/.test(sw), 'swordAttack prueba zombieHit()');

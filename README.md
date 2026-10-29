@@ -58,6 +58,34 @@ incógnito, con nombres distintos.
 el server no acepta ninguna clave publicada acá, y sin configuración el modo
 admin queda **deshabilitado**.
 
+## 🎭 Aspectos (skins)
+
+En el menú inicial elegís cómo te ven **los demás** y qué tan grande es tu
+cuerpo en el mundo. La elección se guarda en `localStorage` (`mc-skin`) y viaja
+en el `hello`; el server sólo la difunde.
+
+| id | Etiqueta | Altura | Notas |
+|---|---|---|---|
+| `human` | Humano | 1.97 | Por defecto; valores históricos intactos |
+| `fat` | Gordo | 1.70 | Más ancho, con panza y extremidades rechonchas; factor ≈ 0.863 |
+| `giant` | Gigante | 5.00 | Escala `5.00/1.97`: **ya no es sólo visual** — ojo, hitbox y alcances ×2.538 |
+| `small` | Pequeño | 0.90 | Escala `0.90/1.97`: **ya no es sólo visual** — ojo, hitbox y alcances ×0.457 |
+| `zombie` | Zombi | 1.97 | Piel verde, ojos rojos y ropa oscura; **no** es la criatura hostil |
+| `robot` | Robot | 1.90 | Nominal; reservado para el bot, no aparece en el menú |
+
+La altura real del rig humano es **1.97** (cabellera incluida): la etiqueta con el
+nombre, la barra de vida, los corazones del saludo y el daño flotante se derivan
+de la altura de cada aspecto.
+
+El tamaño también cambia la **jugabilidad**: la altura de los ojos (1.62 × factor),
+la **hitbox** (0.3 × factor de radio y 1.8 × factor de alto) y los **alcances**
+(8 / 4.6 / 6 bloques × factor). Así, `human` conserva 0.3 × 1.8, ojo 1.62 y
+alcances 8 / 4.6 / 6; `giant` no pasa por un techo de 4 bloques pero sí por uno de
+5, y rompe/coloca desde ≈ 20.3 bloques; `small` pasa por un hueco de 1 bloque con
+ojo y alcances cortos (≈ 3.66 / 2.10 / 2.74). La **velocidad, el salto, la
+gravedad, el daño de caída y la vida no cambian** con el aspecto. La cámara `V`
+(1ª/3ª trasera/3ª frontal) también escala su distancia y su mínimo con el factor.
+
 ## 🐳 Docker
 
 ```bash
@@ -111,6 +139,11 @@ SERVER_URL=ws://localhost:3000 BOT_NAME=OPSX-bot node bot/index.js
 |---|---|---|
 | `SERVER_URL` | `ws://minicraft:3000` | WebSocket del server (interno en compose; en Easypanel `wss://tu-dominio`) |
 | `BOT_NAME` | `OPSX-bot` | Nombre con el que entra al mundo |
+| `BOT_SKIN` | `robot` | Aspecto con el que se presenta: `robot`, `human`, `fat`, `giant`, `small` o `zombie` (un valor desconocido se dibuja como humano) |
+
+En Docker, `docker-compose.yml` pasa `BOT_SKIN` al contenedor del bot con
+`BOT_SKIN: ${BOT_SKIN:-robot}`: `BOT_SKIN=giant docker compose up --build -d`
+levanta el bot gigante sin editar el compose.
 
 **Easypanel (segundo servicio):** el server se despliega igual que antes; agregá un
 **segundo App** apuntando al mismo repo pero con **Build → Dockerfile** =
@@ -162,6 +195,7 @@ reconecta solo con backoff, así que sobrevive a los redeploys del server.
 | Click izq. | Romper / pegar (mantener para picar en modo jugador) |
 | Click der. | Poner bloque · acariciar 🐷🐑 · espada ⚔️ ataca |
 | `E` / `Enter` | Inventario / chat |
+| `V` | Cámara: 1ª / 3ª trasera / 3ª frontal (también 👁 arriba) |
 | `F` | Volar (solo admin) |
 
 ### 📱 Controles táctiles (celular)
@@ -175,10 +209,14 @@ reconecta solo con backoff, así que sobrevive a los redeploys del server.
 | ⚔️ | Atacar (**solo con la espada en la mano**) |
 | 🧱 | Poner bloque / saludar / acariciar (equivale a click der.) |
 | ⤒ / 🕊 / 🎒 / 💬 | Saltar / volar (admin) / inventario / chat |
+| 👁 (arriba) | Cambiar cámara: 1ª / 3ª trasera / 3ª frontal |
 | ⛶ (arriba) | Pantalla completa |
 
 > Sin la espada en la mano no se puede dañar a otros jugadores
 > (romper, poner y acariciar siguen funcionando con cualquier item).
+> La 3ª frontal es una **vista de vanidad**: la cámara mira al jugador, así que el
+> crosshair no coincide con la mirada. Romper, poner y golpear siguen saliendo del
+> ojo y de la mirada, con los mismos alcances; `V` vuelve a la primera persona.
 > Probá el modo táctil en PC con `?touch=1` en la URL.
 
 ## 🔑 Variables de entorno (server)

@@ -139,6 +139,13 @@
   .nameRow input { flex:1; font-family:inherit; font-weight:700; font-size:15px; padding:12px 14px;
     border-radius:14px; border:2px solid #d7e1ef; outline:none; color:#223; background:#f7fafd; }
   .nameRow input:focus { border-color:#4fae4f; }
+  #skinPicker { display:flex; flex-wrap:wrap; gap:8px; justify-content:center; margin-top:12px; }
+  .skinBtn { font-family:inherit; font-weight:700; font-size:13px; color:#41526b; background:#f2f6fc;
+    border:2px solid #d7e1ef; border-radius:12px; padding:8px 14px; cursor:pointer; transition:all .15s; }
+  .skinBtn:hover { border-color:#9cc49c; transform:translateY(-1px); }
+  .skinBtn.on { background:linear-gradient(135deg,#57c256,#2f9e32); color:#fff; border-color:#2f9e32;
+    box-shadow:0 6px 14px rgba(47,158,50,.35); }
+  .skinBtn:focus-visible { outline:3px solid #4fae4f; outline-offset:2px; }
   .controls { display:grid; grid-template-columns:1fr 1fr; gap:8px 14px; margin-top:20px; text-align:left; font-size:13px;
     color:#4a5a75; font-weight:600; }
   .controls b { display:inline-block; background:#eef3fa; border:1px solid #d7e1ef; color:#223; padding:2px 9px;
@@ -228,6 +235,7 @@
   <div class="logo"><div class="logo-cube"></div><div><b>MINICRAFT</b><small id="coords">…</small></div></div>
   <div id="stats">
     <div class="pill" id="btnFly" title="Volar (F)">🕊 Volar: off</div>
+    <div class="pill" id="btnCam" title="Cámara: 1ª persona (V)" aria-pressed="false">👁</div>
     <div class="pill" id="btnSound" title="Sonido">🔊</div>
     <div class="pill only-touch" id="btnShadow" title="Sombras">☀️</div>
     <div class="pill" id="btnFull" title="Pantalla completa (P)">⛶</div>
@@ -237,7 +245,7 @@
 <div id="health"></div>
 <div id="toast"></div>
 <div id="hotbar"></div>
-<div id="hint"><b>W A S D</b> moverse · <b>Espacio</b> saltar<br><b>Click izq</b> romper · <b>Click der</b> poner<br><b>E</b> inventario · <b>Enter</b> chat · <b>P</b> pantalla completa · acariciá 🐷🐑</div>
+<div id="hint"><b>W A S D</b> moverse · <b>Espacio</b> saltar<br><b>Click izq</b> romper · <b>Click der</b> poner<br><b>E</b> inventario · <b>Enter</b> chat · <b>P</b> pantalla completa · <b>V</b> cámara 1ª/3ª trasera/3ª frontal · tu aspecto cambia ojo, hitbox y alcance (no velocidad ni salto) · acariciá 🐷🐑</div>
 <div id="plist"></div>
 <div id="chatlog"></div>
 <div id="chatbox"><input id="chatinput" maxlength="140" placeholder="Escribí y Enter para enviar…"><button id="chatSend" style="margin-left:8px;padding:12px 16px;border:none;border-radius:14px;background:#4fae4f;color:#fff;font-weight:700">Enviar</button></div>
@@ -264,6 +272,14 @@
       <input id="nameInput" maxlength="16" placeholder="Tu nombre…">
       <input id="keyInput" type="password" maxlength="32" placeholder="Clave admin" style="max-width:150px">
     </div>
+    <div id="skinPicker" role="radiogroup" aria-label="Aspecto">
+      <button class="skinBtn" data-skin="human" role="radio" aria-checked="true">Humano</button>
+      <button class="skinBtn" data-skin="fat" role="radio" aria-checked="false">Gordo</button>
+      <button class="skinBtn" data-skin="giant" role="radio" aria-checked="false">Gigante</button>
+      <button class="skinBtn" data-skin="small" role="radio" aria-checked="false">Pequeño</button>
+      <button class="skinBtn" data-skin="zombie" role="radio" aria-checked="false">Zombi</button>
+    </div>
+    <div class="tiny" id="skinHint">Así te ven los demás y así de grande es tu hitbox: el tamaño cambia ojo y alcances; velocidad, salto y vida no. Jugás en primera persona.</div>
     <div id="loading">Conectando…</div>
     <button class="btn btn-player" id="btnPlayer" style="display:none">🌱 JUGAR</button>
     <button class="btn btn-admin" id="btnAdmin" style="display:none">🛠 ENTRAR COMO ADMIN</button>
@@ -582,6 +598,18 @@ let hp = 10; const MAXHP = 10;
 let dead = false, lastHurt = -99, lastRegen = 0, airPeak = 0, godT = 0, shakeT = 0;
 let deathPos = null, deathT = 0, deathShown = false;
 let myName = 'Aventurero';
+let mySkin = 'human'; // aspecto elegido en el menú (spec ui/skins): define cómo te ven los demás
+// Marca la opción elegida en el selector del menú y, si `persist`, la guarda. Sólo acepta opciones
+// de jugador: un `robot` guardado a mano arranca en `human` (el robot es del bot, no del menú).
+function setSkin(id, persist){
+  mySkin = PLAYER_SKINS.includes(id) ? id : DEFAULT_SKIN;
+  document.querySelectorAll('#skinPicker .skinBtn').forEach(b=>{
+    const on = b.dataset.skin === mySkin;
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-checked', on ? 'true' : 'false');
+  });
+  if(persist) try{ localStorage.setItem('mc-skin', mySkin); }catch(e){}
+}
 
 /* ============ RNG ============ */
 // mulberry + SEED viven en el bloque worldgen compartido (arriba). SEED se conserva
@@ -951,7 +979,7 @@ const PICK_SCALE = .85;
 let swingT = 1; // 0→1 durante el golpe
 const SWING_DUR = .38;
 function tickSword(dt, now){
-  swordG.visible = hotbarIds[sel]===SWORD && !dead;
+  swordG.visible = camMode==='first' && hotbarIds[sel]===SWORD && !dead;
   if(!swordG.visible) return;
   // balanceo idle
   const idle = Math.sin(now*.0022)*.02;
@@ -969,7 +997,7 @@ function tickSword(dt, now){
 // vuelve al balanceo idle al soltar. Solo uno de los dos modelos es visible a la vez, así que
 // no compite con la espada (que también usa swingT).
 function tickPick(dt, now){
-  pickG.visible = hotbarIds[sel]===PICK && !dead;
+  pickG.visible = camMode==='first' && hotbarIds[sel]===PICK && !dead;
   if(!pickG.visible) return;
   if(mouseDown[0] && swingT>=1 && raycast()) swingT=0; // reinicia el golpe mientras se mina
   const idle = Math.sin(now*.0022)*.02;
@@ -1476,6 +1504,46 @@ const sfxDoor=(open)=>{ tone(open?280:520, open?640:240, .16,'triangle',.16); to
 
 /* ============ JUGADOR ============ */
 const player={ pos:new THREE.Vector3(), vel:new THREE.Vector3(), yaw:Math.PI, pitch:-.12, fly:false, onGround:false };
+/* camera:start */
+// Bloque puro (sin THREE/DOM/estado): matemática de la cámara en 3ª persona (spec ui/camera).
+const CAM_DIST=4.5; // distancia objetivo detrás del ojo
+const CAM_MIN=0.6;  // mínimo: no entra en la cabeza propia ni en el near plane
+// Modo guardado: sólo los literales exactos 'third' y 'front' habilitan la 3ª; el resto ⇒ primera.
+const camModeOf = (saved) => saved === 'third' ? 'third' : saved === 'front' ? 'front' : 'first';
+// Ciclo de `V`/`#btnCam`: first → third (trasera) → front (frontal) → first. Un valor inválido se
+// normaliza a first y avanza a third.
+function nextCamMode(mode){
+  const m = camModeOf(mode);
+  return m === 'first' ? 'third' : m === 'third' ? 'front' : 'first';
+}
+// Offset de la cámara = -lookDir * dist. Con yaw=0 se mira a -Z, así que la cámara va a +Z;
+// yaw=π/2 (mira a -X) la deja a +X. Pitch positivo (mirando arriba) baja la cámara.
+function camOffset(yaw, pitch, dist){
+  const cp=Math.cos(pitch);
+  return { x:Math.sin(yaw)*cp*dist, y:-Math.sin(pitch)*dist, z:Math.cos(yaw)*cp*dist };
+}
+// Recorta la distancia al primer sólido: deja 0.25 de margen y nunca baja del mínimo (escalable).
+function clampCam(dist, hit, min=CAM_MIN){
+  return hit == null ? dist : Math.max(min, Math.min(dist, hit - 0.25));
+}
+/* camera:end */
+// Estado compartido por `V` y #btnCam (spec ui/camera): 1ª persona por defecto.
+let camMode='first';
+function setCamMode(mode, persist){
+  camMode=camModeOf(mode);
+  if(persist) try{ localStorage.setItem('mc-cam', camMode); }catch(e){}
+  const b=document.getElementById('btnCam');
+  if(b){
+    b.setAttribute('aria-pressed', camMode!=='first'?'true':'false');
+    b.classList.toggle('on', camMode!=='first');
+    b.title = camMode==='front' ? 'Cámara: 3ª persona frontal (V)'
+            : camMode==='third' ? 'Cámara: 3ª persona trasera (V)'
+            : 'Cámara: 1ª persona (V)';
+  }
+}
+function toggleCam(){ setCamMode(nextCamMode(camMode), true); }
+// Ojo del jugador, sin bob: origen de los raycasts, del agua y de la órbita de la cámara.
+function eyePos(){ return new THREE.Vector3(player.pos.x, player.pos.y+eyeHeight(mySkin), player.pos.z); }
 const keys={}, touchVec={x:0,y:0};
 const canAct = () => state === 'play' && (TOUCH || locked());
 let sel=0, hotbarIds=[...DEFAULT_HOTBAR];
@@ -1504,6 +1572,7 @@ addEventListener('keydown', e=>{
     if(state==='play'||state==='pause'||state==='inv'){ toggleFull(); return; }
   }
   if(state!=='play'||!canAct()||dead) return;
+  if(e.code==='KeyV'){ toggleCam(); return; } // cámara 1ª/3ª (spec ui/camera)
   if(e.code.startsWith('Digit')){ const n=+e.code.slice(5); if(n>=1&&n<=9) select(n-1); }
   if(e.code==='KeyF'&&isAdmin()) toggleFly();
 });
@@ -1534,10 +1603,10 @@ function collidesAt(px,py,pz,r,hgt){
       }
   return false;
 }
-const collides=(px,py,pz)=>collidesAt(px,py,pz,.3,1.8);
+function collides(px,py,pz){ const b=playerBox(mySkin); return collidesAt(px,py,pz,b.r,b.h); }
 // Auto-step 0.5: solo ante losas y escaleras (nunca cubos), con pies en suelo y lugar arriba.
 function slabBlocked(px,py,pz){
-  const r=.3;
+  const r=playerBox(mySkin).r;
   let slab=false;
   const y=Math.floor(py);
   for(let x=Math.floor(px-r);x<=Math.floor(px+r);x++)
@@ -1652,8 +1721,27 @@ function physicsGravity(dt){
   if(!isAdmin()&&!dead&&hp<MAXHP&&now-lastHurt>5&&now-lastRegen>4){ lastRegen=now; hp=Math.min(MAXHP,hp+1); renderHealth(); }
   const moving=state==='play'&&Math.hypot(player.vel.x,player.vel.z)>.5&&player.onGround;
   if(moving){ bob+=dt*10; stepAcc+=dt; if(stepAcc>.34){stepAcc=0; sfxStep();} }
-  camera.position.set(player.pos.x, player.pos.y+1.62+(moving?Math.sin(bob)*.05:0), player.pos.z);
-  camera.rotation.set(0,0,0); camera.rotateY(player.yaw); camera.rotateX(player.pitch);
+  const f=sizeFactor(mySkin);
+  if(camMode==='third'){
+    // Órbita detrás del ojo, sin bob: mismo yaw/pitch para que el crosshair siga alineado.
+    const eye=eyePos();
+    const back=camOffset(player.yaw, player.pitch, 1); // unitario, hacia atrás
+    const dist=clampCam(CAM_DIST*f, camObstacle(eye, back, CAM_DIST*f+0.3), CAM_MIN*f);
+    const off=camOffset(player.yaw, player.pitch, dist);
+    camera.position.set(eye.x+off.x, eye.y+off.y, eye.z+off.z);
+  } else if(camMode==='front'){
+    // Frontal de vanidad: la cámara va DELANTE del ojo (offset negativo) y mira al jugador a la
+    // cara. El DDA recorre la misma dirección hacia adelante para no atravesar la pared de enfrente.
+    const eye=eyePos();
+    const dist=clampCam(CAM_DIST*f, camObstacle(eye, camOffset(player.yaw, player.pitch, -1), CAM_DIST*f+0.3), CAM_MIN*f);
+    const off=camOffset(player.yaw, player.pitch, -dist);
+    camera.position.set(eye.x+off.x, eye.y+off.y, eye.z+off.z);
+  } else {
+    camera.position.set(player.pos.x, player.pos.y+eyeHeight(mySkin)+(moving?Math.sin(bob)*.05*f:0), player.pos.z);
+  }
+  camera.rotation.set(0,0,0);
+  if(camMode==='front'){ camera.rotateY(player.yaw+Math.PI); camera.rotateX(-player.pitch); }
+  else { camera.rotateY(player.yaw); camera.rotateX(player.pitch); }
   if(shakeT>0){ shakeT=Math.max(0,shakeT-dt*3.5);
     camera.rotation.x+=(Math.random()-.5)*.07*shakeT;
     camera.rotation.z+=(Math.random()-.5)*.07*shakeT; }
@@ -1664,8 +1752,32 @@ function lookDir(){
   const cp=Math.cos(player.pitch);
   return new THREE.Vector3(-Math.sin(player.yaw)*cp, Math.sin(player.pitch), -Math.cos(player.yaw)*cp);
 }
-function raycast(maxD=8){
-  const o=camera.position, d=lookDir();
+// DDA de grilla desde `o` en `dir` (unitario): distancia al primer bloque que frena la cámara.
+// Sólo cubos y puertas cerradas: flores y antorchas/glow no tapan la vista.
+function camObstacle(o, dir, maxD){
+  let x=Math.floor(o.x), y=Math.floor(o.y), z=Math.floor(o.z);
+  const sx=Math.sign(dir.x), sy=Math.sign(dir.y), sz=Math.sign(dir.z);
+  const tD={ x:sx?Math.abs(1/dir.x):1e9, y:sy?Math.abs(1/dir.y):1e9, z:sz?Math.abs(1/dir.z):1e9 };
+  const dist={
+    x:sx?(sx>0?(x+1-o.x):(o.x-x))*tD.x:1e9,
+    y:sy?(sy>0?(y+1-o.y):(o.y-y))*tD.y:1e9,
+    z:sz?(sz>0?(z+1-o.z):(o.z-z))*tD.z:1e9,
+  };
+  for(let i=0;i<80;i++){
+    let t;
+    if(dist.x<dist.y&&dist.x<dist.z){ x+=sx; t=dist.x; dist.x+=tD.x; }
+    else if(dist.y<dist.z){ y+=sy; t=dist.y; dist.y+=tD.y; }
+    else { z+=sz; t=dist.z; dist.z+=tD.z; }
+    if(t>maxD) return null;
+    const dd=DEFS[get(x,y,z)];
+    if(dd&&(dd.door?!dd.open:!!dd.cube)) return t;
+  }
+  return null;
+}
+function raycast(maxD){
+  const requested=maxD==null?8:maxD;
+  const max=reachFor(requested,mySkin);
+  const o=eyePos(), d=lookDir();
   let x=Math.floor(o.x), y=Math.floor(o.y), z=Math.floor(o.z);
   const sx=Math.sign(d.x), sy=Math.sign(d.y), sz=Math.sign(d.z);
   const tD={ x:sx?Math.abs(1/d.x):1e9, y:sy?Math.abs(1/d.y):1e9, z:sz?Math.abs(1/d.z):1e9 };
@@ -1675,7 +1787,7 @@ function raycast(maxD=8){
     if(dist.x<dist.y&&dist.x<dist.z){ x+=sx; t=dist.x; dist.x+=tD.x; nx=-sx;ny=0;nz=0; }
     else if(dist.y<dist.z){ y+=sy; t=dist.y; dist.y+=tD.y; nx=0;ny=-sy;nz=0; }
     else { z+=sz; t=dist.z; dist.z+=tD.z; nx=0;ny=0;nz=-sz; }
-    if(t>maxD) return null;
+    if(t>max) return null;
     const b=get(x,y,z), dd=DEFS[b];
     if(dd&&(dd.cube||dd.flower||dd.glow||dd.door)) return {x,y,z,nx,ny,nz,b,dist:t};
   }
@@ -1684,16 +1796,18 @@ function raycast(maxD=8){
 function findSpawn(){
   // busca tierra firme con la columna despejada (nada de aparecer dentro de un árbol 🌳)
   const sx=W/2|0, sz=W/2|0;
+  const box=playerBox(mySkin);
+  const need=Math.max(4,Math.ceil(box.h));
   for(let r=0;r<104;r++) for(let a=0;a<12;a++){
     const x=Math.max(2,Math.min(W-3,sx+Math.round(Math.cos(a/12*6.28)*r)));
     const z=Math.max(2,Math.min(W-3,sz+Math.round(Math.sin(a/12*6.28)*r)));
     const h=hAt(x-OX,z-OZ);
     if(h<=WATER_Y+1||h>=H-7) continue;
     let ok=true;
-    for(let y=h+1;y<=h+4&&ok;y++){ const b=get(x,y,z); if(b!==AIR&&b!==WATER) ok=false; }
+    for(let y=h+1;y<=h+need&&ok;y++){ const b=get(x,y,z); if(b!==AIR&&b!==WATER) ok=false; }
     if(!ok) continue;
     // verificación final con el cuerpo real del jugador
-    if(collidesAt(x+.5,h+1.01,z+.5,.3,1.8)) continue;
+    if(collidesAt(x+.5,h+1.01,z+.5,box.r,box.h)) continue;
     return new THREE.Vector3(x+.5,h+1.01,z+.5);
   }
   return new THREE.Vector3(sx+.5,hAt(sx-OX,sz-OZ)+2,sz+.5);
@@ -1863,6 +1977,46 @@ function tickDmgNums(dt){
   }
 }
 
+/* ============ CATÁLOGO DE ASPECTOS (spec net/avatar) ============ */
+/* skins:start */
+// Fuente única de ids, etiquetas, alturas y datos de modelo de los aspectos del avatar remoto.
+// Bloque AUTOCONTENIDO y PURO (sin THREE, sin DOM, sin estado del juego): el test skins.mjs lo
+// extrae de este HTML y lo evalúa con `new Function`, igual que worldgen/net/avatar/look.
+const BASE_H = 1.97; // top real del rig humano: la cabellera va en y=1.9 con alto .14
+const SKIN_SPECS = {
+  human:  { label:'Humano',  height:BASE_H, scale:1,              colors:{ skin:0xf2c89b, pants:0x3a5a8c } },
+  fat:    { label:'Gordo',   height:1.70,   scale:1, width:1.25,  colors:{ skin:0xf2c89b, pants:0x3a5a8c } },
+  giant:  { label:'Gigante', height:5.00,   scale:5.00/BASE_H,    colors:{ skin:0xf2c89b, pants:0x3a5a8c } },
+  small:  { label:'Pequeño', height:0.90,   scale:0.90/BASE_H,    colors:{ skin:0xf2c89b, pants:0x3a5a8c } },
+  zombie: { label:'Zombi',   height:BASE_H, scale:1,              colors:{ skin:0x6a9a4a, shirt:0x2b3327, pants:0x23262b, hair:0x3d4a2f, eye:0xff2020 } },
+  robot:  { label:'Robot',   height:1.90,   scale:1,              colors:{ shell:0x9aa3ad, dark:0x596169, trim:0x2f7dff, eye:0x3ef2ff, light:0xffd447 } },
+};
+// El menú sólo ofrece aspectos de jugador: `robot` queda reservado para el bot cazador.
+const PLAYER_SKINS = ['human', 'fat', 'giant', 'small', 'zombie'];
+const DEFAULT_SKIN = 'human';
+// Un id válido del catálogo se conserva (incluido `robot`); cualquier otra cosa (ausente, vacío,
+// tipo inválido o desconocido) cae en el aspecto por defecto sin lanzar.
+function resolveSkin(skin){
+  if(typeof skin !== 'string') return DEFAULT_SKIN;
+  const id = skin.trim().toLowerCase();
+  return Object.prototype.hasOwnProperty.call(SKIN_SPECS, id) ? id : DEFAULT_SKIN;
+}
+function skinSpec(skin){ return SKIN_SPECS[resolveSkin(skin)]; }
+// Escala de jugabilidad: el mismo factor del modelo (height/BASE_H) define la altura de los ojos,
+// la caja de colisión y los alcances. `human`/`zombie` quedan en 1 (valores históricos intactos).
+function sizeFactor(skin){ return skinSpec(skin).height / BASE_H; }
+function playerBox(skin){ const f=sizeFactor(skin); return { r:0.3*f, h:1.8*f }; }
+function eyeHeight(skin){ return 1.62*sizeFactor(skin); }
+function playerTop(skin){ return skinSpec(skin).height; }
+function reachFor(base, skin){ return base*sizeFactor(skin); }
+// Alturas alrededor del avatar derivadas de la altura del aspecto (calibradas para que `human`,
+// con top 1.97, conserve exactamente 2.45 / 2.10 / 1.70 / 2.20).
+function avatarTagY(spec){ return spec.height + 0.48; }    // etiqueta con el nombre
+function avatarBarY(spec){ return spec.height + 0.13; }    // barra de vida
+function avatarGreetY(spec){ return spec.height - 0.27; }  // corazones del saludo
+function avatarDamageY(spec){ return spec.height + 0.23; } // número de daño flotante
+/* skins:end */
+
 /* ============ ASPECTO ROBOT (skin:'robot' del avatar remoto) ============ */
 /* robot:start */
 // Modelo humanoide low-poly del bot cazador (aspecto `skin:'robot'`): mismo estilo de cajas
@@ -1928,6 +2082,7 @@ function makeRobotModel(id, register){
 /* ============ AVATARES MULTIJUGADOR ============ */
 const remotes = new Map(); // id -> avatar
 const avatarTargets = [];
+let localAvatar = null; // avatar propio en 3ª persona (spec ui/camera): fuera de remotes/PvP
 function nameSprite(text, admin){
   const c=document.createElement('canvas'); c.width=256; c.height=64;
   const x=c.getContext('2d');
@@ -1939,33 +2094,68 @@ function nameSprite(text, admin){
   s.scale.set(2.4,.6,1); s.renderOrder=10;
   return s;
 }
-function makeAvatar(id, name, admin, skin){
+function makeAvatar(id, name, admin, skin, opts){
+  opts=opts||{};
   const g=new THREE.Group();
+  const pvp=opts.pvp!==false; // remotos: true por defecto; avatar local: false (no PvP)
+  const hud=opts.hud!==false; // avatar local: false (sin nombre ni barra)
   const hue=(id*137)%360;
-  const shirt=new THREE.Color(`hsl(${hue},60%,45%)`), skinTone=0xf2c89b, pants=0x3a5a8c;
-  const robot = skin==='robot'; // aspecto declarado (net/avatar): robot o humano por defecto
+  // aspecto resuelto contra el catálogo (net/avatar): ids conocidos se conservan, el resto ⇒ human
+  const sid=resolveSkin(skin), spec=SKIN_SPECS[sid];
+  const robot = sid==='robot'; // rama del bot cazador: robot o humanoide por defecto
   const mats=[];
   let armL, armR, legL, legR;
   if(robot){
     // Bloque marcado /* robot:start */…/* robot:end */ (test client-robot). Sus mallas entran
     // a avatarTargets vía `register` para conservar la superficie de golpe del PvP.
-    const r=makeRobotModel(id, m=>avatarTargets.push(m));
+    const r=makeRobotModel(id, pvp ? m=>avatarTargets.push(m) : null);
     g.add(r.g);
     for(const mm of r.mats) mats.push(mm);
     armL=r.armL; armR=r.armR; legL=r.legL; legR=r.legR;
   } else {
+    // `giant`/`small` son el rig humano dentro de un sub-grupo `body` escalado: `g` queda SIN
+    // escalar, así posición, yaw, nombre, barra y pose de muerte siguen en unidades del mundo.
+    const body = (sid==='giant'||sid==='small') ? new THREE.Group() : g;
+    const skinTone=spec.colors.skin, pants=spec.colors.pants;
+    // La ropa y el cabello del humanoide se colorean por jugador (hue del id); el zombi usa la
+    // paleta fija del catálogo (ropa oscura, pelo verde oscuro).
+    const shirt = spec.colors.shirt ?? new THREE.Color(`hsl(${hue},60%,45%)`);
+    const hair  = spec.colors.hair  ?? new THREE.Color(`hsl(${hue},60%,30%)`);
     const B=(w,h,d,c,x,y,z)=>{
       const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),
         new THREE.MeshLambertMaterial({ color:c }));
       m.position.set(x,y,z); m.castShadow=true; mats.push(m.material);
-      m.userData.avatarId=id; g.add(m); avatarTargets.push(m); return m;
+      m.userData.avatarId=id; body.add(m); if(pvp) avatarTargets.push(m); return m;
     };
-    B(.5,.7,.3,shirt,0,1.05,0);
-    B(.42,.42,.42,skinTone,0,1.65,0);
-    B(.44,.14,.44,new THREE.Color(`hsl(${hue},60%,30%)`),0,1.9,0);
-    B(.07,.08,.02,0x222222,-.1,1.66,.22); B(.07,.08,.02,0x222222,.1,1.66,.22);
-    armL=B(.16,.62,.16,skinTone,-.35,1.05,0); armR=B(.16,.62,.16,skinTone,.35,1.05,0);
-    legL=B(.2,.7,.2,pants,-.13,.35,0); legR=B(.2,.7,.2,pants,.13,.35,0);
+    if(sid==='fat'){
+      // Gordo (1.70): torso ancho con panza y extremidades rechonchas; la silueta cambia por
+      // geometría, no por escala (así el nombre y la barra quedan a la altura del catálogo).
+      B(.78,.62,.46,shirt,0,.90,0);                        // torso ancho
+      B(.6,.3,.16,shirt,0,.80,.26);                        // panza
+      B(.46,.46,.46,skinTone,0,1.42,0);                    // cabeza
+      B(.48,.14,.48,hair,0,1.63,0);                        // cabello (top 1.70)
+      B(.07,.08,.02,0x222222,-.1,1.43,.24); B(.07,.08,.02,0x222222,.1,1.43,.24);
+      armL=B(.22,.56,.22,skinTone,-.5,.94,0); armR=B(.22,.56,.22,skinTone,.5,.94,0);
+      legL=B(.24,.6,.24,pants,-.17,.30,0); legR=B(.24,.6,.24,pants,.17,.30,0);
+    } else {
+      // Rig humanoide de BASE_H (human/zombie y base de giant/small).
+      B(.5,.7,.3,shirt,0,1.05,0);
+      B(.42,.42,.42,skinTone,0,1.65,0);
+      B(.44,.14,.44,hair,0,1.9,0);
+      if(sid==='zombie'){
+        // Ojos rojos emisivos FUERA de mats: el flash de daño no los apaga (igual que el robot).
+        const eyeMat=new THREE.MeshLambertMaterial({ color:0x180c0c, emissive:spec.colors.eye });
+        const eyeL=new THREE.Mesh(new THREE.BoxGeometry(.09,.07,.03), eyeMat);
+        const eyeR=new THREE.Mesh(new THREE.BoxGeometry(.09,.07,.03), eyeMat);
+        eyeL.position.set(-.1,1.66,.22); eyeR.position.set(.1,1.66,.22);
+        body.add(eyeL,eyeR);
+      } else {
+        B(.07,.08,.02,0x222222,-.1,1.66,.22); B(.07,.08,.02,0x222222,.1,1.66,.22);
+      }
+      armL=B(.16,.62,.16,skinTone,-.35,1.05,0); armR=B(.16,.62,.16,skinTone,.35,1.05,0);
+      legL=B(.2,.7,.2,pants,-.13,.35,0); legR=B(.2,.7,.2,pants,.13,.35,0);
+    }
+    if(body!==g){ body.scale.setScalar(spec.scale); g.add(body); }
   }
   // Arma en mano del remoto (grupo 12): mismo builder que el viewmodel, colgada del brazo
   // derecho para que herede el balanceo/gesto. Arranca oculta y la muestra `held` del pm.
@@ -1976,20 +2166,25 @@ function makeAvatar(id, name, admin, skin){
   handSword.scale.setScalar(.8); handPick.scale.setScalar(.8);
   handSword.visible=false; handPick.visible=false;
   armR.add(handSword,handPick);
-  const tag=nameSprite(name+(admin?' 🛠':''), admin); tag.position.y=2.45; g.add(tag);
-  // barrita de vida sobre la cabeza
-  const barC=document.createElement('canvas'); barC.width=72; barC.height=10;
-  const barTex=new THREE.CanvasTexture(barC); barTex.colorSpace=THREE.SRGBColorSpace;
-  const bar=new THREE.Sprite(new THREE.SpriteMaterial({ map:barTex, depthTest:false, transparent:true }));
-  bar.scale.set(1.15,.16,1); bar.position.y=2.1; bar.renderOrder=10; g.add(bar);
+  const tag = hud ? nameSprite(name+(admin?' 🛠':''), admin) : null;
+  if(tag){ tag.position.y=avatarTagY(spec); g.add(tag); }
+  // barrita de vida sobre la cabeza (el avatar local no la lleva: el HUD ya muestra su vida)
+  let barC=null, barTex=null, bar=null;
+  if(hud){
+    barC=document.createElement('canvas'); barC.width=72; barC.height=10;
+    barTex=new THREE.CanvasTexture(barC); barTex.colorSpace=THREE.SRGBColorSpace;
+    bar=new THREE.Sprite(new THREE.SpriteMaterial({ map:barTex, depthTest:false, transparent:true }));
+    bar.scale.set(1.15,.16,1); bar.position.y=avatarBarY(spec); bar.renderOrder=10; g.add(bar);
+  }
   scene.add(g);
-  const a={ id, name, admin, skin: robot?'robot':'human', g, mats, armL, armR, legL, legR, hp:10, dead:false, deadK:0, barC, barTex, bar,
+  const a={ id, name, admin, skin: sid, g, mats, armL, armR, legL, legR, hp:10, dead:false, deadK:0, barC, barTex, bar,
     target:new THREE.Vector3(), yaw:0, t:Math.random()*10, flash:0,
     sword:handSword, pick:handPick, held:0, seq:0, seqSeen:0, swingK:1 };
-  drawBar(a);
+  if(hud) drawBar(a);
   return a;
 }
 function drawBar(a){
+  if(!a.barC) return;
   const x=a.barC.getContext('2d');
   const f=Math.max(0,Math.min(1,a.hp/10));
   x.clearRect(0,0,72,10);
@@ -2009,7 +2204,7 @@ function addRemote(p){
   // arma + contador de golpes (welcome.players/join): guardas para clientes viejos sin los campos
   if(Number.isInteger(p.held)) a.held=p.held;
   if(Number.isInteger(p.seq)){ a.seq=p.seq; a.seqSeen=p.seq; }
-  if(typeof p.skin==='string') a.skin=p.skin; // aspecto declarado (join/welcome.players)
+  if(typeof p.skin==='string') a.skin=resolveSkin(p.skin); // aspecto declarado (join/welcome.players)
   remotes.set(p.id,a); renderPlist();
 }
 function removeRemote(id){
@@ -2070,13 +2265,14 @@ function applyPm(a,m){
   // ítem en mano + contador de golpes del remoto (guardas: un pm viejo sin campos no rompe)
   if(Number.isInteger(m.held)) a.held=m.held;
   if(Number.isInteger(m.seq)) a.seq=m.seq;
-  if(typeof m.skin==='string') a.skin=m.skin; // aspecto en el estado periódico (guardas para pm viejo)
+  if(typeof m.skin==='string') a.skin=resolveSkin(m.skin); // aspecto en el estado periódico (guardas para pm viejo)
 }
 // Tras un pedit remoto: si el bloque nuevo dejó al jugador local dentro, lo saca fuera.
 function pushLocalOutOfBlock(x,y,z){
   if(!isSolid(get(x,y,z))) return false;
   const p=player.pos;
-  const out=outOfCell(p.x,p.y,p.z,.3,1.8,x,y,z,(nx,ny,nz)=>collides(nx,ny,nz));
+  const b=playerBox(mySkin);
+  const out=outOfCell(p.x,p.y,p.z,b.r,b.h,x,y,z,(nx,ny,nz)=>collides(nx,ny,nz));
   if(!out) return false;
   p.x=out.x; p.z=out.z;
   return true;
@@ -2087,23 +2283,28 @@ function poseDead(o,wantDead,dt){
   o.deadK+=Math.max(-dt*1.6,Math.min(dt*1.6,wantDead-o.deadK));
   o.g.rotation.x=-o.deadK*Math.PI/2;
   if(o.deadK>.5){ o.legL.rotation.x=o.legR.rotation.x=o.armL.rotation.x=o.armR.rotation.x=0; }
-  o.bar.visible=wantDead===0;
+  if(o.bar) o.bar.visible=wantDead===0;
 }
 /* net/avatar:end */
-function tickAvatar(a,dt){
+function tickAvatar(a,dt,opts){
+  opts=opts||{};
   a.t+=dt;
+  const direct=!!opts.direct; // avatar local: copia el estado del jugador en el mismo frame
   // buffer de pm: aplica en orden los maduros antes de mover (net/avatar)
-  if(PM_BUFFER&&a.pmBuf&&a.pmBuf.length)
+  if(!direct&&PM_BUFFER&&a.pmBuf&&a.pmBuf.length)
     for(const m of pmQueueDrain(a.pmBuf,performance.now(),PM_BUF_MS,PM_BUF_MAX)) applyPm(a,m);
   const d=a.target.clone().sub(a.g.position); d.y=0;
   const dist=d.length();
-  // ráfaga atrasada: snap directo; movimiento normal: lerp acotado por frame
-  if(avatarShouldSnap(dist)) a.g.position.copy(a.target);
+  // avatar local: sin lerp; remoto con ráfaga atrasada: snap; movimiento normal: lerp acotado
+  if(direct) a.g.position.copy(a.target);
+  else if(avatarShouldSnap(dist)) a.g.position.copy(a.target);
   else a.g.position.lerp(a.target, avatarLerpFactor(dt));
   // el modelo mira hacia +Z pero el yaw de cámara apunta a −Z: hay que sumar π.
-  // se interpola suavemente hacia el yaw reportado en pm (sin giros bruscos).
-  a.g.rotation.y=yawToward(a.g.rotation.y, a.yaw+Math.PI, dt, 10);
-  const sw=(dist>.05&&a.deadK<.5)?Math.sin(a.t*11)*.6:0;
+  // el remoto interpola suavemente hacia el yaw reportado; el local lo copia directo.
+  if(direct) a.g.rotation.y=a.yaw+Math.PI;
+  else a.g.rotation.y=yawToward(a.g.rotation.y, a.yaw+Math.PI, dt, 10);
+  const moving=direct ? !!opts.moving : dist>.05;
+  const sw=(moving&&a.deadK<.5)?Math.sin(a.t*11)*.6:0;
   a.legL.rotation.x=sw; a.legR.rotation.x=-sw; a.armL.rotation.x=-sw; a.armR.rotation.x=sw;
   poseDead(a, a.dead?1:0, dt); // animación de muerte compartida con los zombis
   if(a.flash>0){ a.flash-=dt;
@@ -2121,9 +2322,22 @@ function tickAvatar(a,dt){
     a.armR.rotation.x=-Math.sin(a.swingK*Math.PI)*1.4;
   }
 }
+// Avatar local: copia posición/yaw del jugador en el mismo frame (sin lerp), con el ítem de
+// la hotbar y el gesto de golpe. No recibe `pm`, no está en remotes y no entra en PvP.
+function tickLocalAvatar(dt){
+  const a=localAvatar; if(!a) return;
+  a.dead=dead;
+  a.held=hotbarIds[sel];
+  a.seq=swingSeq;
+  a.target.copy(player.pos);
+  a.yaw=player.yaw;
+  const moving=state==='play'&&!dead&&Math.hypot(player.vel.x,player.vel.z)>.5;
+  tickAvatar(a,dt,{direct:true,moving});
+  a.g.visible = camMode!=='first' && !dead;
+}
 const raycaster=new THREE.Raycaster();
 function avatarHit(){
-  raycaster.set(camera.position,lookDir()); raycaster.far=4.6;
+  raycaster.set(eyePos(),lookDir()); raycaster.far=reachFor(4.6,mySkin);
   const hits=raycaster.intersectObjects(avatarTargets,false);
   if(!hits.length) return null;
   const a=remotes.get(hits[0].object.userData.avatarId);
@@ -2226,14 +2440,14 @@ function tickZombie(z,dt){
   poseDead(z, z.dead?1:0, dt);
 }
 function zombieHit(){
-  raycaster.set(camera.position,lookDir()); raycaster.far=4.6;
+  raycaster.set(eyePos(),lookDir()); raycaster.far=reachFor(4.6,mySkin);
   const hits=raycaster.intersectObjects(zombieTargets,false);
   if(!hits.length) return null;
   const z=zombies.get(hits[0].object.userData.zombieId);
   return z?{ z, dist:hits[0].distance }:null;
 }
 function animalHit(){
-  raycaster.set(camera.position,lookDir()); raycaster.far=6;
+  raycaster.set(eyePos(),lookDir()); raycaster.far=reachFor(6,mySkin);
   const hits=raycaster.intersectObjects(petTargets,true);
   return hits.length?{ a:hits[0].object.userData.animal, dist:hits[0].distance }:null;
 }
@@ -2289,8 +2503,12 @@ function entSolapa(px,py,pz,hw,h,x,y,z,M){
 }
 function ocupadoPor(x,y,z){
   const p=player.pos;
-  if(entSolapa(p.x,p.y,p.z,.3,1.8,x,y,z,0)) return true;
-  for(const a of remotes.values()){ const q=a.g.position; if(entSolapa(q.x,q.y,q.z,.3,1.8,x,y,z,.1)) return true; }
+  const lb=playerBox(mySkin);
+  if(entSolapa(p.x,p.y,p.z,lb.r,lb.h,x,y,z,0)) return true;
+  for(const a of remotes.values()){
+    const q=a.g.position, rb=playerBox(a.skin);
+    if(entSolapa(q.x,q.y,q.z,rb.r,rb.h,x,y,z,.1)) return true;
+  }
   for(const a of animals){ const q=a.g.position; if(entSolapa(q.x,q.y,q.z,.32,1.2,x,y,z,0)) return true; }
   return false;
 }
@@ -2394,7 +2612,7 @@ function onLeftDown(){
   // en modo jugador la rotura progresiva la maneja el loop (mantener presionado)
 }
 function greetRemote(a){
-  burst(a.g.position.x-.5, a.g.position.y+1.7, a.g.position.z-.5, 0xff6b9d, 14, true);
+  burst(a.g.position.x-.5, a.g.position.y+avatarGreetY(skinSpec(a.skin)), a.g.position.z-.5, 0xff6b9d, 14, true);
   tone(600,920,.12,'sine',.15);
   toast(`💕 A ${a.name} le gusta que lo toquen ahí`);
 }
@@ -2636,7 +2854,7 @@ function connectMP(wantedMode){
     try{ ws=new WebSocket(`${wsp}://${location.host}`); }catch(e){ resolve({ solo:true }); return; }
     const to=setTimeout(()=>{ try{ws.close();}catch(e){} resolve({ solo:true }); },3500);
     ws.onopen=()=>{
-      ws.send(JSON.stringify({ t:'hello', name:myName, mode:wantedMode,
+      ws.send(JSON.stringify({ t:'hello', name:myName, mode:wantedMode, skin:mySkin,
         key:document.getElementById('keyInput').value }));
     };
     ws.onmessage=(ev)=>{
@@ -2680,7 +2898,7 @@ function setupNetHandlers(){
         if(now2-(window._shieldT||0)>2.5){ window._shieldT=now2; toast(`🛡️ Inmune (${m.from} te pegó)`); }
       } else if(!dead){
         damage(m.dmg,m.from);
-        spawnDmgNum(player.pos.x,player.pos.y+2.3,player.pos.z,'-'+m.dmg,'#ff5544');
+        spawnDmgNum(player.pos.x,player.pos.y+playerTop(mySkin)+.33,player.pos.z,'-'+m.dmg,'#ff5544');
         player.vel.x+=m.dx*6; player.vel.z+=m.dz*6; player.vel.y=Math.max(player.vel.y,3.5);
       }
     }
@@ -2690,7 +2908,7 @@ function setupNetHandlers(){
       const hm=document.getElementById('hitm'); hm.style.display='block';
       clearTimeout(hm._t); hm._t=setTimeout(()=>hm.style.display='none',160);
       tone(1250,900,.07,'square',.13);
-      if(a) spawnDmgNum(a.g.position.x,a.g.position.y+2.2,a.g.position.z,'-'+m.dmg,'#ffb14f');
+      if(a) spawnDmgNum(a.g.position.x,a.g.position.y+avatarDamageY(skinSpec(a.skin)),a.g.position.z,'-'+m.dmg,'#ffb14f');
     }
     else if(m.t==='zs'){ applyZsList(m.z); }
     else if(m.t==='zhitok'){
@@ -2750,8 +2968,8 @@ function applyModeUI(){
   fly.classList.toggle('off',!isAdmin());
   renderHealth();
   document.getElementById('hint').innerHTML = isAdmin()
-    ? '<b>W A S D</b> moverse · <b>Espacio</b> saltar<br><b>Click izq</b> romper · <b>Click der</b> poner<br><b>E</b> inventario · <b>F</b> volar · <b>Enter</b> chat · <b>P</b> pantalla'
-    : '<b>W A S D</b> moverse · <b>Espacio</b> saltar<br><b>Mantené click izq</b> para picar ⛏ (con el <b>pico</b> en mano, al toque)<br><b>E</b> inventario · <b>Enter</b> chat · <b>P</b> pantalla · ¡cuidado al caer!';
+    ? '<b>W A S D</b> moverse · <b>Espacio</b> saltar<br><b>Click izq</b> romper · <b>Click der</b> poner<br><b>E</b> inventario · <b>F</b> volar · <b>Enter</b> chat · <b>P</b> pantalla · <b>V</b> cámara'
+    : '<b>W A S D</b> moverse · <b>Espacio</b> saltar<br><b>Mantené click izq</b> para picar ⛏ (con el <b>pico</b> en mano, al toque)<br><b>E</b> inventario · <b>Enter</b> chat · <b>P</b> pantalla · <b>V</b> cámara · ¡cuidado al caer!';
 }
 function toggleFly(){
   if(!isAdmin()) return;
@@ -2761,6 +2979,7 @@ function toggleFly(){
   toast(player.fly?'🕊 Volar: Espacio subir · Shift bajar':'🚶 Modo caminar');
 }
 document.getElementById('btnFly').onclick=e=>{e.stopPropagation();toggleFly();};
+document.getElementById('btnCam').onclick=e=>{e.stopPropagation();toggleCam();};
 document.getElementById('btnSound').onclick=e=>{e.stopPropagation();
   soundOn=!soundOn; e.target.textContent=soundOn?'🔊':'🔇';};
 document.getElementById('btnShadow').onclick=e=>{e.stopPropagation();
@@ -2811,6 +3030,18 @@ function load(){
 }
 
 /* ============ INICIO ============ */
+// Aspecto elegido (spec ui/skins): el selector del menú persiste en `mc-skin` y el boot restaura
+// la elección guardada descartando lo que no sea una opción de jugador (p. ej. `robot` a mano).
+document.querySelectorAll('#skinPicker .skinBtn').forEach(b=>{
+  b.onclick=e=>{ e.stopPropagation(); setSkin(b.dataset.skin, true); };
+});
+let savedSkin=null;
+try{ savedSkin=localStorage.getItem('mc-skin'); }catch(e){}
+setSkin(PLAYER_SKINS.includes(savedSkin)?savedSkin:DEFAULT_SKIN, false);
+// Cámara (spec ui/camera): arranca en 1ª salvo que `mc-cam` guarde 'third' o 'front'.
+let savedCam=null;
+try{ savedCam=localStorage.getItem('mc-cam'); }catch(e){}
+setCamMode(camModeOf(savedCam), false);
 await new Promise(r=>setTimeout(r,40));
 document.getElementById('loading').style.display='none';
 document.getElementById('btnPlayer').style.display='block';
@@ -2852,6 +3083,11 @@ async function startGame(wantedMode){
     if(location.protocol.indexOf('http')===0) toast('🔌 Sin servidor: modo solitario');
   }
   player.pos.copy(findSpawn()); airPeak=player.pos.y;
+  // Avatar local (spec ui/camera): mismo modelo que ven los demás, sin PvP ni nombre/barra.
+  if(localAvatar) scene.remove(localAvatar.g);
+  localAvatar=makeAvatar(9999, myName, isAdmin(), mySkin, {pvp:false,hud:false});
+  localAvatar.g.position.copy(player.pos); localAvatar.target.copy(player.pos);
+  localAvatar.seqSeen=swingSeq; localAvatar.g.visible=false;
   spawnAnimals(mulberry(SEED^0x9e37));
   renderHotbar(); renderInv(); applyModeUI();
   document.querySelectorAll('.slot').forEach((s,j)=>s.classList.toggle('sel',j===sel));
@@ -2887,7 +3123,8 @@ let last=performance.now();
 const waterEl=document.getElementById('water');
 let under=false;
 function tickWater(){
-  const uw=get(Math.floor(camera.position.x),Math.floor(camera.position.y),Math.floor(camera.position.z))===WATER;
+  const e=eyePos();
+  const uw=get(Math.floor(e.x),Math.floor(e.y),Math.floor(e.z))===WATER;
   if(uw===under) return;
   under=uw;
   waterEl.style.opacity=under?1:0;
@@ -2902,14 +3139,15 @@ function loop(now){
   if(started&&dead&&deathPos){
     // te caés al suelo: la vista baja y se ladea, y recién después aparece el cartel
     deathT+=dt;
-    const k=Math.min(1,deathT/1.1), e=1-Math.pow(1-k,3);
-    camera.position.set(deathPos.x, deathPos.y+1.62-(1.62-.32)*e, deathPos.z);
+    const k=Math.min(1,deathT/1.1), e=1-Math.pow(1-k,3), f=sizeFactor(mySkin);
+    camera.position.set(deathPos.x, deathPos.y+eyeHeight(mySkin)-(eyeHeight(mySkin)-.32*f)*e, deathPos.z);
     camera.rotation.set(0,0,0); camera.rotateY(player.yaw); camera.rotateX(player.pitch); camera.rotateZ(e*.55);
     if(k>=1&&!deathShown){ deathShown=true; document.getElementById('death').classList.remove('hidden'); }
   }
   for(const c of clouds){ c.position.x+=c.userData.v*dt; if(c.position.x>W+30)c.position.x=-30; }
   for(const a of animals) tickAnimal(a,dt);
   for(const a of remotes.values()) tickAvatar(a,dt);
+  tickLocalAvatar(dt);
   for(const z of zombies.values()) tickZombie(z,dt);
   if(started&&state==='play'&&canAct()&&!dead){
     const h=raycast(), cross=document.getElementById('cross');

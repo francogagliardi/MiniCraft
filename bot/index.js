@@ -23,17 +23,21 @@ catch (e) { WebSocket = require(path.join(__dirname, '..', 'server', 'node_modul
 
 const DEFAULT_URL = 'ws://minicraft:3000'; // nombre interno del servicio en compose/Easypanel
 const DEFAULT_NAME = 'OPSX-bot';
-const SKIN = 'robot'; // aspecto declarado (net/avatar): el resto lo ve como robot
+const DEFAULT_SKIN = 'robot'; // aspecto por defecto (net/avatar): el resto lo ve como robot
 
 /**
  * Crea el cliente del bot (sin conectar todavía). Config inyectable para tests:
- *   url, name, htmlPath, WebSocket, now, rng, log, mvMs,
+ *   url, name, skin, htmlPath, WebSocket, now, rng, log, mvMs,
  *   backoffBaseMs/backoffCapMs/backoffFactor, worldBuilder(html,seed,edits),
  *   onOutgoing(frame)  — espía de todo frame saliente (registra y/o reenvía).
  */
 function createBotClient(cfg = {}) {
   const url = cfg.url || process.env.SERVER_URL || DEFAULT_URL;
   const name = cfg.name || process.env.BOT_NAME || DEFAULT_NAME;
+  // Aspecto declarado en el `hello` (spec bots/hunter): `cfg.skin` para tests, `BOT_SKIN` para el
+  // deploy y `robot` por defecto. Sin whitelist propia: un valor desconocido lo dibuja el cliente
+  // como humano (el server sólo lo sanea y lo difunde).
+  const skin = cfg.skin || process.env.BOT_SKIN || DEFAULT_SKIN;
   const htmlPath = cfg.htmlPath || path.join(__dirname, '..', 'index.html');
   const WS = cfg.WebSocket || WebSocket;
   const now = cfg.now || Date.now;
@@ -119,7 +123,7 @@ function createBotClient(cfg = {}) {
     ws.on('open', () => {
       backoffMs = bBase; // conexión sana: resetea el backoff
       log('conectado a ' + url);
-      send({ t: 'hello', name, mode: 'player', skin: SKIN });
+      send({ t: 'hello', name, mode: 'player', skin });
     });
     ws.on('message', (raw) => {
       let m; try { m = JSON.parse(raw.toString()); } catch (e) { return; }

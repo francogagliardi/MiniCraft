@@ -29,6 +29,7 @@ services:
     environment:
       SERVER_URL: ws://minicraft:3000   # nombre interno del servicio del server
       BOT_NAME: OPSX-bot
+      BOT_SKIN: ${BOT_SKIN:-robot}      # aspecto del bot (default robot; p. ej. BOT_SKIN=giant)
     depends_on: [minicraft]
     restart: unless-stopped
 

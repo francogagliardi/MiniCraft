@@ -116,10 +116,10 @@ ok(!/avatarTargets\.(push|splice)|scene\./.test(code) && /register/.test(code),
 // 3. cableado en el cliente
 {
   const ma = grabFn('makeAvatar');
-  ok(/function\s+makeAvatar\(\s*id\s*,\s*name\s*,\s*admin\s*,\s*skin\s*\)/.test(html),
-    'makeAvatar recibe el aspecto como 4º parámetro');
+  ok(/function\s+makeAvatar\(\s*id\s*,\s*name\s*,\s*admin\s*,\s*skin\s*,\s*opts\s*\)/.test(html),
+    'makeAvatar recibe el aspecto como 4º parámetro y opts como 5º (remotos intactos)');
   ok(/makeRobotModel\s*\(/.test(ma), 'makeAvatar usa makeRobotModel');
-  ok(/skin\s*===\s*'robot'/.test(ma), "makeAvatar elige la rama robot con skin==='robot'");
+  ok(/sid\s*===\s*'robot'/.test(ma), "makeAvatar elige la rama robot con el id resuelto (sid==='robot')");
   ok(/makeRobotModel\([^)]*avatarTargets\.push/.test(ma), 'las mallas del robot entran a avatarTargets vía register');
 
   const ar = grabFn('addRemote');

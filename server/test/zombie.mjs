@@ -294,6 +294,30 @@ const P = (id, x, y, z, dead = 0) => ({ id, pos: [x, y, z], dead });
   ok(h.hit(1, 5, 3000, pos) === null, 'hit a un zombi ya muerto → null (no cambia nada)');
 }
 
+// ============================ 4.9b alcance por aspecto ============================
+{
+  // A 8 bloques exactos: el gigante (4.6 × 2.538 ≈ 11.675) llega y el humano (4.6) no.
+  const hg = mkHorde(); const zg = addZ(hg, { i: 21 });
+  const rg = hg.hit(31, 21, 1000, [58.5, 13, 50.5], 'giant');
+  ok(rg && rg.hp === 4, `giant a 8 bloques: el golpe entra (${rg && rg.hp})`);
+
+  const hh = mkHorde(); const zh = addZ(hh, { i: 22 });
+  ok(hh.hit(32, 22, 1000, [58.5, 13, 50.5], 'human') === null && zh.hp === 6,
+    'human a 8 bloques: el servidor rechaza el golpe sin daño');
+
+  const hs = mkHorde(); const zs = addZ(hs, { i: 23 });
+  ok(hs.hit(33, 23, 1000, [58.5, 13, 50.5], 'small') === null && zs.hp === 6,
+    'small a 8 bloques: también queda fuera de su alcance ≈ 2.102');
+
+  // Sin quinto parámetro se conserva human: acepta a 4.0 y rechaza a 5.0.
+  const hd = mkHorde(); addZ(hd, { i: 24 });
+  ok(hd.hit(34, 24, 1000, [54.5, 13, 50.5]) !== null,
+    'hit sin skin ⇒ human: a 4.0 bloques entra');
+  const hf = mkHorde(); const zf = addZ(hf, { i: 25 });
+  ok(hf.hit(35, 25, 1000, [55.5, 13, 50.5]) === null && zf.hp === 6,
+    'hit sin skin ⇒ human: a 5.0 bloques se rechaza');
+}
+
 // ============================ 4.10–4.12 muerte y despawn ============================
 {
   // muerte por golpe: sigue en zs con dead:1 durante la ventana y luego desaparece

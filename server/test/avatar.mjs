@@ -139,7 +139,7 @@ T('triangulación', () => {
 
 // 6. cableado real: los handlers usan los helpers (evita código muerto)
 {
-  const tick = html.slice(html.indexOf('function tickAvatar'), html.indexOf('function tickAvatar') + 900);
+  const tick = html.slice(html.indexOf('function tickAvatar'), html.indexOf('function tickAvatar') + 1400);
   ok(/avatarShouldSnap\s*\(/.test(tick) && /avatarLerpFactor\s*\(/.test(tick),
     'tickAvatar usa avatarShouldSnap + avatarLerpFactor');
   ok(/yawToward\s*\(/.test(tick), 'tickAvatar interpola yaw con yawToward');

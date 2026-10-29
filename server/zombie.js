@@ -1,4 +1,7 @@
 'use strict';
+// Escala de los aspectos compartida con el cliente: el alcance del golpe depende del skin.
+const { swordReach } = require('./skins.js');
+
 // Módulo puro de la horda zombi (ver openspec/changes/zombi/design.md, decisión 7).
 // No toca WebSocket ni Date.now(): recibe world/predicados/rng/now y devuelve
 // intenciones ({zs, events}) para que server.js las cablee a los clientes. Así la IA
@@ -199,13 +202,15 @@ function createHorde(env) {
 
   // Golpe del jugador a la criatura: el server valida y aplica SU daño (SWORD_DMG).
   // Devuelve { ok, hp, dead, z } si se aplicó, o null si se rechaza (no existe, muerto,
-  // fuera de alcance o dentro del cooldown por jugador).
-  function hit(playerId, zombieId, now, playerPos) {
+  // fuera de alcance o dentro del cooldown por jugador). El alcance base 4.6 se escala por
+  // el aspecto (sin quinto parámetro ⇒ human 4.6).
+  function hit(playerId, zombieId, now, playerPos, skin) {
     const z = zombies.find(q => q.i === zombieId && !q.dead);
     if (!z) return null;
     if (playerPos) {
       const dx = playerPos[0] - z.x, dz = playerPos[2] - z.z;
-      if (Math.hypot(dx, dz) > SWORD_REACH) return null;
+      const reach = swordReach(skin);
+      if (Math.hypot(dx, dz) > reach) return null;
     }
     const last = hitCd.get(playerId);
     if (last !== undefined && now - last < HIT_CD_MS) return null;
