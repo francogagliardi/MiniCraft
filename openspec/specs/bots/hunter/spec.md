@@ -7,7 +7,7 @@ Define el contrato observable del bot cazador de Minicraft: como un cliente exte
 
 ### Requirement: Aspecto de robot humanoide
 
-El bot SHALL presentarse ante el resto de los jugadores con el aspecto de un robot humanoide declarando `skin: 'robot'` en su `hello`, de modo que los demás clientes lo rendericen como robot en vez del avatar humano por defecto.
+El bot SHALL presentarse ante el resto de los jugadores declarando su aspecto en el `hello`, con `robot` como aspecto por defecto, de modo que los demás clientes lo rendericen con ese modelo en vez del avatar humano. Cuando el aspecto configurado sea `robot`, el modelo SHALL ser el robot humanoide existente.
 
 #### Scenario: Los demás lo ven como robot
 
@@ -220,3 +220,27 @@ El bot SHALL prefijar su log de consola de **cada golpe** con la hora local de A
 
 - **WHEN** el proceso del bot corre con el reloj del sistema en una zona distinta a la de Argentina (por ejemplo UTC) en un instante conocido
 - **THEN** el prefijo `[HH:MM]` refleja la hora de Argentina de ese instante y no la de la zona del contenedor
+
+### Requirement: Aspecto del bot configurable por `BOT_SKIN`
+
+El bot SHALL tomar su aspecto de la variable de entorno `BOT_SKIN`, con `robot` como valor por defecto cuando la variable falte o esté vacía, y SHALL NOT restringir los valores a una whitelist propia: cualquier valor saneable se envía tal cual y el cliente decide cómo dibujarlo.
+
+#### Scenario: Default robot sin variable
+
+- **WHEN** el bot arranca sin `BOT_SKIN`
+- **THEN** se presenta con `skin: 'robot'` en su `hello`
+
+#### Scenario: La variable elige otro aspecto
+
+- **WHEN** el bot arranca con `BOT_SKIN=giant`
+- **THEN** se presenta con `skin: 'giant'` en su `hello` y los demás lo dibujan como gigante
+
+#### Scenario: Un valor desconocido no rompe el bot
+
+- **WHEN** el bot arranca con un `BOT_SKIN` que el cliente no conoce
+- **THEN** el bot se conecta y juega con normalidad, y el cliente lo dibuja con el aspecto humano por defecto
+
+#### Scenario: El aspecto se reenvía al reconectar
+
+- **WHEN** el bot pierde la conexión y se reconecta
+- **THEN** el nuevo `hello` vuelve a llevar el mismo aspecto configurado
