@@ -1,10 +1,11 @@
 // Tests del menú de configuración (change menu-configuracion, spec ui/config):
 // verifica el botón ⚙️ Configuración en #pause, el panel oculto por defecto,
 // las constantes MOUSE_SENSITIVITY/BRIGHTNESS/QUALITY_LEVEL, applyQuality(),
-// el pointermove con MOUSE_SENSITIVITY, applyAtmosphere con BRIGHTNESS, la
-// persistencia localStorage (mc-mouse-sens, mc-brightness, mc-quality), que
-// npm test da de alta 21 archivos y las regresiones del reporte en navegador
-// (panel oculto, sensibilidad del mouse, brillo sin lavado blanco).
+// el pointermove táctil y el drenaje por frame del mouse con MOUSE_SENSITIVITY,
+// applyAtmosphere con BRIGHTNESS, la persistencia localStorage
+// (mc-mouse-sens, mc-brightness, mc-quality), que npm test da de alta 21 archivos
+// y las regresiones del reporte en navegador (panel oculto, sensibilidad del mouse,
+// brillo sin lavado blanco).
 // Uso: node test/config.mjs   (sale con código != 0 si algo falla)
 import fs from 'fs';
 import path from 'path';
@@ -127,8 +128,11 @@ const grabFn = (name) => {
      /pauseMain'\)\.classList\.remove\('hidden'\)/.test(backClick),
     'btnConfigBack oculta #configPanel y vuelve a #pauseMain');
   const mouseMove = (html.match(/addEventListener\('mousemove',e=>\{[\s\S]*?\n\}\);/) || [''])[0];
-  ok(/player\.yaw-=mx\*MOUSE_SENSITIVITY/.test(mouseMove) && !/\.0024/.test(mouseMove),
-    'mousemove usa MOUSE_SENSITIVITY (el slider de sensibilidad afecta al mouse)');
+  ok(mouseMove.length > 0, 'se puede extraer el handler mousemove');
+  ok(/lookQueue\(/.test(mouseMove) && !/player\.yaw/.test(mouseMove) && !/\.0024/.test(mouseMove),
+    'mousemove encola el delta (lookQueue) sin escribir player.yaw: lo aplica el drenaje');
+  ok(/drainLook\(\s*player\s*,\s*MOUSE_SENSITIVITY/.test(html),
+    'el drenaje por frame usa MOUSE_SENSITIVITY (el slider de sensibilidad afecta al mouse)');
   const qGet = html.indexOf("getItem('mc-quality')");
   ok(qGet >= 0 && /applyQuality\(QUALITY_LEVEL\)/.test(html.slice(qGet, qGet + 600)),
     'el boot aplica la calidad guardada (applyQuality tras restaurar mc-quality)');

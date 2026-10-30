@@ -2793,24 +2793,32 @@ function tickBreak(dt){
   if(breakProg>=t) doBreak(h);
 }
 /* look:start */
-// Saneo del delta de mirada (spec player/look). Bloque autocontenido y puro: el test
-// lookguard.mjs lo EXTRAE de este HTML y lo evalúa (mismo patrón que net/avatar y worldgen).
+// Saneo y acotado del delta de mirada (spec player/look). Bloque autocontenido y puro:
+// el test lookguard.mjs lo EXTRAE de este HTML y lo evalúa (mismo patrón que net/avatar
+// y worldgen). NO puede referenciar player/document/THREE/MOUSE_SENSITIVITY: el objetivo
+// y la sensibilidad entran por parámetro.
 const LOOK_MAX_PX = 1000;    // px por evento; >= esto se considera espurio
 const LOOK_WARN_MAX = 3;     // máximo de descartes que se detallan en consola
+const LOOK_MAX_RAD_PER_FRAME = 0.30; // tope de giro por frame (≈17°), independiente de la sensibilidad
+const LOOK_BIG_PX = 150;     // px en cualquier eje: delta grande ACEPTADO (diagnóstico)
+const LOOK_LOCK_SKIP_EVENTS = 2; // eventos a ignorar tras (re)adquirir el pointer lock
 let lookSpikes = 0;          // contador acumulado de descartes (diagnóstico)
 let lookSpikesWarned = 0;
-let lookLockPending = false; // true = queda un evento posterior al lock por ignorar
+let lookBig = 0;             // contador acumulado de deltas grandes aceptados (diagnóstico)
+let lookBigWarned = 0;
+let lookLockPending = 0;     // eventos posteriores al lock que todavía hay que ignorar
+let lookBufX = 0, lookBufY = 0; // píxeles pendientes de aplicar (los drena el loop)
 // true = el delta (dx,dy) es plausible; false = descartar el evento entero.
 // El borde es exclusivo: |dx| === LOOK_MAX_PX ya se descarta.
 function lookDeltaOk(dx,dy){
   return Number.isFinite(dx) && Number.isFinite(dy) &&
          Math.abs(dx) < LOOK_MAX_PX && Math.abs(dy) < LOOK_MAX_PX;
 }
-// true = hay que ignorar ESTE evento (es el primero tras (re)adquirir el lock);
-// consume la marca, así que el evento siguiente ya se procesa normalmente.
+// true = hay que ignorar ESTE evento (los LOOK_LOCK_SKIP_EVENTS posteriores al lock);
+// consume el contador, así que el evento siguiente a la ventana ya se procesa normalmente.
 function lookLockSkip(){
-  if(!lookLockPending) return false;
-  lookLockPending=false;
+  if(lookLockPending <= 0) return false;
+  lookLockPending--;
   return true;
 }
 // Registra un descarte: SIEMPRE cuenta; los primeros LOOK_WARN_MAX los detalla en consola.
@@ -2821,14 +2829,57 @@ function noteLookSpike(dx,dy,src){
     console.warn(`[look] delta de mirada descartado #${lookSpikes} (${src}): dx=${dx} dy=${dy}`);
   }
 }
+// Registra un delta grande ACEPTADO (no descartado): cuenta siempre, avisa los primeros.
+function noteLookBig(dx,dy){
+  lookBig++;
+  if(lookBigWarned < LOOK_WARN_MAX){
+    lookBigWarned++;
+    console.warn(`[look] delta de mirada grande #${lookBig}: dx=${dx} dy=${dy}`);
+  }
+}
+// Encola píxeles de mirada; el giro se aplica en el loop, una vez por frame.
+function lookQueue(dx,dy){ lookBufX+=dx; lookBufY+=dy; }
+// Descarta el giro pendiente (al perder el lock no debe aplicarse detrás de un menú).
+function lookReset(){ lookBufX=0; lookBufY=0; }
+// Pura: recorta el paso para que NINGÚN eje supere maxRad, conservando la dirección del
+// gesto con una escala Chebyshev (el MISMO factor en ambos ejes). usedX/usedY son los
+// píxeles efectivamente consumidos (|yaw|/sens, |pitch|/sens) para descontarlos del buffer.
+function clampLookStep(dxPx,dyPx,sens,maxRad){
+  const s = Number.isFinite(sens) ? sens : 0;
+  const top = (Number.isFinite(maxRad) && maxRad > 0) ? maxRad : LOOK_MAX_RAD_PER_FRAME;
+  let usedX = dxPx, usedY = dyPx;
+  let yaw = -dxPx*s, pitch = -dyPx*s;
+  const m = Math.max(Math.abs(yaw), Math.abs(pitch));
+  if(m > top){
+    const k = top / m;
+    usedX = dxPx*k; usedY = dyPx*k;
+    yaw = -usedX*s; pitch = -usedY*s;
+    // el redondeo de coma flotante no puede dejar un eje por encima del tope
+    if(Math.abs(yaw) > top) yaw = Math.sign(yaw)*top;
+    if(Math.abs(pitch) > top) pitch = Math.sign(pitch)*top;
+  }
+  return { yaw, pitch, usedX, usedY };
+}
+// Consume el buffer en un frame: aplica como máximo maxRad a la mirada del objetivo y deja
+// el excedente pendiente para los frames siguientes. El pitch se clampa a ±1.55.
+function drainLook(target,sens,maxRad){
+  if(lookBufX === 0 && lookBufY === 0) return { yaw:0, pitch:0, usedX:0, usedY:0 };
+  const step = clampLookStep(lookBufX, lookBufY, sens, maxRad);
+  lookBufX -= step.usedX; lookBufY -= step.usedY;
+  if(Math.abs(lookBufX) < 1e-9) lookBufX = 0; // resto de coma flotante
+  if(Math.abs(lookBufY) < 1e-9) lookBufY = 0;
+  target.yaw += step.yaw;
+  target.pitch = Math.max(-1.55, Math.min(1.55, target.pitch + step.pitch));
+  return step;
+}
 /* look:end */
 addEventListener('mousemove',e=>{
   if(state!=='play'||!locked()||dead) return;
-  if(lookLockSkip()) return; // 1er evento tras el lock: delta espurio
+  if(lookLockSkip()) return; // primeros eventos tras el lock: delta espurio
   const mx=e.movementX, my=e.movementY;
   if(!lookDeltaOk(mx,my)){ noteLookSpike(mx,my,'mouse'); return; } // descartar el evento entero
-  player.yaw-=mx*MOUSE_SENSITIVITY;
-  player.pitch=Math.max(-1.55,Math.min(1.55,player.pitch-my*MOUSE_SENSITIVITY));
+  if(Math.abs(mx)>=LOOK_BIG_PX||Math.abs(my)>=LOOK_BIG_PX) noteLookBig(mx,my); // evidencia en consola
+  lookQueue(mx,my); // el giro lo aplica el loop con el tope por frame
 });
 // Touch: arrastrar = mirar, toque rápido = atacar/picar (click izq), mantener = picar
 let lookTouchId = null, tapT0 = 0, tapX = 0, tapY = 0, lookLX = 0, lookLY = 0, tapMoved = false, holdTimer = null;
@@ -3079,18 +3130,25 @@ const menu=document.getElementById('menu'), pause=document.getElementById('pause
 const locked=()=>document.pointerLockElement===document.body;
 function tryLock(){
   if (TOUCH) return;
-  try{ const r=document.body.requestPointerLock(); if(r&&r.catch)r.catch(()=>{}); }catch(e){}
+  // Fallback clásico: un solo reintento si el navegador no acepta el pedido sin procesar.
+  const plain=()=>{ try{ const r=document.body.requestPointerLock(); if(r&&r.catch)r.catch(()=>{}); }catch(e){} };
+  // Pedir movimiento SIN la aceleración del sistema operativo (deltas más predecibles).
+  try{
+    const r=document.body.requestPointerLock({unadjustedMovement:true});
+    if(r&&r.catch) r.catch(plain); // promesa rechazada ⇒ reintento clásico (sin cascada)
+  }catch(e){ plain(); }           // navegador que no acepta el objeto ⇒ reintento clásico
 }
 canvas.addEventListener('click',()=>{ if(started&&state==='play'&&!locked()&&!dead) tryLock(); });
 document.addEventListener('pointerlockchange',()=>{
-  mouseDown={0:false,2:false}; rAction='place'; resetBreak();
-  if(locked()){ lookLockPending=true; menu.classList.add('hidden'); pause.classList.add('hidden');
+  mouseDown={0:false,2:false}; rAction='place'; resetBreak(); lookReset();
+  if(locked()){ lookLockPending=LOOK_LOCK_SKIP_EVENTS; menu.classList.add('hidden'); pause.classList.add('hidden');
     if(state==='pause') state='play';
     if(state==='play'){ invEl.classList.add('hidden'); document.getElementById('chatbox').style.display='none'; } }
-  else if(started){
-    if(state==='inv'||state==='chat') pause.classList.add('hidden');
-    else if(!dead){ state='pause'; pause.classList.remove('hidden'); }
-  }
+  else { lookLockPending=0; // sin lock no hay ventana de skip
+    if(started){
+      if(state==='inv'||state==='chat') pause.classList.add('hidden');
+      else if(!dead){ state='pause'; pause.classList.remove('hidden'); }
+    } }
 });
 document.getElementById('btnResume').onclick=tryLock;
 document.getElementById('btnConfig').onclick=e=>{
@@ -3310,6 +3368,9 @@ function tickCactus(){
 function loop(now){
   requestAnimationFrame(loop);
   const dt=Math.min((now-last)/1000,.05); last=now;
+  // El giro pendiente se drena ANTES de armar la cámara (physicsGravity): sin frame de atraso
+  // y con el tope por frame. Al salir de play el lock se pierde y el buffer se limpia.
+  if(started&&state==='play'&&!dead&&!TOUCH) drainLook(player,MOUSE_SENSITIVITY,LOOK_MAX_RAD_PER_FRAME);
   if(started&&state==='play'&&canAct()&&!dead){ physicsMove(dt,true); tickBreak(dt); }
   if(started&&!dead&&(state==='play'||state==='inv'||state==='chat'||state==='pause')) physicsGravity(dt);
   if(started&&dead&&deathPos){

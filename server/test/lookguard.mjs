@@ -1,13 +1,16 @@
-// Tests del guard de mirada (change camara-giro-repentino, spec player/look):
-// un evento de mouse/táctil con un delta desproporcionado (pico de pointer lock,
-// mouse al despertar, salto de pointer capture) o no finito NO debe girar la
-// cámara. El bug es un evento de browser (no reproducible headless), así que —
-// igual que worldgen.mjs/avatar.mjs — este test EXTRAE el bloque marcado
+// Tests del guard de mirada (changes camara-giro-repentino y mirada-sin-saltos,
+// spec player/look): un evento de mouse/táctil con un delta desproporcionado
+// (pico de pointer lock, mouse al despertar, salto de pointer capture) o no
+// finito NO debe girar la cámara, y un delta grande ACEPTADO no puede girarla de
+// golpe: se encola y se drena con un tope de rotación por frame.
+// El bug es un evento de browser (no reproducible headless), así que — igual que
+// worldgen.mjs/avatar.mjs — este test EXTRAE el bloque marcado
 // /* look:start */ ... /* look:end */ de index.html y lo evalúa aislado, de modo
 // que asierta el comportamiento REAL de la función que corre el navegador.
-// Cubre: extractabilidad, API, umbral/borde por eje, valores no finitos, la
-// marca del primer evento tras el pointer lock, el diagnóstico en consola, la
-// autocontención del bloque y el orden estructural guard→aplicar en los handlers.
+// Cubre: extractabilidad, API, umbral/borde por eje, valores no finitos, el tope
+// de giro por frame (clampLookStep), el buffer con su drenaje y reset, la ventana
+// de re-lock, el diagnóstico en consola (descartes y deltas grandes), la
+// autocontención del bloque y el orden estructural guard→encolar→drenar.
 // Uso: node test/lookguard.mjs   (sale con código != 0 si algo falla)
 import fs from 'fs';
 import path from 'path';
@@ -31,7 +34,7 @@ const code = present ? html.slice(i, j) : '';
 let API = null;
 if (present) {
   try {
-    API = new Function(code + '\n;return {LOOK_MAX_PX,LOOK_WARN_MAX,lookDeltaOk,lookLockSkip,noteLookSpike,spikes:()=>lookSpikes,warned:()=>lookSpikesWarned,setLockPending:v=>{lookLockPending=v}};')();
+    API = new Function(code + '\n;return {LOOK_MAX_PX,LOOK_WARN_MAX,LOOK_MAX_RAD_PER_FRAME,LOOK_BIG_PX,LOOK_LOCK_SKIP_EVENTS,lookDeltaOk,lookLockSkip,noteLookSpike,noteLookBig,clampLookStep,lookQueue,lookReset,buffer:()=>({x:lookBufX,y:lookBufY}),drainLook,spikes:()=>lookSpikes,warned:()=>lookSpikesWarned,big:()=>lookBig,bigWarned:()=>lookBigWarned,setLockPending:v=>{lookLockPending=v}};')();
     ok(true, 'bloque look evaluable y con API completa');
   } catch (e) { ok(false, 'bloque look evaluable: ' + e.message); }
 }
@@ -70,14 +73,17 @@ T('valores no finitos', () => {
   }
 });
 
-// 1.4 la marca del pointer lock se consume EXACTAMENTE una vez
+// 1.4 ventana tras (re)adquirir el pointer lock: se ignoran LOOK_LOCK_SKIP_EVENTS
 T('pointer lock (lookLockSkip)', () => {
-  API.setLockPending(false);
-  ok(API.lookLockSkip() === false, 'sin marca → false (no ignora nada)');
-  API.setLockPending(true);
-  ok(API.lookLockSkip() === true, 'con marca → true (ignora el primer evento)');
-  ok(API.lookLockSkip() === false, 'la marca se consumió → false (el siguiente gira)');
-  ok(API.lookLockSkip() === false, 'sigue consumida → false');
+  ok(API.LOOK_LOCK_SKIP_EVENTS >= 2, `LOOK_LOCK_SKIP_EVENTS >= 2 (${API.LOOK_LOCK_SKIP_EVENTS})`);
+  API.setLockPending(0);
+  ok(API.lookLockSkip() === false, 'sin ventana → false (no ignora nada)');
+  API.setLockPending(API.LOOK_LOCK_SKIP_EVENTS);
+  const skipped = [];
+  for (let k = 0; k < API.LOOK_LOCK_SKIP_EVENTS; k++) skipped.push(API.lookLockSkip());
+  ok(skipped.every(v => v === true), `los ${API.LOOK_LOCK_SKIP_EVENTS} primeros eventos se ignoran (${skipped.join(',')})`);
+  ok(API.lookLockSkip() === false, 'el evento siguiente a la ventana se procesa');
+  ok(API.lookLockSkip() === false, 'la ventana quedó consumida → false');
 });
 
 // 1.5 diagnóstico: SIEMPRE cuenta, avisa solo los primeros LOOK_WARN_MAX
@@ -99,16 +105,121 @@ T('diagnóstico en consola', () => {
   ok(console.warn === realWarn, 'console.warn restaurado en finally');
 });
 
-// 1.6 autocontención: el bloque no referencia símbolos externos (patrón worldgen)
+// 1.6 tope de giro por frame: clampLookStep recorta el paso sin perder dirección
+T('tope de giro por frame (clampLookStep)', () => {
+  const max = API.LOOK_MAX_RAD_PER_FRAME, sens = 0.0042;
+  ok(Math.abs(max - 0.30) < 1e-9, `LOOK_MAX_RAD_PER_FRAME = 0.30 (${max})`);
+
+  // delta chico: pasa entero, sin escalado
+  const small = API.clampLookStep(10, -4, sens, max);
+  ok(Math.abs(small.yaw - (-10 * sens)) < 1e-12, `delta chico dx=10 → yaw completo (${small.yaw})`);
+  ok(Math.abs(small.pitch - (4 * sens)) < 1e-12, `delta chico dy=-4 → pitch completo (${small.pitch})`);
+  ok(small.usedX === 10 && small.usedY === -4, `delta chico consume el delta entero (${small.usedX},${small.usedY})`);
+
+  // signos: el mouse a la derecha gira el yaw a la izquierda (menor)
+  ok(API.clampLookStep(900, 0, sens, max).yaw < 0, 'dx>0 ⇒ yaw<0');
+  ok(API.clampLookStep(-900, 0, sens, max).yaw > 0, 'dx<0 ⇒ yaw>0');
+  ok(API.clampLookStep(0, 900, sens, max).pitch < 0, 'dy>0 ⇒ pitch<0');
+  ok(API.clampLookStep(0, -900, sens, max).pitch > 0, 'dy<0 ⇒ pitch>0');
+
+  // delta grande: ningún eje supera el tope y la dirección del gesto se conserva
+  const big = API.clampLookStep(900, 300, sens, max);
+  ok(Math.abs(big.yaw) <= max + 1e-12 && Math.abs(big.pitch) <= max + 1e-12,
+    `delta grande (900,300) queda dentro del tope (${big.yaw}, ${big.pitch})`);
+  ok(Math.abs(Math.abs(big.yaw) - max) < 1e-9, `el eje dominante aplica exactamente el tope (${big.yaw})`);
+  ok(Math.abs(big.pitch / big.yaw - 300 / 900) < 1e-9, `la proporción entre ejes se conserva (${big.pitch / big.yaw})`);
+  ok(Math.abs(big.usedX - Math.abs(big.yaw) / sens) < 1e-9, `usedX = píxeles aplicados en yaw (${big.usedX})`);
+  ok(Math.abs(big.usedY - Math.abs(big.pitch) / sens) < 1e-9, `usedY = píxeles aplicados en pitch (${big.usedY})`);
+  ok(Math.abs(big.usedX) < 900 && Math.abs(big.usedY) < 300, 'deja excedente para los frames siguientes');
+
+  // eje dominante en Y y escala Chebyshev (mismo factor en ambos ejes)
+  const bigBy = API.clampLookStep(200, 900, sens, max);
+  ok(Math.abs(bigBy.pitch) <= max + 1e-12 && Math.abs(Math.abs(bigBy.pitch) - max) < 1e-9,
+    `con dy dominante el tope cae en pitch (${bigBy.pitch})`);
+  const diag = API.clampLookStep(700, 700, sens, max);
+  ok(Math.abs(diag.yaw) <= max + 1e-12 && Math.abs(diag.pitch) <= max + 1e-12,
+    `diagonal: ningún eje supera el tope (${diag.yaw}, ${diag.pitch})`);
+  ok(Math.abs(Math.abs(diag.yaw) - Math.abs(diag.pitch)) < 1e-12,
+    'diagonal: el MISMO factor escala ambos ejes (Chebyshev, no magnitud euclidiana)');
+  ok(Math.abs(diag.yaw) > max * 0.99, `diagonal: el gesto se aprovecha al tope (${diag.yaw})`);
+});
+
+// 1.7 buffer de píxeles: acumula, drena con tope por frame y se resetea
+T('buffer de mirada (lookQueue/drainLook/lookReset)', () => {
+  const max = API.LOOK_MAX_RAD_PER_FRAME, sens = 0.0042;
+  API.lookReset();
+  ok(API.buffer().x === 0 && API.buffer().y === 0, 'lookReset() deja el buffer en cero');
+
+  API.lookQueue(900, 0);
+  ok(API.buffer().x === 900 && API.buffer().y === 0, `lookQueue acumula los píxeles (${API.buffer().x},${API.buffer().y})`);
+  API.lookQueue(0, -30);
+  ok(API.buffer().x === 900 && API.buffer().y === -30, 'lookQueue suma ambos ejes');
+  API.lookQueue(-900, 30);
+  ok(API.buffer().x === 0 && API.buffer().y === 0, 'lookQueue acumula en negativo y vuelve a cero');
+
+  // sin drenar, lo pendiente se conserva
+  API.lookQueue(900, 0);
+  ok(API.buffer().x === 900, 'un frame sin drenar conserva lo pendiente');
+
+  // drenaje frame a frame: nunca supera el tope, no pierde píxeles y termina vacío
+  const target = { yaw: 0, pitch: 0 };
+  let frames = 0, consumed = 0, overTop = false;
+  while ((API.buffer().x !== 0 || API.buffer().y !== 0) && frames < 200) {
+    const before = API.buffer().x;
+    const step = API.drainLook(target, sens, max);
+    if (Math.abs(step.yaw) > max + 1e-12 || Math.abs(step.pitch) > max + 1e-12) overTop = true;
+    consumed += before - API.buffer().x;
+    frames++;
+  }
+  ok(!overTop, `ningún frame supera LOOK_MAX_RAD_PER_FRAME (${max})`);
+  ok(frames > 1, `900 px se reparten en varios frames (${frames})`);
+  ok(Math.abs(consumed - 900) < 1e-6, `la suma de lo consumido iguala lo encolado (${consumed})`);
+  ok(API.buffer().x === 0 && API.buffer().y === 0, 'el buffer termina vacío');
+  ok(Math.abs(target.yaw - (-900 * sens)) < 1e-6, `la mirada giró el total exacto (${target.yaw})`);
+
+  // el pitch se clampa a ±1.55 y el reset descarta lo pendiente
+  const t2 = { yaw: 0, pitch: 0 };
+  API.lookQueue(0, -900);
+  while (API.buffer().y !== 0) API.drainLook(t2, sens, max);
+  ok(Math.abs(t2.pitch - 1.55) < 1e-9, `el pitch drenado se clampa a +1.55 (${t2.pitch})`);
+  API.lookQueue(500, 500);
+  API.lookReset();
+  ok(API.buffer().x === 0 && API.buffer().y === 0, 'al perder el lock el reset descarta el giro pendiente');
+  const t3 = { yaw: 0, pitch: 0 };
+  const none = API.drainLook(t3, sens, max);
+  ok(none.yaw === 0 && none.pitch === 0 && t3.yaw === 0 && t3.pitch === 0, 'drenar sin buffer no gira nada');
+});
+
+// 1.8 diagnóstico de deltas grandes ACEPTADOS (distinto de los descartes)
+T('diagnóstico de deltas grandes', () => {
+  ok(API.LOOK_BIG_PX === 150, `LOOK_BIG_PX = 150 (${API.LOOK_BIG_PX})`);
+  const warns = [];
+  const realWarn = console.warn;
+  const before = API.big();
+  try {
+    console.warn = (...a) => warns.push(a.join(' '));
+    for (let k = 0; k < API.LOOK_WARN_MAX + 2; k++) API.noteLookBig(420, -3);
+  } finally {
+    console.warn = realWarn;
+  }
+  ok(API.big() === before + API.LOOK_WARN_MAX + 2, `big() sube en cada llamada (${API.big() - before})`);
+  ok(warns.length === API.LOOK_WARN_MAX, `avisa solo LOOK_WARN_MAX veces (${warns.length})`);
+  ok(/dx=420/.test(warns[0]) && /dy=-3/.test(warns[0]) && /#1\b/.test(warns[0]),
+    `el 1er aviso trae contador y valores (${warns[0]})`);
+  ok(API.bigWarned() === API.LOOK_WARN_MAX, `solo cuenta como avisados los primeros (${API.bigWarned()})`);
+  ok(console.warn === realWarn, 'console.warn restaurado en finally');
+});
+
+// 1.9 autocontención: el bloque no referencia símbolos externos (patrón worldgen)
 {
   const externos = (src) => [...new Set([...src
     .replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ')
-    .matchAll(/\b(DEFS|THREE|document|window|atlasTex|scene|camera|renderer)\b/g)].map(m => m[1]))];
+    .matchAll(/\b(DEFS|THREE|document|window|player|MOUSE_SENSITIVITY|atlasTex|scene|camera|renderer)\b/g)].map(m => m[1]))];
   if (present) {
     const bad = externos(code);
     ok(bad.length === 0, 'bloque look autocontenido (sin símbolos externos' + (bad.length ? ': ' + bad.join(',') : '') + ')');
   }
-  ok(externos('const x = DEFS[1] + THREE.foo').length === 2, 'detector de autocontención funciona (caso negativo DEFS/THREE)');
+  ok(externos('const x = DEFS[1] + THREE.foo + player.yaw').length === 3, 'detector de autocontención funciona (caso negativo DEFS/THREE/player)');
 }
 
 // ---- 2/3. estructura del cableado (assert ACOTADO y comentado: no reemplaza al
@@ -129,26 +240,54 @@ const pl = grabFrom("document.addEventListener('pointerlockchange'");
 const th = grabFrom("canvas.addEventListener('pointermove'");
 ok(mh !== '' && pl !== '' && th !== '', 'handlers mousemove/pointerlockchange/pointermove presentes');
 
-// 2.1 orden guard→aplicar en el handler de escritorio
+// 2.1 orden guard→encolar en el handler de escritorio (ya no escribe la mirada)
 {
-  const g = mh.indexOf('lookDeltaOk('), y = mh.search(/player\.yaw\s*-=/);
+  const g = mh.indexOf('lookDeltaOk('), q = mh.search(/lookQueue\(/);
+  const s = mh.indexOf('lookLockSkip()'), big = mh.indexOf('noteLookBig(');
   ok(g >= 0, 'estructura: mousemove consulta lookDeltaOk(');
-  ok(g >= 0 && y >= 0 && g < y, 'estructura: en mousemove `lookDeltaOk(` aparece ANTES de `player.yaw -=`');
-  const s = mh.indexOf('lookLockSkip()');
-  ok(s >= 0 && y >= 0 && s < y, 'estructura: en mousemove `lookLockSkip()` antes de aplicar');
-  ok(/if\(locked\(\)\)\{[\s\S]*lookLockPending\s*=\s*true/.test(pl),
-    'estructura: pointerlockchange marca lookLockPending=true dentro de if(locked())');
+  ok(q >= 0, 'estructura: mousemove encola el delta con lookQueue(');
+  ok(g >= 0 && q >= 0 && g < q, 'estructura: en mousemove `lookDeltaOk(` aparece ANTES de encolar');
+  ok(s >= 0 && q >= 0 && s < q, 'estructura: en mousemove `lookLockSkip()` antes de encolar');
+  ok(big >= 0 && q >= 0 && big < q, 'estructura: mousemove llama noteLookBig( antes de encolar el delta grande');
+  ok(!/player\.yaw/.test(mh) && !/player\.pitch/.test(mh), 'estructura: mousemove NO escribe player.yaw/pitch (lo hace el drenaje)');
+  ok(/if\(locked\(\)\)\{[\s\S]*lookLockPending\s*=\s*LOOK_LOCK_SKIP_EVENTS/.test(pl),
+    'estructura: pointerlockchange arma lookLockPending=LOOK_LOCK_SKIP_EVENTS dentro de if(locked())');
+  ok(/lookReset\(\)/.test(pl), 'estructura: pointerlockchange resetea el buffer (lookReset)');
 }
 
-// 2.3 no romper el control normal: sensibilidad, rango de pitch y guards intactos
+// 2.2 el loop drena el giro ANTES de armar la cámara (physicsGravity)
 {
-  ok(/MOUSE_SENSITIVITY/.test(mh) && !/\.0024/.test(mh),
-    'mousemove usa MOUSE_SENSITIVITY (por defecto 0.0042, ajustable en ⚙️ Configuración)');
-  ok(/-1\.55/.test(mh) && /\b1\.55\b/.test(mh), 'mousemove conserva el rango de pitch (±1.55)');
+  const lp = grabFrom('function loop(now)');
+  ok(lp !== '', 'estructura: se puede extraer function loop(now)');
+  const d = lp.indexOf('drainLook('), pg = lp.indexOf('physicsGravity(');
+  ok(d >= 0, 'estructura: loop drena el giro pendiente con drainLook(');
+  ok(d >= 0 && pg >= 0 && d < pg, 'estructura: drainLook( aparece ANTES de physicsGravity( (sin frame de atraso)');
+  ok(/started&&state==='play'&&!dead[^\n]*drainLook\(/.test(lp), 'estructura: sólo se drena en play y sin dead');
+  ok(/drainLook\(\s*player\s*,\s*MOUSE_SENSITIVITY/.test(lp), 'estructura: el drenaje recibe MOUSE_SENSITIVITY (el slider sigue afectando al mouse)');
+}
+
+// 2.3 pointer lock sin aceleración del SO, con UN fallback clásico
+{
+  const tl = grabFrom('function tryLock()');
+  ok(tl !== '', 'estructura: se puede extraer function tryLock()');
+  ok(/requestPointerLock\(\s*\{\s*unadjustedMovement\s*:\s*true\s*\}\s*\)/.test(tl),
+    'estructura: tryLock pide requestPointerLock({unadjustedMovement:true})');
+  ok(/requestPointerLock\(\s*\)/.test(tl), 'estructura: tryLock tiene el fallback requestPointerLock() sin opciones');
+  const plainCalls = (tl.match(/requestPointerLock\(\s*\)/g) || []).length;
+  ok(plainCalls === 1, `un solo reintento clásico, sin cascada (${plainCalls})`);
+  ok(/catch\(/.test(tl), 'estructura: el fallback cubre excepción síncrona y promesa rechazada');
+}
+
+// 2.4 no romper el control normal: sensibilidad, rango de pitch y guards intactos
+{
   ok(/state!=='play'\|\|!locked\(\)\|\|dead/.test(mh), 'mousemove conserva los guards previos (play/lock/dead) en orden');
-  const writes = (html.match(/player\.yaw\s*-=/g) || []).length;
-  ok(writes === 2, `solo 2 escrituras de player.yaw -= (mouse+táctil): ${writes}`);
-  ok(!/player\.yaw\s*=(?!=)/.test(html), 'sin escrituras directas de player.yaw= fuera de los handlers');
+  ok(/-1\.55/.test(code) && /\b1\.55\b/.test(code), 'el drenaje conserva el rango de pitch (±1.55)');
+  const dec = (html.match(/player\.yaw\s*-=/g) || []).length;
+  ok(dec === 1, `solo el táctil escribe player.yaw -= (${dec})`);
+  ok(/target\.yaw\s*\+=/.test(code), 'el drenaje acumula con target.yaw += (suma, nunca asigna)');
+  ok(/drainLook\(\s*player\s*,/.test(html), 'el loop drena sobre el jugador (drainLook(player, …))');
+  ok(/target\.pitch\s*=\s*Math\.max\(\s*-1\.55/.test(code), 'el drenaje clampa target.pitch con ±1.55');
+  ok(!/player\.yaw\s*=(?!=)/.test(html), 'sin escrituras directas de player.yaw= en ningún lado');
 }
 
 // 3.1 orden guard→aplicar y referencia-antes-del-guard en el handler táctil
@@ -165,7 +304,7 @@ ok(mh !== '' && pl !== '' && th !== '', 'handlers mousemove/pointerlockchange/po
   ok(/-1\.55/.test(th) && /\b1\.55\b/.test(th), 'pointermove conserva el rango de pitch (±1.55)');
 }
 
-// 4.1 el script `test` de server/package.json da de alta este archivo (20 en total)
+// 4.1 el script `test` de server/package.json da de alta este archivo (21 en total)
 {
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'server', 'package.json'), 'utf8'));
   const s = pkg.scripts.test;
