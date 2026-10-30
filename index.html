@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Minicraft — mini minecraft lindo</title>
+<link rel="icon" type="image/svg+xml" sizes="any" href="data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D%220%200%20100%20100%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D'g'%20x1%3D'0'%20y1%3D'0'%20x2%3D'1'%20y2%3D'1'%3E%3Cstop%20offset%3D'0'%20stop-color%3D'%238bd450'%2F%3E%3Cstop%20offset%3D'.5'%20stop-color%3D'%238bd450'%2F%3E%3Cstop%20offset%3D'.5'%20stop-color%3D'%239a6a45'%2F%3E%3Cstop%20offset%3D'1'%20stop-color%3D'%239a6a45'%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20x%3D'0'%20y%3D'0'%20width%3D'100'%20height%3D'100'%20rx%3D'24'%20fill%3D'url(%23g)'%2F%3E%3Crect%20x%3D'4'%20y%3D'4'%20width%3D'92'%20height%3D'92'%20rx%3D'22'%20fill%3D'none'%20stroke%3D'%23fff'%20stroke-width%3D'4'%20stroke-opacity%3D'.3'%2F%3E%3C%2Fsvg%3E">
 <link rel="manifest" href="data:application/json,{%22name%22:%22Minicraft%22,%22short_name%22:%22Minicraft%22,%22start_url%22:%22.%22,%22display%22:%22standalone%22,%22background_color%22:%22%237ec8f7%22,%22theme_color%22:%22%237ec8f7%22,%22icons%22:[{%22src%22:%22data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect fill='%238bd450' x='0' y='0' width='100' height='100' rx='20'/%3E%3Crect fill='%239a6a45' x='0' y='55' width='100' height='45'/%3E%3C/svg%3E%22,%22sizes%22:%22512x512%22,%22type%22:%22image/svg+xml%22,%22purpose%22:%22any maskable%22}]}">
 <meta name="theme-color" content="#7ec8f7">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -1645,7 +1646,7 @@ function die(cause){
   // arranca la animación de caída; el cartel aparece cuando termina (~1.1s)
   deathPos=player.pos.clone(); deathT=0; deathShown=false;
   document.getElementById('deathMsg').textContent =
-    cause==='fall' ? 'Te caíste muy fuerte. 🩹' : `Te derrotó ${cause}. ⚔️`;
+    cause==='fall' ? 'Te caíste muy fuerte. 🩹' : cause==='cactus' ? 'Te pinchaste con un cactus. 🌵' : `Te derrotó ${cause}. ⚔️`;
   document.exitPointerLock?.();
   sendMove(); // avisar ya que estás tieso
   if(mp) sendChat(`💀 ${myName} murió`);
@@ -1793,10 +1794,59 @@ function raycast(maxD){
   }
   return null;
 }
+/* cactus:start */
+// Cactus 🌵 (bloque id 22, MELON): peligro de contacto solo para el jugador local.
+// No cambia el bloque, su textura, dureza, inventario ni worldgen: solo agrega comportamiento.
+const CACTUS_ID = 22;          // reutiliza el bloque existente "Cactus 🌵" (MELON)
+const CACTUS_MARGIN = 0.06;    // margen de contacto; el cactus es sólido y no se solapa
+const CACTUS_WATER = 12;       // id de WATER; no aparece dentro del agua
+const SPAWN_PREF = Object.freeze({ x: 108.5, y: 16.01, z: 117.5 });
+
+// Celdas del cuerpo del jugador (margen en x/z y en el tope, sin margen en el borde inferior)
+// para que pararse ARRIBA de un cactus sea seguro: los pies quedan en y+1, fuera de la celda.
+function cactusCells(px, py, pz, r, h) {
+  const cells = [];
+  const x0 = Math.floor(px - r - CACTUS_MARGIN);
+  const x1 = Math.floor(px + r + CACTUS_MARGIN);
+  const z0 = Math.floor(pz - r - CACTUS_MARGIN);
+  const z1 = Math.floor(pz + r + CACTUS_MARGIN);
+  const y0 = Math.floor(py);          // sin margen abajo
+  const y1 = Math.floor(py + h);      // con margen arriba (cabeza)
+  for (let x = x0; x <= x1; x++)
+    for (let y = y0; y <= y1; y++)
+      for (let z = z0; z <= z1; z++)
+        cells.push([x, y, z]);
+  return cells;
+}
+function touchingCactus(px, py, pz, r, h, getBlock) {
+  const cells = cactusCells(px, py, pz, r, h);
+  for (const [x, y, z] of cells) if (getBlock(x, y, z) === CACTUS_ID) return true;
+  return false;
+}
+// Valida si el jugador con caja (r,h) puede aparecer en (px,py,pz): suelo sólido,
+// sin agua bajo/pies/cuerpo, caja libre y sin tocar cactus (no aparecer pinchándose).
+function spawnPrefOk(px, py, pz, r, h, env) {
+  const { get, solidAt, collidesAt } = env;
+  if (!solidAt(Math.floor(px), Math.floor(py) - 1, Math.floor(pz))) return false;
+  for (let x = Math.floor(px - r); x <= Math.floor(px + r); x++)
+    for (let y = Math.floor(py); y <= Math.floor(py + h); y++)
+      for (let z = Math.floor(pz - r); z <= Math.floor(pz + r); z++)
+        if (get(x, y, z) === CACTUS_WATER) return false;
+  if (collidesAt(px, py, pz, r, h)) return false;
+  if (touchingCactus(px, py, pz, r, h, get)) return false;
+  return true;
+}
+/* cactus:end */
+
 function findSpawn(){
   // busca tierra firme con la columna despejada (nada de aparecer dentro de un árbol 🌳)
   const sx=W/2|0, sz=W/2|0;
   const box=playerBox(mySkin);
+  // Spawn preferido: 108 · 16 · 117 (topbar), validado por aspecto antes del espiral.
+  // El guardia `typeof spawnPrefOk === 'function'` deja que la réplica aislada del bot
+  // (bot-cazador.mjs, que no inyecta spawnPrefOk) siga usando el espiral y conserve la paridad.
+  if(typeof spawnPrefOk === 'function' && spawnPrefOk(SPAWN_PREF.x, SPAWN_PREF.y, SPAWN_PREF.z, box.r, box.h, { get, solidAt, collidesAt }))
+    return new THREE.Vector3(SPAWN_PREF.x, SPAWN_PREF.y, SPAWN_PREF.z);
   const need=Math.max(4,Math.ceil(box.h));
   for(let r=0;r<104;r++) for(let a=0;a<12;a++){
     const x=Math.max(2,Math.min(W-3,sx+Math.round(Math.cos(a/12*6.28)*r)));
@@ -3131,6 +3181,15 @@ function tickWater(){
   // la atmósfera la compone applyAtmosphere (agua manda sumergido; si no, el ciclo)
   const L=light(dayV); airL=L; airUnder=under; applyAtmosphere(L);
 }
+function tickCactus(){
+  if(!started || state !== 'play') return;
+  if(!dead){
+    const box = playerBox(mySkin);
+    if(touchingCactus(player.pos.x, player.pos.y, player.pos.z, box.r, box.h, get))
+      damage(1, 'cactus');
+  }
+}
+
 function loop(now){
   requestAnimationFrame(loop);
   const dt=Math.min((now-last)/1000,.05); last=now;
@@ -3156,6 +3215,7 @@ function loop(now){
     else { hl.visible=hlEdge.visible=false; cross.classList.remove('active'); }
   } else { hl.visible=hlEdge.visible=false; if(!mouseDown[0]) crackMesh.visible=false; }
   tickSword(dt, now); tickPick(dt, now); tickCooldown(); tickDoors(dt); tickWater();
+  tickCactus();
   // ciclo día/noche: avanzar la fase local, mover sol/luna y aplicar la atmósfera si cambió
   dayV=cycleAdvance(dayV,dt,cycleMs);
   if(hasTod) dayV=cycleCorrect(dayV,todNow(now,cycleMs),dt);
