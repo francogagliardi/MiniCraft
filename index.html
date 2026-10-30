@@ -118,6 +118,9 @@
   /* visibility:hidden (además de opacity:0) para que un botón con foco dentro de un overlay
      oculto deje de ser focuseable: si no, Enter dispara su click y findSpawn() mueve al spawn. */
   .overlay.hidden { opacity:0; pointer-events:none; visibility:hidden; }
+  /* Las tarjetas dentro de #pause (menú principal de pausa y panel de configuración)
+     se alternan: `.hidden` acá tiene que sacarlas del layout, no solo transparentarlas. */
+  #pause .card.hidden { display:none; }
   .float-cube { position:absolute; border-radius:14px; opacity:.85; animation:float 6s ease-in-out infinite;
     box-shadow:inset -8px -10px 0 rgba(0,0,0,.15), inset 8px 10px 0 rgba(255,255,255,.35), 0 20px 40px rgba(40,90,160,.25); }
   @keyframes float { 0%,100%{ transform:translateY(0) rotate(-6deg);} 50%{ transform:translateY(-26px) rotate(6deg);} }
@@ -220,6 +223,14 @@
   line-height: 45px;
   box-shadow: 0 3px 6px rgba(100, 100, 120, 0.4);
 }
+/* Controles del menú de configuración */
+#configPanel .cfg-row { margin:14px 0; text-align:left; }
+#configPanel .cfg-row label { font-weight:700; color:#1e2a3d; font-size:15px; margin-bottom:6px; display:block; }
+#configPanel .cfg-row .val { font-weight:700; color:#2f9e32; }
+#configPanel input[type=range] { width:100%; accent-color:#2f9e32; cursor:pointer; }
+#configPanel select { width:100%; font-family:inherit; font-weight:600; font-size:15px; padding:10px 14px; border-radius:12px; border:1px solid rgba(30,42,61,.2); background:rgba(255,255,255,.7); color:#1e2a3d; cursor:pointer; }
+#configPanel select option { background:#fff; color:#1e2a3d; }
+#configPanel h2 { font-size:32px; font-weight:900; color:#1e2a3d; line-height:1; margin:0 0 10px 0; }
 </style>
 <script type="importmap"> { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } } </script>
 </head>
@@ -299,11 +310,32 @@
 </div>
 
 <div class="overlay hidden" id="pause">
-  <div class="card">
+  <div id="pauseMain" class="card">
     <h1 style="font-size:42px">En pausa ☁️</h1>
     <p class="sub">El mundo te espera. Hacé click para seguir. (<b>Enter</b> abre el chat)</p>
     <button class="btn btn-player" id="btnResume" style="width:auto;padding:14px 50px">Seguir jugando</button>
+    <button class="btn btn-player" id="btnConfig" style="width:auto;padding:14px 50px;margin-top:10px">⚙️ Configuración</button>
     <div class="tiny">Tu mundo se guarda solo 💾</div>
+  </div>
+  <div id="configPanel" class="card hidden">
+    <h2>⚙️ Configuración</h2>
+    <div class="cfg-row">
+      <label>Sensibilidad del ratón <span class="val" id="sensVal">1.0×</span></label>
+      <input type="range" id="sensSlider" min="0.5" max="2" step="0.1" value="1">
+    </div>
+    <div class="cfg-row">
+      <label>Brillo <span class="val" id="brightVal">1.0×</span></label>
+      <input type="range" id="brightSlider" min="1" max="3" step="0.1" value="1">
+    </div>
+    <div class="cfg-row">
+      <label>Calidad gráfica</label>
+      <select id="qualitySelect">
+        <option value="0">Super optimizada (2 núcleos)</option>
+        <option value="1">Baja/rápida</option>
+        <option value="2">Alta</option>
+      </select>
+    </div>
+    <button class="btn btn-player" id="btnConfigBack">Volver</button>
   </div>
 </div>
 
@@ -752,7 +784,10 @@ function tileUV(t){
 /* ============ ESCENA ============ */
 const canvas = document.getElementById('game');
 const LOW = TOUCH;
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: !LOW });
+let MOUSE_SENSITIVITY = 0.0042;
+let BRIGHTNESS = 1.0;
+let QUALITY_LEVEL = TOUCH ? 1 : 2; // táctil empieza en 1, PC en 2; el usuario puede cambiar
+let renderer = new THREE.WebGLRenderer({ canvas, antialias: !LOW });
 renderer.setPixelRatio(Math.min(devicePixelRatio, LOW ? 1 : 1.5));
 renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = !LOW;
@@ -814,6 +849,17 @@ function light(v){
 }
 // señal compartida con el server: de noche cuando v >= 0.625 (para el futuro zombi)
 function isNight(v){ return v>=NIGHT_START; }
+// Brillo del jugador (spec ui/config): sube la luz efectiva hacia el día pleno sin
+// convertirlo en día. BRIGHTNESS=1 no cambia nada; 3.0 aclara al máximo la noche.
+// Fuente ÚNICA para applyAtmosphere y tickSky: si cada una calcula distinto, el sol
+// alterna entre dos intensidades y se ve parpadear al atardecer/amanecer.
+function brightLevel(L){
+  const bright = typeof BRIGHTNESS !== 'undefined' ? BRIGHTNESS : 1;
+  // El aporte del brillo se topa en 0.30: con 3.0× la noche llega a 0.80 (d≈0.6),
+  // un crepúsculo bien visible, pero nunca a día pleno (los zombies salen de noche
+  // y el mundo tiene que verse nocturno).
+  return Math.min(1, L + Math.min(0.30, (1 - L) * (bright - 1) * 0.5));
+}
 // avance local de la fase (misma tasa que el server) + corrección suave hacia la fase recibida
 function cycleAdvance(v,dt,cyc){ return (v+dt*1000/cyc)%1; }
 function cycleCorrect(v,target,dt){ let d=target-v; d-=Math.round(d); return (v+d*Math.min(1,TOD_CORRECT_K*dt)+1)%1; }
@@ -841,20 +887,53 @@ const HEMI_DAY=0.95, SUN_DAY=1.9, WATER_FOG=0x1a6fd0;
 // (sumergido manda el azul del agua; en superficie manda el ciclo). L∈[NIGHT_MIN,1].
 let airL=-1, airUnder=null;
 function applyAtmosphere(L){
-  const d=(L-NIGHT_MIN)/(1-NIGHT_MIN); // 0=noche plena → 1=día pleno (para color y sol)
+  // Brillo del jugador (spec ui/config): sube la luz efectiva hacia el día pleno sin
+  // convertirlo en día. BRIGHTNESS=1 no cambia nada; 3.0 aclara al máximo la noche.
+  const Lb = brightLevel(L);
+  const d = (Lb - NIGHT_MIN) / (1 - NIGHT_MIN); // 0=noche plena → 1=día pleno (color y sol)
   if(under){
     scene.fog.color.setHex(WATER_FOG); scene.fog.near=1; scene.fog.far=26;
     scene.background.setHex(WATER_FOG);
   } else {
     scene.fog.color.copy(FOG_NIGHT).lerp(FOG_DAY,d);
-    scene.fog.near=34; scene.fog.far=180;
+    scene.fog.near=34;
+    // nivel 0 (super optimizada) usa niebla corta: respetar la calidad acá, porque
+    // applyAtmosphere corre cada frame y si no pisaría el valor de applyQuality.
+    scene.fog.far = (typeof QUALITY_LEVEL !== 'undefined' && QUALITY_LEVEL === 0) ? 100 : 180;
     scene.background.copy(BG_NIGHT).lerp(BG_DAY,d);
   }
   skyMat.uniforms.top.value.copy(SKY_TOP_NIGHT).lerp(SKY_TOP_DAY,d);
   skyMat.uniforms.bot.value.copy(SKY_BOT_NIGHT).lerp(SKY_BOT_DAY,d);
   hemi.color.copy(HEMI_SKY_NIGHT).lerp(HEMI_SKY_DAY,d);
   hemi.groundColor.copy(HEMI_GROUND_NIGHT).lerp(HEMI_GROUND_DAY,d);
-  hemi.intensity=HEMI_DAY*L;
+  hemi.intensity = HEMI_DAY * Lb;
+  // sol directo solo con el sol arriba: de noche (L=NIGHT_MIN) la única direccional es la luna.
+  sun.intensity = L > NIGHT_MIN ? SUN_DAY * Lb : 0;
+}
+
+/* ===== calidad gráfica =====
+   Nivel 0 = super optimizada (sin antialias, sin sombras, niebla corta),
+   nivel 1 = baja/rápida, nivel 2 = alta (antialias + sombras + niebla normal).
+   El nivel 2 requiere recrear el renderer porque el antialias no se puede
+   cambiar en caliente en WebGL. */
+let rendererAA = !LOW; // antialias con el que se creó el renderer actual (no se puede cambiar en caliente)
+function applyQuality(level){
+  const antialias = (level === 2);
+  // El antialias es atributo del contexto WebGL: si cambia hay que recrear el renderer.
+  // Si no cambia (p. ej. al arrancar con el nivel por defecto) se reutiliza el actual.
+  if(antialias !== rendererAA){
+    renderer = new THREE.WebGLRenderer({ canvas, antialias });
+    rendererAA = antialias;
+  }
+  renderer.setPixelRatio(level === 0 ? 1 : Math.min(devicePixelRatio, level === 2 ? 1.5 : 1));
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.shadowMap.enabled = level === 2;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  // Niebla: nivel 0 = niebla corta, niveles 1/2 = niebla normal
+  if(level === 0){ scene.fog.near=34; scene.fog.far=100; }
+  else { scene.fog.near=34; scene.fog.far=180; }
+  sun.castShadow = (level === 2) && sun.position.y>SUN_SHADOW_MIN_Y;
+  sun.shadow.mapSize.set(level===0?512:2048, level===0?512:2048);
 }
 
 /* ===== sol y luna sobre el arco del cielo =====
@@ -877,7 +956,9 @@ function dayProg(v){ return Math.min(1, Math.max(0, v/NIGHT_START)); }
 function nightProg(v){ return Math.min(1, Math.max(0, (v-NIGHT_START)/(1-NIGHT_START))); }
 // mueve el sol, la luna y sus luces según la fase (llamado cada frame)
 function tickSky(v){
-  const d=(light(v)-NIGHT_MIN)/(1-NIGHT_MIN); // 0=noche plena → 1=día pleno
+  const bright = typeof BRIGHTNESS !== 'undefined' ? BRIGHTNESS : 1;
+  const Lb = brightLevel(light(v));            // misma luz brillante que applyAtmosphere
+  const d=(Lb - NIGHT_MIN)/(1-NIGHT_MIN); // 0=noche plena → 1=día pleno
   const night=isNight(v);
   // sol: arco del día; visible con luz suficiente y oculto de noche
   skyArc(dayProg(v), false, SKY_R, SKY_TILT, sunSprite.position);
@@ -885,14 +966,14 @@ function tickSky(v){
   sunSprite.visible = !night && d>0.15;
   // la luz direccional sigue la misma dirección (a distancia de sombra); sin sombras ni intensidad si el sol está bajo/oculto
   skyArc(dayProg(v), false, LIGHT_R, SKY_TILT, sun.position);
-  sun.intensity = SUN_DAY*d;
+  sun.intensity = night ? 0 : SUN_DAY*Lb;
   sun.castShadow = !LOW && !night && sun.position.y>SUN_SHADOW_MIN_Y;
   // luna: mismo sentido que el sol (este→oeste), visible solo de noche; su luz tenue sólo ilumina de noche
   skyArc(nightProg(v), false, SKY_R, SKY_TILT, moonSprite.position);
   moonSprite.lookAt(W/2, SKY_Y0, W/2);
   moonSprite.visible = night;
   skyArc(nightProg(v), false, LIGHT_R, SKY_TILT, moonLight.position);
-  moonLight.intensity = night ? MOON_LIGHT : 0;
+  moonLight.intensity = night ? MOON_LIGHT * Math.min(2, bright) : 0;
 }
 
 const clouds = [];
@@ -2746,8 +2827,8 @@ addEventListener('mousemove',e=>{
   if(lookLockSkip()) return; // 1er evento tras el lock: delta espurio
   const mx=e.movementX, my=e.movementY;
   if(!lookDeltaOk(mx,my)){ noteLookSpike(mx,my,'mouse'); return; } // descartar el evento entero
-  player.yaw-=mx*.0024;
-  player.pitch=Math.max(-1.55,Math.min(1.55,player.pitch-my*.0024));
+  player.yaw-=mx*MOUSE_SENSITIVITY;
+  player.pitch=Math.max(-1.55,Math.min(1.55,player.pitch-my*MOUSE_SENSITIVITY));
 });
 // Touch: arrastrar = mirar, toque rápido = atacar/picar (click izq), mantener = picar
 let lookTouchId = null, tapT0 = 0, tapX = 0, tapY = 0, lookLX = 0, lookLY = 0, tapMoved = false, holdTimer = null;
@@ -2774,8 +2855,8 @@ canvas.addEventListener('pointermove', (e) => {
   const dx = e.clientX - lookLX, dy = e.clientY - lookLY;
   lookLX = e.clientX; lookLY = e.clientY;                        // la referencia SIEMPRE se actualiza
   if (!lookDeltaOk(dx, dy)) { noteLookSpike(dx, dy, 'touch'); return; } // descartar el evento entero
-  player.yaw -= dx * .0042;
-  player.pitch = Math.max(-1.55, Math.min(1.55, player.pitch - dy * .0042));
+  player.yaw -= dx * MOUSE_SENSITIVITY;
+  player.pitch = Math.max(-1.55, Math.min(1.55, player.pitch - dy * MOUSE_SENSITIVITY));
   e.preventDefault();
 });
 function endLookTouch(e) {
@@ -3012,6 +3093,31 @@ document.addEventListener('pointerlockchange',()=>{
   }
 });
 document.getElementById('btnResume').onclick=tryLock;
+document.getElementById('btnConfig').onclick=e=>{
+  e.stopPropagation();
+  document.getElementById('pauseMain').classList.add('hidden');
+  document.getElementById('configPanel').classList.remove('hidden');
+};
+document.getElementById('btnConfigBack').onclick=e=>{
+  e.stopPropagation();
+  document.getElementById('configPanel').classList.add('hidden');
+  document.getElementById('pauseMain').classList.remove('hidden');
+};
+document.getElementById('sensSlider').oninput=e=>{
+  MOUSE_SENSITIVITY = 0.0042 * parseFloat(e.target.value);
+  document.getElementById('sensVal').textContent = (MOUSE_SENSITIVITY/0.0042).toFixed(1) + '×';
+  try{ localStorage.setItem('mc-mouse-sens', MOUSE_SENSITIVITY); }catch(e){}
+};
+document.getElementById('brightSlider').oninput=e=>{
+  BRIGHTNESS = parseFloat(e.target.value);
+  document.getElementById('brightVal').textContent = BRIGHTNESS.toFixed(1) + '×';
+  try{ localStorage.setItem('mc-brightness', BRIGHTNESS); }catch(e){}
+};
+document.getElementById('qualitySelect').onchange=e=>{
+  QUALITY_LEVEL = parseInt(e.target.value);
+  applyQuality(QUALITY_LEVEL);
+  try{ localStorage.setItem('mc-quality', QUALITY_LEVEL); }catch(e){}
+};
 function applyModeUI(){
   const fly=document.getElementById('btnFly');
   fly.textContent = isAdmin() ? `🕊 Volar: ${player.fly?'on':'off'}` : '🌱 Supervivencia';
@@ -3092,6 +3198,17 @@ setSkin(PLAYER_SKINS.includes(savedSkin)?savedSkin:DEFAULT_SKIN, false);
 let savedCam=null;
 try{ savedCam=localStorage.getItem('mc-cam'); }catch(e){}
 setCamMode(camModeOf(savedCam), false);
+// Configuración (spec ui/config): sensibilidad, brillo y calidad se persisten
+// en localStorage y se aplican en caliente desde el panel de pausa.
+try{ const s=localStorage.getItem('mc-mouse-sens'); if(s) MOUSE_SENSITIVITY=parseFloat(s); }catch(e){}
+try{ const b=localStorage.getItem('mc-brightness'); if(b) BRIGHTNESS=parseFloat(b); }catch(e){}
+try{ const q=localStorage.getItem('mc-quality'); if(q!==null) QUALITY_LEVEL=parseInt(q); }catch(e){}
+document.getElementById('sensSlider').value = MOUSE_SENSITIVITY/0.0042;
+document.getElementById('sensVal').textContent = (MOUSE_SENSITIVITY/0.0042).toFixed(1) + '×';
+document.getElementById('brightSlider').value = BRIGHTNESS;
+document.getElementById('brightVal').textContent = BRIGHTNESS.toFixed(1) + '×';
+document.getElementById('qualitySelect').value = String(QUALITY_LEVEL);
+applyQuality(QUALITY_LEVEL); // restaura en caliente la calidad guardada (spec ui/config)
 await new Promise(r=>setTimeout(r,40));
 document.getElementById('loading').style.display='none';
 document.getElementById('btnPlayer').style.display='block';

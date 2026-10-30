@@ -142,7 +142,8 @@ ok(mh !== '' && pl !== '' && th !== '', 'handlers mousemove/pointerlockchange/po
 
 // 2.3 no romper el control normal: sensibilidad, rango de pitch y guards intactos
 {
-  ok(/\.0024/.test(mh), 'mousemove conserva la sensibilidad de escritorio (.0024)');
+  ok(/MOUSE_SENSITIVITY/.test(mh) && !/\.0024/.test(mh),
+    'mousemove usa MOUSE_SENSITIVITY (por defecto 0.0042, ajustable en ⚙️ Configuración)');
   ok(/-1\.55/.test(mh) && /\b1\.55\b/.test(mh), 'mousemove conserva el rango de pitch (±1.55)');
   ok(/state!=='play'\|\|!locked\(\)\|\|dead/.test(mh), 'mousemove conserva los guards previos (play/lock/dead) en orden');
   const writes = (html.match(/player\.yaw\s*-=/g) || []).length;
@@ -160,7 +161,7 @@ ok(mh !== '' && pl !== '' && th !== '', 'handlers mousemove/pointerlockchange/po
   ok(/noteLookSpike\([^)]*'touch'/.test(th), "estructura: el descarte táctil llama noteLookSpike(...,'touch')");
   ok(!/lookLockPending|lookLockSkip/.test(th), 'el handler táctil NO usa la marca de pointer lock (no hay lock en táctil)');
   ok(/Math\.hypot\(e\.clientX - tapX, e\.clientY - tapY\) > 12/.test(th), 'el umbral de tapMoved (>12) no cambió');
-  ok(/\.0042/.test(th), 'pointermove conserva la sensibilidad táctil (.0042)');
+  ok(/MOUSE_SENSITIVITY/.test(th), 'pointermove táctil usa MOUSE_SENSITIVITY (por defecto 0.0042)');
   ok(/-1\.55/.test(th) && /\b1\.55\b/.test(th), 'pointermove conserva el rango de pitch (±1.55)');
 }
 
@@ -168,11 +169,11 @@ ok(mh !== '' && pl !== '' && th !== '', 'handlers mousemove/pointerlockchange/po
 {
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'server', 'package.json'), 'utf8'));
   const s = pkg.scripts.test;
-  const required = ['static','avatar','migrate','terrain','water','worldgen','zombie','zombie-client','zombie-protocol','avatar-held','client-robot','skins','camera','bot-cazador','lookguard','admin-hash','enter-chat','protocol','hora-argentina','cactus'];
+  const required = ['static','avatar','migrate','terrain','water','worldgen','zombie','zombie-client','zombie-protocol','avatar-held','client-robot','skins','camera','bot-cazador','lookguard','admin-hash','enter-chat','protocol','hora-argentina','cactus','config'];
   const missing = required.filter(n => !new RegExp(`test/${n}\\.mjs`).test(s));
   const count = (s.match(/test\/[\w-]+\.mjs/g) || []).length;
-  ok(missing.length === 0, `npm test da de alta los 20 archivos (faltan: ${missing.join(', ') || 'ninguno'})`);
-  ok(count === 20, `el script test enumera 20 archivos (${count})`);
+  ok(missing.length === 0, `npm test da de alta los 21 archivos (faltan: ${missing.join(', ') || 'ninguno'})`);
+  ok(count === 21, `el script test enumera 21 archivos (${count})`);
 }
 
 if (fails) console.log(`\n💥 ${fails} chequeo(s) fallaron`);

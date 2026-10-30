@@ -290,8 +290,11 @@ ok(html.includes('Necesitás la espada'), 'aviso al atacar sin espada');
 
     // comportamiento con stubs mínimos: agua manda; NIGHT_MIN al 50%; colores por fase
     const mkC = () => ({ hex:null, lerpTo:null, setHex(h){ this.hex=h; return this; }, copy(){ return this; }, lerp(_c,t){ this.lerpTo=t; return this; } });
+    // brillo neutro (BRIGHTNESS=1): la fórmula real se cubre en config.mjs
+    const brightLevel = new Function('BRIGHTNESS',
+      'return function brightLevel(L)' + grabObj('function brightLevel('))(1);
     const ctxFor = (underVal) => ({
-      under: underVal,
+      under: underVal, brightLevel,
       scene: { fog:{ color:mkC(), near:0, far:0 }, background:mkC() },
       skyMat: { uniforms:{ top:{value:mkC()}, bot:{value:mkC()} } },
       hemi: { color:mkC(), groundColor:mkC(), intensity:0 },
@@ -511,11 +514,13 @@ ok(html.includes('Necesitás la espada'), 'aviso al atacar sin espada');
       'return function light(v)' + grabObj('function light(v)')
     )(DAY_MS, NIGHT_MS, CYCLE_MS, DAWN_MS, DUSK_MS, NIGHT_MIN, NIGHT_START, DAWN_V, DUSK_V);
     const isNightFn = new Function('NIGHT_START', 'return function isNight(v)' + grabObj('function isNight(v)'))(NIGHT_START);
+    const brightFn = new Function('BRIGHTNESS',
+      'return function brightLevel(L)' + grabObj('function brightLevel('))(1);
     const dayProg = new Function('NIGHT_START', 'return function dayProg(v)' + grabObj('function dayProg('))(NIGHT_START);
     const nightProg = new Function('NIGHT_START', 'return function nightProg(v)' + grabObj('function nightProg('))(NIGHT_START);
     const mkBody = () => ({ position: mkOut(), visible:true, lookAt(){} });
     const ctx = {
-      light: lightFn, isNight: isNightFn, skyArc, dayProg, nightProg,
+      light: lightFn, isNight: isNightFn, brightLevel: brightFn, skyArc, dayProg, nightProg,
       NIGHT_MIN, MOON_LIGHT, SUN_SHADOW_MIN_Y, LOW: false, SUN_DAY: 1.9,
       W: 208, SKY_R, SKY_TILT, SKY_Y0, LIGHT_R,
       sun: { position: mkOut(), castShadow: true, intensity: 0 }, sunSprite: mkBody(),
