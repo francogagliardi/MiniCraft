@@ -19,3 +19,17 @@ El sistema SHALL mostrar el bloque con id 22 (`MELON`) con el nombre `Cactus �
 
 - **WHEN** el jugador coloca o pica el bloque 22, o recarga un mundo existente
 - **THEN** el bloque sigue siendo el id 22 con la misma textura, dureza y física (solo cambia la etiqueta)
+
+### Requirement: La cama se muestra como Cama
+
+El sistema SHALL mostrar el ítem de cama y sus dos mitades de mundo con el nombre `Cama 🛏️` en inventario, hotbar y toasts.
+
+#### Scenario: Nombre visible en inventario y hotbar
+
+- **WHEN** el jugador abre el inventario o selecciona la cama en la hotbar
+- **THEN** la etiqueta mostrada es `Cama 🛏️` (y en la hotbar compacta, `Cama`)
+
+#### Scenario: Nombre en las dos mitades
+
+- **WHEN** el jugador apunta o rompe el pie o la cabecera de una cama
+- **THEN** el nombre visible sigue siendo `Cama 🛏️`, sin distinguir la mitad
