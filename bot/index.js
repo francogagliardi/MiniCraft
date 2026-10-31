@@ -123,7 +123,7 @@ function createBotClient(cfg = {}) {
     ws.on('open', () => {
       backoffMs = bBase; // conexión sana: resetea el backoff
       log('conectado a ' + url);
-      send({ t: 'hello', name, mode: 'player', skin });
+      send({ t: 'hello', name, mode: 'player', skin, bot: true });
     });
     ws.on('message', (raw) => {
       let m; try { m = JSON.parse(raw.toString()); } catch (e) { return; }

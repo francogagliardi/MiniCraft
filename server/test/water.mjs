@@ -75,10 +75,10 @@ if (!fails) {
   } catch (e) { borderOk = false; }
   ok(borderOk, 'borde del mundo seguro (get fuera de límites = AIR, sin crash)');
 
-  // 6. Ambas ramas de doBreak usan el helper y la condición amplia desapareció.
+  // 6. Las tres ramas de doBreak usan el helper y la condición amplia desapareció.
   const doBreak = grabObj('function doBreak(pre)');
   const calls = (doBreak.match(/waterRefill\(/g) || []).length;
-  ok(calls === 2, `doBreak usa waterRefill en ambas ramas (normal + puerta): ${calls} llamadas`);
+  ok(calls === 3, `doBreak usa waterRefill en las tres ramas (normal + puerta + cama): ${calls} llamadas`);
   ok(!/<=WATER_Y\s*\?\s*WATER\s*:\s*AIR/.test(doBreak),
     'doBreak sin la condición amplia y<=WATER_Y ? WATER : AIR');
   ok(/edits\.push/.test(doBreak) && /netSend\(\{\s*t:'edit'/.test(doBreak),

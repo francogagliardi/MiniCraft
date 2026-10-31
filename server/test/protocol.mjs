@@ -36,7 +36,7 @@ function shutdown(code) {
 }
 setTimeout(() => { console.log('❌ timeout global'); shutdown(1); }, 45000).unref();
 
-async function hello(name, mode, key = '', port = PORT) {
+async function hello(name, mode, key = '', port = PORT, extra = null) {
   const ws = new WebSocket(`ws://localhost:${port}`);
   const seen = [];
   await new Promise((res, rej) => {
@@ -46,7 +46,7 @@ async function hello(name, mode, key = '', port = PORT) {
   ws.on('message', (raw) => {
     try { seen.push(JSON.parse(raw)); } catch (e) {}
   });
-  ws.send(JSON.stringify({ t: 'hello', name, mode, key }));
+  ws.send(JSON.stringify({ t: 'hello', name, mode, key, ...(extra || {}) }));
   const t0 = Date.now();
   while (Date.now() - t0 < TIMEOUT) {
     const w = seen.find(m => m.t === 'welcome');
@@ -63,6 +63,15 @@ async function nextOf(seen, from, type) {
     await wait(50);
   }
   throw new Error('no llegó ' + type);
+}
+async function waitFor(seen, pred, from = 0) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < TIMEOUT) {
+    const m = seen.slice(from).find(pred);
+    if (m) return m;
+    await wait(50);
+  }
+  return null;
 }
 
 // esperar a que el server escuche
@@ -261,6 +270,75 @@ try {
     ok(!!w && typeof w.seed === 'number' && Array.isArray(w.edits), 'world.json escrito con { seed, edits }');
     ok(!!w && Object.keys(w).sort().join(',') === 'edits,seed',
       'world.json sin campos de ciclo/reloj (' + (w ? Object.keys(w).join(',') : 'sin archivo') + ')');
+  }
+
+  // 9. sueño: welcome, rechazo diurno y flag bot
+  {
+    const zzz = await hello('BotZzz', 'player', '', PORT, { bot: true });
+    ok(Array.isArray(zzz.m.sleeping) && typeof zzz.m.sleepNeed === 'number',
+      'welcome trae sleeping + sleepNeed');
+    // el bot (y el admin) no suman: need = reales vivos de la lista, sin contarlo a él
+    const expected = zzz.m.players.filter(p => p.mode === 'player' && !p.dead).length;
+    ok(zzz.m.sleepNeed === expected, `el bot no suma al quórum (need=${zzz.m.sleepNeed}, reales=${expected})`);
+    const diurno = await hello('Diurno', 'player', '', PORT);
+    const nD = diurno.seen.length;
+    diurno.ws.send(JSON.stringify({ t: 'sleep', x: 10, y: 10, z: 10 }));
+    const denied = await waitFor(diurno.seen, m => m.t === 'sleep' && m.id === diurno.m.id, nD);
+    ok(!!denied && denied.denied === 'day' && denied.on === false,
+      'de día el server rechaza el sueño (denied:day)');
+    zzz.ws.close(); diurno.ws.close();
+  }
+
+  // 10. salto al amanecer: server aparte con noche forzada y tick alto
+  {
+    const PORT3 = 3212;
+    const WORLD3 = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'mc-world-')), 'world.json');
+    const srv3 = spawn(process.execPath, ['server.js'], {
+      cwd: serverDir,
+      env: { ...process.env, PORT: String(PORT3), ADMIN_KEY: 'test-key', WORLD_FILE: WORLD3,
+        ZOMBIE_FORCE_NIGHT: '1', ZOMBIE_TICK_MS: '60000', ZOMBIE_SNAP_MS: '60000', TOD_INTERVAL_MS: '60000' },
+    });
+    srv3.stderr.on('data', d => process.stdout.write('[SRV3-ERR] ' + d));
+    try {
+      {
+        const t0 = Date.now();
+        let ready3 = false;
+        while (Date.now() - t0 < 15000) {
+          try {
+            const probe = new WebSocket(`ws://localhost:${PORT3}`);
+            await new Promise((res, rej) => { probe.on('open', res); probe.on('error', rej); });
+            probe.close(); ready3 = true; break;
+          } catch (e) { await wait(200); }
+        }
+        ok(ready3, 'server nocturno de prueba levanta');
+      }
+      const h1 = await hello('Somnia', 'player', '', PORT3);
+      const h2 = await hello('Rem', 'player', '', PORT3);
+      const bot3 = await hello('BotNoche', 'player', '', PORT3, { bot: true });
+      ok(h2.m.sleepNeed === 2, `need excluye al bot (${h2.m.sleepNeed})`);
+      const n1 = h1.seen.length;
+      h1.ws.send(JSON.stringify({ t: 'sleep', x: 10, y: 10, z: 10 }));
+      const on1 = await waitFor(h1.seen, m => m.t === 'sleep' && m.id === h1.m.id && m.on === true, n1);
+      ok(!!on1 && on1.count === 1 && on1.need === 2, 'primer durmiente 1/2');
+      // le rompen la cama: se despierta
+      const n1b = h1.seen.length;
+      h2.ws.send(JSON.stringify({ t: 'edit', x: 10, y: 10, z: 10, v: 0 }));
+      const woke = await waitFor(h1.seen, m => m.t === 'sleep' && m.id === h1.m.id && m.on === false, n1b);
+      ok(!!woke, 'romper la cama despierta al durmiente');
+      // ahora duermen los dos → amanecer
+      const n2 = h2.seen.length;
+      h1.ws.send(JSON.stringify({ t: 'sleep', x: 11, y: 10, z: 10 }));
+      await waitFor(h1.seen, m => m.t === 'sleep' && m.id === h1.m.id && m.on === true, 0);
+      h2.ws.send(JSON.stringify({ t: 'sleep', x: 12, y: 10, z: 10 }));
+      const reset = await waitFor(h2.seen, m => m.t === 'sleep' && m.reset === true, n2);
+      ok(!!reset, 'al dormir todos llega el reset del sueño');
+      const dawn = await waitFor(h2.seen, m => m.t === 'tod' && m.v < 0.5, n2);
+      ok(!!dawn && dawn.v >= 0 && dawn.v < 0.1, `el tod salta al amanecer (${dawn && dawn.v})`);
+      const chatDawn = await waitFor(h2.seen, m => m.t === 'chat' && /Amaneció/.test(m.text || ''), n2);
+      ok(!!chatDawn, 'aviso de amanecer por chat');
+      ok(bot3.m.sleepNeed === 2, `el bot no bloquea el salto (need=${bot3.m.sleepNeed})`);
+      for (const c of [h1, h2, bot3]) try { c.ws.close(); } catch (e) {}
+    } finally { try { srv3.kill(); } catch (e) {} }
   }
 
   for (const c of [boss, a, b]) c.ws.close();

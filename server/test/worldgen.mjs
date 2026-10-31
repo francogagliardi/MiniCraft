@@ -128,7 +128,7 @@ T2('mobBlocked', () => {
   };
   let DEFS = null;
   try {
-    const idDecl = html.match(/const AIR=0, GRASS=1[\s\S]*?STAIR_SBRICK_N=58;/)[0];
+    const idDecl = html.match(/const AIR=0, GRASS=1[\s\S]*?BED_Z_HEAD=63;/)[0];
     DEFS = new Function(idDecl + '; const SWORD=100, PICK=101; return (' + grabObj('const DEFS = ') + ');')();
   } catch (e) { ok(false, 'parseo de DEFS para drift: ' + e.message); }
   if (DEFS && WGP) {

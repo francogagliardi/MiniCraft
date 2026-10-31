@@ -173,13 +173,13 @@ const grabFn = (name) => {
   ok(/const d\s*=\s*\(Lb - NIGHT_MIN\)/.test(skyB), 'tickSky deriva la fase de la luz brillante');
 }
 
-// ---- 6. Alta en la suite (21 archivos) ----
+// ---- 6. Alta en la suite (22 archivos) ----
 {
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'server', 'package.json'), 'utf8'));
   const s = pkg.scripts.test;
   ok(/test\/config\.mjs/.test(s), 'npm test da de alta test/config.mjs');
   const count = (s.match(/test\/[\w-]+\.mjs/g) || []).length;
-  ok(count === 21, `el script test enumera 21 archivos (${count})`);
+  ok(count === 22, `el script test enumera 22 archivos (${count})`);
   ok(!/count\s*===\s*20/.test(s), 'package.json ya no menciona 20 archivos');
 }
 

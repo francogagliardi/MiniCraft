@@ -43,6 +43,7 @@ const STAIR_PLANKS_E = 43, STAIR_PLANKS_W = 44, STAIR_PLANKS_S = 45, STAIR_PLANK
 const STAIR_COBBLE_E = 47, STAIR_COBBLE_W = 48, STAIR_COBBLE_S = 49, STAIR_COBBLE_N = 50;
 const STAIR_BRICK_E = 51, STAIR_BRICK_W = 52, STAIR_BRICK_S = 53, STAIR_BRICK_N = 54;
 const STAIR_SBRICK_E = 55, STAIR_SBRICK_W = 56, STAIR_SBRICK_S = 57, STAIR_SBRICK_N = 58;
+const BED = 59, BED_X_FOOT = 60, BED_X_HEAD = 61, BED_Z_FOOT = 62, BED_Z_HEAD = 63;
 const grabObj = (marker) => {
   let i = html.indexOf(marker);
   i = html.indexOf('{', i);
@@ -266,7 +267,7 @@ ok(html.includes('Necesitás la espada'), 'aviso al atacar sin espada');
       'server: mismas constantes de ciclo que el cliente');
     ok(/function phaseNow\(\)/.test(srv) && /phaseNow\(\)\s*>=\s*NIGHT_START/.test(srv),
       'server: phaseNow() en [0,1) + isNight() = v >= NIGHT_START');
-    ok(/tod: phaseNow\(\), cyc: CYCLE_MS/.test(srv), 'server: welcome lleva tod + cyc');
+    ok(/tod: phaseNow\(\), cyc: cycleNowMs\(\)/.test(srv), 'server: welcome lleva tod + cyc');
     ok(/broadcast\(\{ t: 'tod', v: phaseNow\(\) \}\)/.test(srv), "server: difunde { t:'tod', v: phaseNow() }");
     const saveMatch = srv.match(/function save\(\)\s*\{[\s\S]*?\n\}/);
     ok(!!saveMatch && !/phaseNow/.test(saveMatch[0]), 'server: save() no persiste el reloj');

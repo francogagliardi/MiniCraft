@@ -11,6 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const WebSocket = require('ws');
 const AdminAuth = require('./admin-auth.js');
+const Sleep = require('./sleep.js');
 
 const PORT = +(process.env.PORT || 3000);
 // Número por env con default (knobs del limitador, overridables en tests).
@@ -68,8 +69,14 @@ const TOD_INTERVAL_MS = Math.max(50, +(process.env.TOD_INTERVAL_MS || 4000));
 const ZOMBIE_TICK_MS = Math.max(25, +(process.env.ZOMBIE_TICK_MS || 50));
 const ZOMBIE_SNAP_MS = Math.max(25, +(process.env.ZOMBIE_SNAP_MS || 100));
 const FORCE_NIGHT = process.env.ZOMBIE_FORCE_NIGHT === '1';
+// TIME_SCALE acelera el ciclo completo SOLO para demos/tests (1 = normal, 6 = 80 s).
+// No cambia la proporción día/noche: la fase sigue en [0,1) y NIGHT_START no se toca.
+const TIME_SCALE = Math.max(0.01, envNum(process.env.TIME_SCALE, 1));
+const cycleNowMs = () => CYCLE_MS / TIME_SCALE;
 const T0 = Date.now();
-function phaseNow() { return ((Date.now() - T0) % CYCLE_MS) / CYCLE_MS; }
+// Offset de fase que solo mueve el salto de noche (quórum de sueño). No se persiste.
+let sleepOffsetMs = 0;
+function phaseNow() { return ((Date.now() - T0 + sleepOffsetMs) % cycleNowMs()) / cycleNowMs(); }
 const isNight = () => FORCE_NIGHT || phaseNow() >= NIGHT_START;
 
 // Asegura que la carpeta de persistencia exista (ej: /data en Easypanel/Docker).
@@ -176,6 +183,44 @@ function broadcast(msg, except) {
 function send(ws, msg) {
   if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
 }
+// ---- sueño: quórum de jugadores reales (lógica pura en server/sleep.js) ----
+const anySleeping = () => [...players.values()].some(p => p.sleeping);
+const sleepQuorum = () => Sleep.quorum([...players.values()]);
+// Difunde el contador actual (y campos extra como id/name/on) a todos.
+function broadcastSleep(extra) {
+  const q = sleepQuorum();
+  broadcast({ t: 'sleep', count: q.count, need: q.need, ...(extra || {}) });
+  return q;
+}
+function wakePlayer(p) {
+  if (!p || !p.sleeping) return false;
+  p.sleeping = false;
+  p.sleepBed = null;
+  return true;
+}
+function wakeAndBroadcast(p) {
+  if (!wakePlayer(p)) return false;
+  const q = broadcastSleep({ id: p.id, name: p.name, on: false });
+  if (q.ready) skipNight();
+  return true;
+}
+// Recalcula, avisa y salta si ya duermen todos los reales vivos.
+function checkSleep() {
+  const q = broadcastSleep();
+  if (q.ready) skipNight();
+  return q;
+}
+// Salto al comienzo del amanecer: mueve el offset del reloj, despierta a todos y
+// difunde la fase nueva (el cliente hace snap). Los zombis mueren en el tick de la
+// horda al ver que ya no es de noche: no hay despawn propio.
+function skipNight() {
+  sleepOffsetMs += Sleep.dawnAdvanceMs(phaseNow(), cycleNowMs());
+  for (const p of players.values()) { p.sleeping = false; p.sleepBed = null; }
+  const q = sleepQuorum();
+  broadcast({ t: 'sleep', reset: true, count: q.count, need: q.need });
+  broadcast({ t: 'tod', v: phaseNow() });
+  broadcast({ t: 'chat', from: '☀️', text: 'Amaneció' });
+}
 // Limpieza compartida e idempotente: un solo `leave` por jugador,
 // la invoquen `close`, el heartbeat o el chequeo idle.
 function removePlayer(ws) {
@@ -185,6 +230,7 @@ function removePlayer(ws) {
   broadcast({ t: 'leave', id: p.id });
   broadcast({ t: 'chat', from: '🌿', text: `${p.name} se fue` });
   console.log(horaAr() + `➖ ${p.name} — ${players.size} conectados`);
+  if (p.sleeping || anySleeping()) checkSleep(); // el que se fue puede ser el que faltaba
   return true;
 }
 
@@ -273,15 +319,20 @@ wss.on('connection', (ws) => {
       me = {
         id: nextId++, name: cleanName(m.name),
         mode: admin ? 'admin' : 'player', admin,
+        bot: m.bot === true, // declarativo: excluye al bot del quórum de sueño
+        sleeping: false, sleepBed: null,
         pos: [128.5, 20, 136.5], yaw: Math.PI, pitch: 0, hp: 10, dead: 0,
         held: 0, seq: 0, // ítem en mano + contador de golpes (PvP): el rival ve el arma y el gesto
         skin: cleanSkin(m.skin), // aspecto declarado (aditivo): el resto ve el robot/piel pedida
       };
       players.set(ws, me);
       ws.lastMv = Date.now();
+      const welcomeQ = sleepQuorum();
       send(ws, {
         t: 'welcome', id: me.id, seed: SEED, edits, admin,
-        tod: phaseNow(), cyc: CYCLE_MS,
+        tod: phaseNow(), cyc: cycleNowMs(),
+        sleeping: [...players.values()].filter(p => p.sleeping).map(p => p.id),
+        sleepNeed: welcomeQ.need,
         zom: horde.zombies.map(z => ({ i: z.i, p: [z.x, z.y, z.z], yaw: z.yaw, hp: z.hp, dead: z.dead, atk: z.atk || 0 })),
         adminDenied: wantAdmin && !admin,
         players: [...players.values()].filter(p => p !== me)
@@ -291,6 +342,7 @@ wss.on('connection', (ws) => {
       broadcast({ t: 'chat', from: '🌿', text: `${me.name} se unió (${me.mode === 'admin' ? 'admin 🛠' : 'jugador 🌱'})` }, ws);
       console.log(horaAr() + `➕ ${me.name} (${me.mode}) — ${players.size} conectados`);
       helloInFlight = false;
+      if (anySleeping()) checkSleep(); // el que entra es un real despierto: rompe el quórum
       return;
     }
     if (!me) return;
@@ -305,6 +357,7 @@ wss.on('connection', (ws) => {
       if (Number.isInteger(+m.held)) me.held = +m.held;
       if (Number.isInteger(+m.seq)) me.seq = +m.seq;
       broadcast({ t: 'pm', id: me.id, p: me.pos, yaw: me.yaw, pitch: me.pitch, hp: me.hp ?? 10, dead: me.dead ?? 0, held: me.held, seq: me.seq, skin: me.skin }, ws);
+      if (me.dead === 1 && me.sleeping) wakeAndBroadcast(me); // morir despierta
     } else if (m.t === 'edit') {
       const { x, y, z, v } = m;
       if (![x, y, z, v].every(n => Number.isInteger(n))) return;
@@ -315,6 +368,24 @@ wss.on('connection', (ws) => {
       world[idx] = v; // mantener la réplica del mundo en sync con las ediciones
       if (edits.length > 300000) edits.splice(0, edits.length - 300000);
       broadcast({ t: 'pedit', x, y, z, v, by: me.name }, ws);
+      // si alguien duerme en esa celda, se despierta (le rompieron la cama)
+      for (const p of [...players.values()]) {
+        if (p.sleeping && Array.isArray(p.sleepBed) &&
+            p.sleepBed[0] === x && p.sleepBed[1] === y && p.sleepBed[2] === z) wakeAndBroadcast(p);
+      }
+    } else if (m.t === 'sleep') {
+      if (me.dead || me.sleeping) return;
+      if (!isNight()) {
+        send(ws, { t: 'sleep', id: me.id, name: me.name, on: false, denied: 'day', count: sleepQuorum().count, need: sleepQuorum().need });
+        return;
+      }
+      me.sleeping = true;
+      me.sleepBed = [Math.trunc(+m.x || 0), Math.trunc(+m.y || 0), Math.trunc(+m.z || 0)];
+      const q = broadcastSleep({ id: me.id, name: me.name, on: true });
+      broadcast({ t: 'chat', from: '😴', text: `${me.name} se durmió (${q.count}/${q.need})` });
+      if (q.ready) skipNight();
+    } else if (m.t === 'wake') {
+      wakeAndBroadcast(me);
     } else if (m.t === 'hit') {
       const target = [...players.keys()].find(w => players.get(w).id === m.id);
       if (target) {

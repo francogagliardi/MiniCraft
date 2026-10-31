@@ -118,6 +118,15 @@
   /* visibility:hidden (además de opacity:0) para que un botón con foco dentro de un overlay
      oculto deje de ser focuseable: si no, Enter dispara su click y findSpawn() mueve al spawn. */
   .overlay.hidden { opacity:0; pointer-events:none; visibility:hidden; }
+  /* sueño: capa oscura con contador; no bloquea el pointer lock ni el keepalive */
+  #sleep { position:fixed; inset:0; z-index:45; display:flex; align-items:center; justify-content:center;
+    background:radial-gradient(circle at 50% 40%, rgba(12,16,40,.55), rgba(4,6,18,.92));
+    color:#f4f1e8; text-align:center; transition:opacity .3s, visibility .3s; }
+  #sleep.hidden { opacity:0; pointer-events:none; visibility:hidden; }
+  #sleep .zzz { font-size:76px; line-height:1; animation:float 3.2s ease-in-out infinite; }
+  #sleep h2 { font-size:34px; font-weight:900; margin:10px 0 4px; }
+  #sleep .count { font-size:20px; font-weight:800; color:#ffe9a8; }
+  #sleep .tip { margin-top:12px; font-size:14px; color:#c9d3e6; font-weight:600; }
   /* Las tarjetas dentro de #pause (menú principal de pausa y panel de configuración)
      se alternan: `.hidden` acá tiene que sacarlas del layout, no solo transparentarlas. */
   #pause .card.hidden { display:none; }
@@ -257,6 +266,14 @@
 <div id="health"></div>
 <div id="toast"></div>
 <div id="hotbar"></div>
+<div id="sleep" class="hidden">
+  <div>
+    <div class="zzz">😴</div>
+    <h2>Durmiendo…</h2>
+    <div class="count" id="sleepCount">0/0</div>
+    <div class="tip">WASD, espacio o click para despertar</div>
+  </div>
+</div>
 <div id="hint"><b>W A S D</b> moverse · <b>Espacio</b> saltar<br><b>Click izq</b> romper · <b>Click der</b> poner<br><b>E</b> inventario · <b>Enter</b> chat · <b>P</b> pantalla completa · <b>V</b> cámara 1ª/3ª trasera/3ª frontal · tu aspecto cambia ojo, hitbox y alcance (no velocidad ni salto) · acariciá 🐷🐑</div>
 <div id="plist"></div>
 <div id="chatlog"></div>
@@ -477,7 +494,8 @@ const AIR=0, GRASS=1, DIRT=2, STONE=3, LOG=4, PLANKS=5, LEAVES=6, SAND=7, GLASS=
       STAIR_PLANKS_E=43, STAIR_PLANKS_W=44, STAIR_PLANKS_S=45, STAIR_PLANKS_N=46,
       STAIR_COBBLE_E=47, STAIR_COBBLE_W=48, STAIR_COBBLE_S=49, STAIR_COBBLE_N=50,
       STAIR_BRICK_E=51, STAIR_BRICK_W=52, STAIR_BRICK_S=53, STAIR_BRICK_N=54,
-      STAIR_SBRICK_E=55, STAIR_SBRICK_W=56, STAIR_SBRICK_S=57, STAIR_SBRICK_N=58;
+      STAIR_SBRICK_E=55, STAIR_SBRICK_W=56, STAIR_SBRICK_S=57, STAIR_SBRICK_N=58,
+      BED=59, BED_X_FOOT=60, BED_X_HEAD=61, BED_Z_FOOT=62, BED_Z_HEAD=63;
 const WG_W = W, WG_H = H, WG_SURFACE = WATER_Y, WG_OX = OX, WG_OZ = OZ;
 function mulberry(seed){ let a = seed>>>0; return () => {
   a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a>>>15, 1|a);
@@ -618,10 +636,15 @@ const DEFS = {
   [DOORZ_OPEN]:{ name:'Puerta abierta', css:'linear-gradient(135deg,#d8b078,#8a5f30)', color:0xcfa672, door:1, open:1, faceZ:1, hard:.9, tiles:{top:8,side:26,bottom:8} },
   [DOORZ2]: { name:'Puerta 🚪',  css:'linear-gradient(135deg,#d8b078,#8a5f30)', color:0xcfa672, door:1, faceZ:1, hard:.9, tiles:{top:8,side:26,bottom:8} },
   [DOORZ2_OPEN]:{ name:'Puerta abierta', css:'linear-gradient(135deg,#d8b078,#8a5f30)', color:0xcfa672, door:1, open:1, faceZ:1, hard:.9, tiles:{top:8,side:26,bottom:8} },
+  [BED]:    { name:'Cama 🛏️',    css:'linear-gradient(135deg,#c94b4b 0 55%,#f4f1e8 55% 100%)', color:0xb03a3a, item:'bed', tile:34 },
+  [BED_X_FOOT]:{ name:'Cama 🛏️', css:'linear-gradient(135deg,#c94b4b 0 70%,#8a5f30 70% 100%)', color:0xb03a3a, cube:1, bed:1, bedAxis:'x', bedHead:false, hard:.3, tiles:{top:35,side:36,bottom:36} },
+  [BED_X_HEAD]:{ name:'Cama 🛏️', css:'linear-gradient(135deg,#c94b4b 0 55%,#f4f1e8 55% 100%)', color:0xb03a3a, cube:1, bed:1, bedAxis:'x', bedHead:true, hard:.3, tiles:{top:34,side:36,bottom:36} },
+  [BED_Z_FOOT]:{ name:'Cama 🛏️', css:'linear-gradient(135deg,#c94b4b 0 70%,#8a5f30 70% 100%)', color:0xb03a3a, cube:1, bed:1, bedAxis:'z', bedHead:false, hard:.3, tiles:{top:35,side:36,bottom:36} },
+  [BED_Z_HEAD]:{ name:'Cama 🛏️', css:'linear-gradient(135deg,#c94b4b 0 55%,#f4f1e8 55% 100%)', color:0xb03a3a, cube:1, bed:1, bedAxis:'z', bedHead:true, hard:.3, tiles:{top:34,side:36,bottom:36} },
   [SWORD]:  { name:'Espada ⚔️',  css:'linear-gradient(135deg,#f4f6fa 0 60%,#c9a13b 60% 72%,#8a94a8 72% 100%)', color:0xdfe6f2, item:'sword' },
   [PICK]:   { name:'Pico ⛏️',    css:'linear-gradient(135deg,#c3c8cf 0 30%,#8a5f30 30% 70%,#6b4a2f 70% 100%)', color:0xa8adb5, item:'pick' },
 };
-const INVENTORY = [GRASS,DIRT,STONE,COBBLE,SBRICK,LOG,PLANKS,BOOKS,LEAVES,SAND,SNOW,CLAY,WOOL,GLASS,BRICK,OBSIDIAN,PUMPKIN,MELON,HAY,GLOW,DOOR,SWORD,PICK,FLOWER_R,FLOWER_Y,TORCH,SLAB_STONE,SLAB_PLANKS,SLAB_COBBLE,SLAB_BRICK,SLAB_SBRICK,STAIR_STONE_E,STAIR_PLANKS_E,STAIR_COBBLE_E,STAIR_BRICK_E,STAIR_SBRICK_E];
+const INVENTORY = [GRASS,DIRT,STONE,COBBLE,SBRICK,LOG,PLANKS,BOOKS,LEAVES,SAND,SNOW,CLAY,WOOL,GLASS,BRICK,OBSIDIAN,PUMPKIN,MELON,HAY,GLOW,DOOR,SWORD,PICK,FLOWER_R,FLOWER_Y,TORCH,SLAB_STONE,SLAB_PLANKS,SLAB_COBBLE,SLAB_BRICK,SLAB_SBRICK,STAIR_STONE_E,STAIR_PLANKS_E,STAIR_COBBLE_E,STAIR_BRICK_E,STAIR_SBRICK_E,BED];
 const DEFAULT_HOTBAR = [GRASS,DIRT,STONE,PLANKS,LOG,LEAVES,GLASS,BRICK,COBBLE];
 
 /* ============ MODO / VIDA ============ */
@@ -755,6 +778,23 @@ atlasCanvas.width = 128; atlasCanvas.height = 80;
     c.fillStyle='#fff6c0'; c.fillRect(7,3,1,2); });
   // losa de piedra: variante gris como la piedra (tile 3) con leve variación
   flat(33,'#a8adb5',['#979ca4','#bcc1c8','#8a9099','#c3c8cf']);
+  // cama: manta (tapa cabecera/pie) y lateral con marco de madera + frazada
+  tile(34, c => { c.fillStyle='#b23a3a'; c.fillRect(0,0,16,16);
+    c.fillStyle='#9a2d2d'; for(let k=0;k<16;k+=4){ c.fillRect(0,k,16,1); c.fillRect(k,0,1,16); }
+    c.fillStyle='#c94f4f'; c.fillRect(1,1,3,1); c.fillRect(9,5,3,1); c.fillRect(5,9,3,1); c.fillRect(13,13,2,1);
+    speckle(c,0,['#a53030','#c94f4f'],10); });
+  tile(35, c => { c.fillStyle='#b23a3a'; c.fillRect(0,0,16,16);
+    c.fillStyle='#9a2d2d'; for(let k=0;k<16;k+=4){ c.fillRect(0,k,16,1); c.fillRect(k,0,1,16); }
+    c.fillStyle='#8e2828'; c.fillRect(0,6,16,2);   // pliegue de la manta a los pies
+    c.fillStyle='#c94f4f'; c.fillRect(0,5,16,1);
+    speckle(c,0,['#a53030','#c94f4f'],10); });
+  tile(36, c => { c.fillStyle='#7a5228'; c.fillRect(0,0,16,16); // marco de madera
+    c.fillStyle='#8f6332'; c.fillRect(0,12,16,1); c.fillRect(0,14,16,1); c.fillRect(2,13,1,3); c.fillRect(11,12,1,2);
+    c.fillStyle='#5e3d1e'; c.fillRect(0,15,16,1);
+    c.fillStyle='#b23a3a'; c.fillRect(0,0,16,7);   // frazada que cae por el lateral
+    c.fillStyle='#9a2d2d'; c.fillRect(0,6,16,1);   // sombra del borde
+    c.fillStyle='#c94f4f'; c.fillRect(0,0,16,1);
+    speckle(c,0,['#a53030','#8f6332'],12); });
 }
 const atlasTex = new THREE.CanvasTexture(atlasCanvas);
 atlasTex.magFilter = THREE.NearestFilter; atlasTex.minFilter = THREE.NearestFilter;
@@ -1132,6 +1172,47 @@ const solidAt = (x,y,z) => {
   if(!inB(x,y,z)) return x<0||x>=W||z<0||z>=W;
   return isSolid(world[widx(x,y,z)]);
 };
+/* bed:start */
+// Cama de 2 celdas (spec world/sleep). Bloque autocontenido: bed-sleep.mjs lo extrae
+// y lo evalúa solo, así que no puede referenciar DEFS ni las constantes de afuera.
+// Los ids van acá y el test los compara con BED_X_FOOT/HEAD/Z_FOOT/HEAD.
+const BED_WORLD_IDS = [60, 61, 62, 63]; // pie X, cabecera X, pie Z, cabecera Z
+function bedKind(id){
+  const i = BED_WORLD_IDS.indexOf(id);
+  if(i < 0) return null;
+  return { axis: i < 2 ? 'x' : 'z', head: i === 1 || i === 3 };
+}
+// Devuelve las celdas de la cama: la propia + la pareja si `isPartner` la
+// encuentra en cualquiera de los dos sentidos del eje. El id solo codifica eje y
+// cabecera/pie, NO el signo, así que buscar el vecino es la única forma robusta de
+// emparejar una cama colocada mirando hacia -X/-Z.
+function bedCells(x, y, z, id, isPartner){
+  const k = bedKind(id);
+  if(!k) return [[x, y, z]];
+  const dx = k.axis === 'x' ? 1 : 0;
+  const dz = k.axis === 'z' ? 1 : 0;
+  for(const s of [1, -1]){
+    const nx = x + dx * s, nz = z + dz * s;
+    if(isPartner && isPartner(nx, y, nz)) return [[x, y, z], [nx, y, nz]];
+  }
+  return [[x, y, z]];
+}
+function bedPlacement(dx, dz){
+  if(Math.abs(dx) >= Math.abs(dz))
+    return { axis:'x', foot:BED_WORLD_IDS[0], head:BED_WORLD_IDS[1], dx: dx >= 0 ? 1 : -1, dz: 0 };
+  return { axis:'z', foot:BED_WORLD_IDS[2], head:BED_WORLD_IDS[3], dx: 0, dz: dz >= 0 ? 1 : -1 };
+}
+/* bed:end */
+// Empareja contra el mundo real: el vecino tiene que ser una mitad del mismo eje
+// con cabecera/pie opuestos (evita romper una cama vecina que casualmente toca).
+function bedCellsAt(x, y, z, id){
+  const k = bedKind(id);
+  if(!k) return [[x, y, z]];
+  return bedCells(x, y, z, id, (nx, ny, nz) => {
+    const nk = bedKind(get(nx, ny, nz));
+    return !!nk && nk.axis === k.axis && nk.head !== k.head;
+  });
+}
 // Wrapper del cliente sobre el genWorld del bloque compartido: limpia las
 // ediciones y regenera el mundo en el buffer local `world` con la seed actual.
 function newWorld(){ edits.length = 0; genWorld(world, SEED); }
@@ -1235,6 +1316,42 @@ function emitGlobalCell(x,y,z,b,T,F,G,TM,S){
       for(let f=0;f<6;f++){ const Fc=FACES[f], nb=get(x+Fc.d[0],y+Fc.d[1],z+Fc.d[2]);
         if(nb===GLOW||isOpaque(nb)) continue;
         G.quad(x,y,z,Fc.v,Fc.d,11,1,false); }
+    } else if(DEFS[b]?.bed){
+      // Cama: media altura (0-0.5) con tapa propia (cabecera/pie) y lateral compartido.
+      const TB=DEFS[b].tiles;
+      const SIDES=[
+        { d:[1,0,0],  shade:.8, v:[[1,0,1],[1,0,0],[1,.5,0],[1,.5,1]] },
+        { d:[-1,0,0], shade:.8, v:[[0,0,0],[0,0,1],[0,.5,1],[0,.5,0]] },
+        { d:[0,0,1],  shade:.7, v:[[0,0,1],[1,0,1],[1,.5,1],[0,.5,1]] },
+        { d:[0,0,-1], shade:.7, v:[[1,0,0],[0,0,0],[0,.5,0],[1,.5,0]] },
+      ];
+      for(const Fc of SIDES){
+        if(isOpaque(get(x+Fc.d[0],y+Fc.d[1],z+Fc.d[2]))) continue;
+        S.quad(x,y,z,Fc.v,Fc.d,TB.side,Fc.shade,false);
+      }
+      if(!isOpaque(get(x,y+1,z)))
+        S.quad(x,y+.5,z,[[0,0,1],[1,0,1],[1,0,0],[0,0,0]],[0,1,0],TB.top,1,false);
+      if(!isOpaque(get(x,y-1,z)))
+        S.quad(x,y,z,[[0,0,0],[1,0,0],[1,0,1],[0,0,1]],[0,-1,0],TB.bottom,.5,false);
+      if(DEFS[b].bedHead){
+        // Almohada 3D en el borde externo de la cabecera (el lado opuesto al pie).
+        // El id no guarda el signo, así que la dirección sale del vecino que es pie.
+        const ax=DEFS[b].bedAxis;
+        let dx=0, dz=0;
+        const isFoot=(nx,nz)=>{ const nk=bedKind(get(nx,y,nz)); return !!nk && nk.axis===ax && !nk.head; };
+        if(ax==='x'){ if(isFoot(x-1,z)) dx=1; else if(isFoot(x+1,z)) dx=-1; }
+        else { if(isFoot(x,z-1)) dz=1; else if(isFoot(x,z+1)) dz=-1; }
+        const cx=x+.5+dx*.1, cz=z+.5+dz*.1, hw=.34, ph=.11, y0=y+.5;
+        S.quad(cx-hw, y0+ph, cz-hw,
+          [[0,0,2*hw],[2*hw,0,2*hw],[2*hw,0,0],[0,0,0]],[0,1,0],17,1,false);
+        const PS=[
+          { d:[1,0,0],  sh:.9,  v:[[2*hw,0,2*hw],[2*hw,0,0],[2*hw,ph,0],[2*hw,ph,2*hw]] },
+          { d:[-1,0,0], sh:.9,  v:[[0,0,0],[0,0,2*hw],[0,ph,2*hw],[0,ph,0]] },
+          { d:[0,0,1],  sh:.85, v:[[0,0,2*hw],[2*hw,0,2*hw],[2*hw,ph,2*hw],[0,ph,2*hw]] },
+          { d:[0,0,-1], sh:.85, v:[[2*hw,0,0],[0,0,0],[0,ph,0],[2*hw,ph,0]] },
+        ];
+        for(const Fc of PS) S.quad(cx-hw, y0, cz-hw, Fc.v, Fc.d, 17, Fc.sh, false);
+      }
     } else if(DEFS[b]?.slab){
       // Losa: medio cubo (mitad inferior, 0.5 de alto). Omite caras contra opacos como los cubos.
       const T33=DEFS[b].tiles;
@@ -1645,6 +1762,10 @@ addEventListener('keydown', e=>{
     else if(dead&&state==='play') respawn();
     return;
   }
+  if(state==='sleep'){
+    if(['KeyW','KeyA','KeyS','KeyD','Space','ShiftLeft','ShiftRight'].includes(e.code)) wakeUp();
+    return;
+  }
   if(e.code==='Escape'&&state==='chat'){ closeChat(false); return; }
   if(e.code==='KeyE'&&!dead){
     if(state==='inv'){ closeInv(); return; }
@@ -1680,6 +1801,7 @@ function collidesAt(px,py,pz,r,hgt){
       for(let z=Math.floor(pz-r);z<=Math.floor(pz+r);z++){
         const b=inB(x,y,z)?world[widx(x,y,z)]:AIR;
         if(DEFS[b]?.slab&&py>=y+.5) continue; // pies a la altura o sobre la tapa: no traba
+        if(DEFS[b]?.bed&&py>=y+.5) continue; // la cama es media altura: se pisa arriba
         if(DEFS[b]?.stair&&py>=y+.5&&stairLowAt(b,px,pz,x,z)) continue; // sobre el peldaño bajo: no traba
         if(solidAt(x,y,z)) return true;
       }
@@ -1695,7 +1817,7 @@ function slabBlocked(px,py,pz){
     for(let z=Math.floor(pz-r);z<=Math.floor(pz+r);z++){
       const b=inB(x,y,z)?world[widx(x,y,z)]:AIR;
       if(b===AIR||b===WATER) continue;
-      if(DEFS[b]?.slab||DEFS[b]?.stair){ slab=true; continue; }
+      if(DEFS[b]?.slab||DEFS[b]?.stair||DEFS[b]?.bed){ slab=true; continue; }
       if(isSolid(b)) return false;
     }
   return slab;
@@ -1712,6 +1834,7 @@ function movePlayer(axis,d){
 }
 function damage(amount, cause){
   if(isAdmin()||dead) return;
+  if(state==='sleep') wakeUp(); // el daño despierta antes de aplicar
   const now=performance.now()/1000;
   if(now-godT<.6) return;
   godT=now; lastHurt=now; shakeT=1;
@@ -2605,7 +2728,17 @@ function doBreak(pre){
   const h=pre||raycast(); if(!h) return;
   const d=DEFS[h.b];
   if(d.unbreakable){ toast('🪨 La roca madre es indestructible'); return; }
-  if(isDoor(h.b)){
+  if(DEFS[h.b]?.bed){
+    // romper una mitad saca la cama entera (2 celdas), mire hacia donde mire
+    for(const [cx,cy,cz] of bedCellsAt(h.x,h.y,h.z,h.b)){
+      burst(cx,cy,cz,blockColor(h.b));
+      const v = waterRefill(cx,cy,cz);
+      rawSet(cx,cy,cz,v);
+      if(!mp){ edits.push([widx(cx,cy,cz),v]); }
+      else netSend({ t:'edit', x:cx, y:cy, z:cz, v });
+    }
+    if(!mp) saveSoon();
+  } else if(isDoor(h.b)){
     // romper una mitad saca la puerta entera (2 bloques)
     for(const [cx,cy,cz] of doorCells(h.x,h.y,h.z)){
       burst(cx,cy,cz,blockColor(h.b));
@@ -2646,9 +2779,21 @@ function ocupadoPor(x,y,z){
 function doPlace(){
   const h=raycast(); if(!h) return;
   const id=hotbarIds[sel], dd=DEFS[id];
-  if(dd?.item) return; // los ítems (espada/pico) no son bloques: nunca se colocan en el mundo
   const x=h.x+h.nx, y=h.y+h.ny, z=h.z+h.nz;
   if(!inB(x,y,z)) return;
+  if(dd?.item === 'bed'){
+    // Cama de 2 celdas: pie en la celda apuntada y cabecera en la dirección de la mirada.
+    const ld=lookDir(), p=bedPlacement(ld.x,ld.z);
+    const hx=x+p.dx, hz=z+p.dz;
+    if(!inB(hx,y,hz)){ toast('🛏️ La cama no entra ahí'); return; }
+    for(const [cx,cz] of [[x,z],[hx,hz]]){
+      const c=get(cx,y,cz);
+      if(c!==AIR&&c!==WATER&&!DEFS[c]?.flower){ toast('🛏️ La cama necesita dos celdas libres'); return; }
+      if(ocupadoPor(cx,y,cz)){ toast('⛔ Ahí estás vos'); return; }
+    }
+    editBlock(x,y,z,p.foot); editBlock(hx,y,hz,p.head); sfxPlace(); return;
+  }
+  if(dd?.item) return; // los ítems (espada/pico) no son bloques: nunca se colocan en el mundo
   const cur=get(x,y,z);
   if(DEFS[cur]?.slab&&id===cur){ editBlock(x,y,z,DEFS[cur].slabBase); sfxPlace(); return; }
   if(dd?.stair){
@@ -2751,6 +2896,7 @@ let rAction='place'; // qué hace mantener el clic derecho: place | greet | pet 
 function onRightDown(){
   if(hotbarIds[sel]===SWORD){ rAction='attack'; swordAttack(); lastAct=performance.now(); return; }
   const dh=raycast();
+  if(dh&&DEFS[dh.b]?.bed){ rAction='sleep'; enterSleep(dh.x,dh.y,dh.z); lastAct=performance.now(); return; }
   if(dh&&isDoor(dh.b)){ rAction='door'; toggleDoor(dh.x,dh.y,dh.z); lastAct=performance.now(); return; }
   const av=avatarHit();
   if(av){ rAction='greet'; greetRemote(av.a); lastAct=performance.now(); return; }
@@ -2759,6 +2905,7 @@ function onRightDown(){
   rAction='place'; doPlace(); lastAct=performance.now();
 }
 addEventListener('mousedown',e=>{
+  if(state==='sleep'){ wakeUp(); return; }
   if(state!=='play'||!canAct()||dead) return;
   if(e.button===0){ mouseDown[0]=true; resetBreak(); onLeftDown(); }
   if(e.button===2){ mouseDown[2]=true; onRightDown(); }
@@ -2935,8 +3082,8 @@ function renderHotbar(){
 function select(i){
   sel=i; sfxPop();
   const d=DEFS[hotbarIds[sel]];
-  const ico = d.item==='sword' ? '⚔️ ' : (d.item==='pick' ? '⛏️ ' : '🧱 ');
-  const tip = d.item==='sword' ? ' (clic der para atacar)' : (d.item==='pick' ? ' (mantené click izq para picar)' : '');
+  const ico = d.item==='sword' ? '⚔️ ' : (d.item==='pick' ? '⛏️ ' : (d.item==='bed' ? '🛏️ ' : '🧱 '));
+  const tip = d.item==='sword' ? ' (clic der para atacar)' : (d.item==='pick' ? ' (mantené click izq para picar)' : (d.item==='bed' ? ' (click der sobre la cama de noche)' : ''));
   toast(ico+d.name+tip);
   document.querySelectorAll('.slot').forEach((s,j)=>s.classList.toggle('sel',j===sel));
   refreshInvMarks();
@@ -3046,6 +3193,8 @@ function connectMP(wantedMode){
         // ciclo día/noche: adoptar la hora y la duración del server (primera fase directa)
         if(Number.isFinite(m.cyc)) cycleMs=m.cyc;
         if(Number.isFinite(m.tod)) onTod(m.tod);
+        if(Number.isFinite(m.sleepNeed)) sleepNeed=m.sleepNeed;
+        if(Array.isArray(m.sleeping)&&m.sleeping.length){ sleepers=new Set(m.sleeping); renderSleep(sleepers.size, sleepNeed); }
         if(Array.isArray(m.zom)) applyZsList(m.zom); // zombis ya presentes al entrar
         resolve({ solo:false, data:m });
       }
@@ -3070,6 +3219,15 @@ function setupNetHandlers(){
       if(isDoor(was)&&isDoor(m.v)&&doorOpen(was)!==doorOpen(m.v)){
         doorAnims.set(m.x+','+m.y+','+m.z,{p:0,from:doorOpen(was)?1:0,to:doorOpen(m.v)?1:0}); } }
     else if(m.t==='tod'){ onTod(m.v); }
+    else if(m.t==='sleep'){
+      if(m.reset){ sleepers.clear(); renderSleep(0, m.need); if(state==='sleep') wakeUp(false); }
+      else if(m.denied==='day'){ renderSleep(m.count, m.need); if(state==='sleep') wakeUp(false); toast('🌙 Solo podés dormir de noche'); }
+      else {
+        if(m.id){ if(m.on) sleepers.add(m.id); else sleepers.delete(m.id); }
+        renderSleep(m.count, m.need);
+        if(m.id===myId&&m.on===false&&state==='sleep') wakeUp(false);
+      }
+    }
     else if(m.t==='join'){ addRemote(m); chatMsg('🌿',`${m.name} se unió`); }
     else if(m.t==='leave'){ removeRemote(m.id); }
     else if(m.t==='chat'){ chatMsg(m.from,m.text); tone(700,900,.07,'sine',.1); }
@@ -3126,6 +3284,28 @@ function sendMove(){
 
 /* ============ ESTADO + LOCK ============ */
 let state='menu', started=false;
+let sleepers=new Set(), sleepCount=0, sleepNeed=0, sleepBed=null;
+function renderSleep(count, need){
+  if(Number.isFinite(count)) sleepCount=count;
+  if(Number.isFinite(need)) sleepNeed=need;
+  const el=document.getElementById('sleepCount');
+  if(el) el.textContent=`${sleepCount}/${sleepNeed}`;
+}
+function enterSleep(x, y, z){
+  if(state!=='play'||dead) return;
+  if(!isNight(dayV)){ toast('🌙 Solo podés dormir de noche'); return; }
+  state='sleep'; sleepBed=[x,y,z];
+  player.vel.x=0; player.vel.z=0;
+  renderSleep(sleepers.size, sleepNeed);
+  const el=document.getElementById('sleep'); if(el) el.classList.remove('hidden');
+  netSend({ t:'sleep', x, y, z });
+}
+function wakeUp(sendWake=true){
+  if(state!=='sleep') return;
+  state='play'; sleepBed=null;
+  const el=document.getElementById('sleep'); if(el) el.classList.add('hidden');
+  if(sendWake) netSend({ t:'wake' });
+}
 const menu=document.getElementById('menu'), pause=document.getElementById('pause');
 const locked=()=>document.pointerLockElement===document.body;
 function tryLock(){
@@ -3140,6 +3320,7 @@ function tryLock(){
 }
 canvas.addEventListener('click',()=>{ if(started&&state==='play'&&!locked()&&!dead) tryLock(); });
 document.addEventListener('pointerlockchange',()=>{
+  if(state==='sleep'&&!locked()) wakeUp(); // ESC/daño al perder el lock: despierta y luego pausa
   mouseDown={0:false,2:false}; rAction='place'; resetBreak(); lookReset();
   if(locked()){ lookLockPending=LOOK_LOCK_SKIP_EVENTS; menu.classList.add('hidden'); pause.classList.add('hidden');
     if(state==='pause') state='play';
@@ -3372,7 +3553,7 @@ function loop(now){
   // y con el tope por frame. Al salir de play el lock se pierde y el buffer se limpia.
   if(started&&state==='play'&&!dead&&!TOUCH) drainLook(player,MOUSE_SENSITIVITY,LOOK_MAX_RAD_PER_FRAME);
   if(started&&state==='play'&&canAct()&&!dead){ physicsMove(dt,true); tickBreak(dt); }
-  if(started&&!dead&&(state==='play'||state==='inv'||state==='chat'||state==='pause')) physicsGravity(dt);
+  if(started&&!dead&&(state==='play'||state==='inv'||state==='chat'||state==='pause'||state==='sleep')) physicsGravity(dt);
   if(started&&dead&&deathPos){
     // te caés al suelo: la vista baja y se ladea, y recién después aparece el cartel
     deathT+=dt;

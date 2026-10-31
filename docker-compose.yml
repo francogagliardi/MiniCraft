@@ -13,6 +13,11 @@ services:
       # propósito: era una clave conocida por cualquiera (estaba en el README).
       ADMIN_KEY: ${ADMIN_KEY:-}
       ADMIN_KEY_HASH: ${ADMIN_KEY_HASH:-}
+      # Demo/test: TIME_SCALE acelera el ciclo día/noche (1 = normal, 6 = 80 s)
+      # sin cambiar la proporción día/noche; TOD_INTERVAL_MS baja el intervalo
+      # de sincronización para que el reloj rápido no se note a saltos.
+      TIME_SCALE: ${TIME_SCALE:-1}
+      TOD_INTERVAL_MS: ${TOD_INTERVAL_MS:-4000}
       MINICRAFT_DIR: /app
       WORLD_FILE: /data/world.json
     volumes:
