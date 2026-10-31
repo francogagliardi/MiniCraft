@@ -45,6 +45,11 @@ a que levante antes de buildear.
      `docker compose logs --tail 20`.
    - Avisar al usuario **qué mirar** y decirle que pruebe en
      http://localhost:3000.
+   - En ese mismo mensaje, poner **el link local y la clave admin de esa corrida
+     juntos, en la misma línea** (ej. `http://localhost:3000 · admin: <clave>`).
+     Si la corrida arrancó sin `ADMIN_KEY`/`ADMIN_KEY_HASH`, decir explícitamente
+     `admin deshabilitado` en vez de omitirlo. La clave es **solo dev local**:
+     nunca se commitea, no va a `.env` versionado ni a la documentación.
    - **No commitear, no pushear y no archivar hasta que el usuario apruebe
      explícitamente.**
 4. **Al aprobar, en este orden:**
