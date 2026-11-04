@@ -1829,6 +1829,12 @@ function movePlayer(axis,d){
   if((axis==='x'||axis==='z')&&player.onGround&&!player.fly){
     if(slabBlocked(nx,ny,nz)&&!collides(nx,ny+.5,nz)){ p.set(nx,ny+.5,nz); return true; }
   }
+  // Empuje bloqueado contra un cactus: el paso discreto puede dejar la caja hasta un
+  // paso afuera, así que el contacto se evalúa con la posición que se intentó tomar.
+  if(axis==='x'||axis==='z'){
+    const cb=playerBox(mySkin);
+    if(cactusBlocks(nx,ny,nz,cb.r,cb.h,get)) cactusPressAt=performance.now()/1000;
+  }
   if(axis==='y'){ if(d<0) player.onGround=true; player.vel.y=0; }
   return false;
 }
@@ -2003,18 +2009,20 @@ function raycast(maxD){
 // No cambia el bloque, su textura, dureza, inventario ni worldgen: solo agrega comportamiento.
 const CACTUS_ID = 22;          // reutiliza el bloque existente "Cactus 🌵" (MELON)
 const CACTUS_MARGIN = 0.06;    // margen de contacto; el cactus es sólido y no se solapa
+const CACTUS_PRESS_S = 0.12;   // vigencia del empuje bloqueado (s): cubre el paso discreto
 const CACTUS_WATER = 12;       // id de WATER; no aparece dentro del agua
+let cactusPressAt = -99;       // último intento de movimiento bloqueado por un cactus
 const SPAWN_PREF = Object.freeze({ x: 108.5, y: 16.01, z: 117.5 });
 
-// Celdas del cuerpo del jugador (margen en x/z y en el tope, sin margen en el borde inferior)
-// para que pararse ARRIBA de un cactus sea seguro: los pies quedan en y+1, fuera de la celda.
+// Celdas del cuerpo del jugador. El piso incluye la celda inmediatamente debajo de
+// los pies: apoyarse arriba de un cactus también pincha (pies en y+1 → celda y).
 function cactusCells(px, py, pz, r, h) {
   const cells = [];
   const x0 = Math.floor(px - r - CACTUS_MARGIN);
   const x1 = Math.floor(px + r + CACTUS_MARGIN);
   const z0 = Math.floor(pz - r - CACTUS_MARGIN);
   const z1 = Math.floor(pz + r + CACTUS_MARGIN);
-  const y0 = Math.floor(py);          // sin margen abajo
+  const y0 = Math.floor(py - CACTUS_MARGIN);
   const y1 = Math.floor(py + h);      // con margen arriba (cabeza)
   for (let x = x0; x <= x1; x++)
     for (let y = y0; y <= y1; y++)
@@ -2025,6 +2033,16 @@ function cactusCells(px, py, pz, r, h) {
 function touchingCactus(px, py, pz, r, h, getBlock) {
   const cells = cactusCells(px, py, pz, r, h);
   for (const [x, y, z] of cells) if (getBlock(x, y, z) === CACTUS_ID) return true;
+  return false;
+}
+// Intersección sin margen con la posición *intentada*: la usa movePlayer cuando el
+// movimiento queda bloqueado. Detecta el empuje aunque la caja final quede hasta un
+// paso afuera de la celda (caminar ≈0.08, correr ≈0.37 por frame).
+function cactusBlocks(px, py, pz, r, h, getBlock) {
+  for (let x = Math.floor(px - r); x <= Math.floor(px + r); x++)
+    for (let z = Math.floor(pz - r); z <= Math.floor(pz + r); z++)
+      for (let y = Math.floor(py); y <= Math.floor(py + h - 0.01); y++)
+        if (getBlock(x, y, z) === CACTUS_ID) return true;
   return false;
 }
 // Valida si el jugador con caja (r,h) puede aparecer en (px,py,pz): suelo sólido,
@@ -3541,7 +3559,8 @@ function tickCactus(){
   if(!started || state !== 'play') return;
   if(!dead){
     const box = playerBox(mySkin);
-    if(touchingCactus(player.pos.x, player.pos.y, player.pos.z, box.r, box.h, get))
+    const pressed = performance.now()/1000 - cactusPressAt < CACTUS_PRESS_S;
+    if(pressed || touchingCactus(player.pos.x, player.pos.y, player.pos.z, box.r, box.h, get))
       damage(1, 'cactus');
   }
 }

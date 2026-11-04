@@ -39,8 +39,8 @@ const block = present ? html.slice(i, j) : '';
 let API = null;
 if (present) {
   try {
-    API = new Function(block + '\n;return {CACTUS_ID, CACTUS_MARGIN, CACTUS_WATER, SPAWN_PREF, ' +
-      'cactusCells, touchingCactus, spawnPrefOk};')();
+    API = new Function(block + '\n;return {CACTUS_ID, CACTUS_MARGIN, CACTUS_WATER, CACTUS_PRESS_S, SPAWN_PREF, ' +
+      'cactusCells, touchingCactus, cactusBlocks, spawnPrefOk};')();
   } catch (e) { ok(false, 'bloque cactus evaluable SIN THREE: ' + e.message); }
 }
 const T = (name, fn) => {
@@ -69,15 +69,16 @@ T('constantes del cactus', () => {
   ok(API.CACTUS_ID === 22, `CACTUS_ID es el bloque existente 22 (${API.CACTUS_ID})`);
   ok(API.CACTUS_MARGIN === 0.06, `el margen de contacto es 0.06 (${API.CACTUS_MARGIN})`);
   ok(API.CACTUS_WATER === 12, `CACTUS_WATER es el id de WATER (${API.CACTUS_WATER})`);
+  ok(API.CACTUS_PRESS_S === 0.12, `la vigencia del empuje es 0.12 s (${API.CACTUS_PRESS_S})`);
   const cells = API.cactusCells(0.5, 0.01, 0.5, HUMAN.r, HUMAN.h);
   ok(Array.isArray(cells) && cells.length > 0, 'cactusCells devuelve celdas');
   ok(cells.every(c => Array.isArray(c) && c.length === 3 && c.every(Number.isInteger)),
     'cada celda es un entero [x,y,z]');
   const ys = [...new Set(cells.map(c => c[1]))];
-  ok(Math.min(...ys) === 0 && Math.max(...ys) === 1,
-    `el barrido cubre y=0..1 para un human de pie en y=.01 (${ys.join(',')})`);
+  ok(ys.includes(0) && ys.includes(1),
+    `el barrido cubre las celdas y=0 y y=1 para un human de pie en y=.01 (${ys.join(',')})`);
   const top = API.cactusCells(0.5, 1.01, 0.5, HUMAN.r, HUMAN.h);
-  ok(!top.some(c => c[1] === 0), 'parado arriba (pies en y+1) la celda del cactus NO entra al barrido');
+  ok(top.some(c => c[1] === 0), 'parado arriba (pies en y+1) la celda del cactus SÍ entra al barrido');
   const wide = API.cactusCells(0.5, 0.01, 0.5, GIANT.r, GIANT.h);
   ok(Math.max(...wide.map(c => c[1])) === 4, 'el giant barre hasta y=4 con el margen del tope');
 });
@@ -87,7 +88,7 @@ T('contacto del cactus', () => {
   const t = (px, py, pz, box) => API.touchingCactus(px, py, pz, box.r, box.h, mapGet({ '0,0,0': 22 }));
   ok(t(1.31, 0.01, 0.5, HUMAN) === true, 'human de costado a .01 de la cara: toca');
   ok(t(2.31, 0.01, 0.5, HUMAN) === false, 'human a 1 bloque: no toca');
-  ok(t(0.5, 1.01, 0.5, HUMAN) === false, 'human parado arriba del cactus: no toca');
+  ok(t(0.5, 1.01, 0.5, HUMAN) === true, 'human parado arriba del cactus: toca');
   ok(t(0.5, 0.01, 0.5, HUMAN) === true, 'cactus dentro del cuerpo del human: toca');
   ok(t(1.32, 0.01, 0.5, HUMAN) === true, 'borde de la caja a .02 de la cara (dentro del margen): toca');
   ok(t(1.37, 0.01, 0.5, HUMAN) === false, 'borde de la caja a .07 de la cara (fuera del margen): no toca');
@@ -95,6 +96,23 @@ T('contacto del cactus', () => {
   ok(t(0.5, 0.01, 2.0, HUMAN) === false, 'cactus a 1 bloque en z: no toca');
   ok(API.touchingCactus(0.5, 0.01, 0.5, HUMAN.r, HUMAN.h, () => 0) === false,
     'un mapa sin cactus nunca toca');
+});
+
+// 2b. empuje bloqueado: intersección sin margen con la posición intentada
+T('empuje bloqueado', () => {
+  const map = mapGet({ '0,0,0': 22 });
+  ok(API.cactusBlocks(1.2, 0.01, 0.5, HUMAN.r, HUMAN.h, map) === true,
+    'posición intentada que penetra la celda: bloquea');
+  ok(API.cactusBlocks(1.31, 0.01, 0.5, HUMAN.r, HUMAN.h, map) === false,
+    'posición al ras (sin penetrar): no bloquea');
+  ok(API.cactusBlocks(2.31, 0.01, 0.5, HUMAN.r, HUMAN.h, map) === false,
+    'a un bloque: no bloquea');
+  ok(API.cactusBlocks(0.5, 1.01, 0.5, HUMAN.r, HUMAN.h, map) === false,
+    'apoyado arriba: no es empuje (lo cubre touchingCactus)');
+  ok(API.cactusBlocks(1.2, 0.01, 0.5, GIANT.r, GIANT.h, map) === true,
+    'usa la caja del aspecto (giant)');
+  ok(API.cactusBlocks(0.5, 0.01, 0.5, HUMAN.r, HUMAN.h, () => 0) === false,
+    'sin cactus: no bloquea');
 });
 
 // 3. cada aspecto usa su propia caja (small ≈ .137×.822, giant ≈ .761×4.568)
@@ -124,6 +142,8 @@ T('spawnPrefOk', () => {
   ok(sp(envOf({ get: mapGet({ '108,17,117': 12 }) })) === false, 'agua a la altura de la cabeza: se descarta');
   ok(sp(envOf({ collidesAt: () => true })) === false, 'caja que colisiona: se descarta');
   ok(sp(envOf({ get: mapGet({ '108,16,117': 22 }) })) === false, 'cactus en el punto: se descarta');
+  ok(sp(envOf({ get: mapGet({ '108,15,117': 22 }) })) === false,
+    'cactus justo debajo del punto (parado arriba): se descarta');
   ok(sp(envOf({ get: mapGet({ '109,16,117': 22 }) })) === true,
     'cactus a 1 bloque del punto (sin contacto): el preferido sigue sirviendo');
 });
@@ -151,6 +171,16 @@ T('spawn por aspecto', () => {
   ok(/!started|started\s*===/.test(tick), 'tickCactus exige partida iniciada');
   ok(/!dead/.test(tick), 'tickCactus exige jugador vivo');
   ok(/state\s*!==\s*'play'|state\s*===\s*'play'/.test(tick), "tickCactus exige state 'play'");
+
+  const move = grabFn('movePlayer');
+  ok(move.length > 0, 'el cliente define movePlayer()');
+  ok(/cactusBlocks\s*\(/.test(move), 'movePlayer consulta cactusBlocks al colisionar');
+  ok(move.indexOf('if(!collides') >= 0 && move.indexOf('if(!collides') < move.indexOf('cactusBlocks'),
+    'el empuje se sella solo después de que la colisión bloquea (no en todo movimiento)');
+  ok(/cactusPressAt\s*=/.test(move), 'movePlayer sella cactusPressAt');
+  ok(/const CACTUS_PRESS_S\s*=\s*0\.12/.test(block), 'CACTUS_PRESS_S = 0.12 en el bloque del cactus');
+  ok(/cactusPressAt/.test(tick) && /CACTUS_PRESS_S/.test(tick),
+    'tickCactus considera el empuje vigente');
 
   const loop = grabFn('loop');
   ok(/tickCactus\(\)/.test(loop), 'loop() llama a tickCactus()');
