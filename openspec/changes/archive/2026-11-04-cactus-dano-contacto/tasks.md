@@ -40,8 +40,8 @@
 
 ## 5. Cierre (solo tras aprobación)
 
-- [ ] 5.1 `docker compose down`.
-- [ ] 5.2 Commit en español (`fix(cactus): ...`), push a `main`.
-- [ ] 5.3 `openspec archive cactus-dano-contacto`, actualizar el `## Purpose` de
+- [x] 5.1 `docker compose down`.
+- [x] 5.2 Commit en español (`fix(cactus): ...`), push a `main`.
+- [x] 5.3 `openspec archive cactus-dano-contacto`, actualizar el `## Purpose` de
   `openspec/specs/blocks/cactus/spec.md` (el archive no lo reescribe) y validar `--all --strict`.
-- [ ] 5.4 Commit del archive + push y verificar `git status` limpio.
+- [x] 5.4 Commit del archive + push y verificar `git status` limpio.

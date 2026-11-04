@@ -1,14 +1,15 @@
 # blocks/cactus Specification
 
 ## Purpose
-Define el bloque Cactus 🌵 como un peligro de contacto para el jugador local: daña al tocarlo, no
-daña parado arriba ni a criaturas, tiene su propio mensaje de muerte y no se genera en el mundo.
+Define el bloque Cactus 🌵 como un peligro de contacto para el jugador local: daña al tocarlo, al
+empujarlo y al pararse arriba, no daña a criaturas, tiene su propio mensaje de muerte y no se genera en
+el mundo.
 
 ## Requirements
 
 ### Requirement: El cactus daña por contacto al jugador local
 
-El sistema SHALL aplicar 1 HP de daño al jugador local cuando su caja, derivada de su aspecto, interseque una celda de cactus con un margen de contacto de 0.06. El daño SHALL usar la invulnerabilidad existente (como máximo una vez cada 0.6 s) y SHALL NOT aplicarse a administradores ni a jugadores ya muertos.
+El sistema SHALL aplicar 1 HP de daño al jugador local cuando su caja, derivada de su aspecto, esté en contacto con una celda de cactus. El daño SHALL usar la invulnerabilidad existente (como máximo una vez cada 0.6 s) y SHALL NOT aplicarse a administradores ni a jugadores ya muertos.
 
 #### Scenario: Contacto de costado con margen
 
@@ -22,7 +23,7 @@ El sistema SHALL aplicar 1 HP de daño al jugador local cuando su caja, derivada
 
 #### Scenario: Un bloque de distancia no daña
 
-- **WHEN** el jugador está a 1 bloque de distancia del cactus, sin tocarlo
+- **WHEN** el jugador está a 1 bloque de distancia del cactus, sin tocarlo ni empujarlo
 - **THEN** su vida no cambia
 
 #### Scenario: Cactus dentro del cuerpo
@@ -32,22 +33,32 @@ El sistema SHALL aplicar 1 HP de daño al jugador local cuando su caja, derivada
 
 #### Scenario: Cada aspecto usa su propia caja
 
-- **WHEN** un jugador `small` (≈0.137×0.822) o `giant` (≈0.761×4.568) toca un cactus
+- **WHEN** un jugador `small` (≈0.137×0.822) o `giant` (≈0.761×4.568) toca o empuja un cactus
 - **THEN** el contacto se evalúa con la caja de su aspecto, no con una caja fija de 0.3×1.8
 
-### Requirement: Pararse arriba de un cactus no daña
+#### Scenario: Caminar paralelo sin empujar
 
-El sistema SHALL NOT aplicar daño de cactus cuando el jugador está apoyado sobre la cara superior del bloque, porque su caja empieza en `y+1` de la celda y no la intersecta.
+- **WHEN** el jugador camina al lado de un cactus sin intentar meterse en él y su caja queda a más de 0.06 de la celda
+- **THEN** su vida no cambia por el cactus
 
-#### Scenario: Caminar sobre el cactus es seguro
+### Requirement: El cactus daña al empujarlo y al pararse arriba
 
-- **WHEN** el jugador se para arriba de un cactus y camina sobre él
-- **THEN** su vida no cambia por el cactus (solo podría cambiar por otra causa, como una caída)
+El sistema SHALL considerar contacto cuando el jugador intenta un movimiento horizontal que queda bloqueado por una celda de cactus, aunque el paso discreto deje hasta un paso de separación, y cuando está apoyado sobre la cara superior con la celda del cactus inmediatamente debajo de sus pies.
+
+#### Scenario: Empuje de costado al correr
+
+- **WHEN** el jugador corre contra un cactus y sigue empujando en esa dirección aunque el bloque le impida avanzar
+- **THEN** pierde 1 HP al ritmo de la invulnerabilidad, aunque su caja quede hasta un paso de distancia de la celda por el movimiento discreto
+
+#### Scenario: Apoyo sobre la cara superior
+
+- **WHEN** el jugador se para arriba de un cactus y permanece apoyado
+- **THEN** pierde 1 HP al ritmo de la invulnerabilidad
 
 #### Scenario: Caer sobre la cara superior
 
 - **WHEN** el jugador cae y aterriza sobre la cara superior de un cactus
-- **THEN** no recibe daño de cactus al aterrizar
+- **THEN** recibe el daño de contacto en el siguiente tick
 
 ### Requirement: La muerte por cactus tiene su propio mensaje
 
