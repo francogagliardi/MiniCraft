@@ -4,32 +4,32 @@
 
 ### Requirement: Tres niveles de calidad gráfica
 
-El sistema SHALL ofrecer tres niveles de calidad gráfica: `0` (super optimizada para 2 núcleos), `1` (baja/rápida) y `2` (alta). SHALL leer el nivel de `localStorage` (`mc-quality`) al arranque y SHALL aplicar pixelRatio, sombras, antialias, distancia de niebla y presupuesto de luces puntuales según el nivel. SHALL guardar cambios inmediatamente en `localStorage`.
+El sistema SHALL ofrecer tres niveles de calidad gráfica: `0` (super optimizada para 2 núcleos), `1` (baja/rápida) y `2` (alta). SHALL leer el nivel de `localStorage` (`mc-quality`) al arranque y SHALL aplicar pixelRatio, sombras, antialias, distancia de niebla y la cantidad fija de luces dinámicas visibles según el nivel. SHALL guardar cambios inmediatamente en `localStorage`.
 
 #### Scenario: Nivel super optimizada (0)
 
 - **WHEN** el jugador elige calidad 0
-- **THEN** pixelRatio = 1, sin sombras, sin antialias, niebla corta, sombras del sol desactivadas y ninguna luz puntual encendida
+- **THEN** pixelRatio = 1, sin sombras, sin antialias, niebla corta, sombras del sol desactivadas y ninguna luz dinámica visible (ni puntos ni spots)
 
 #### Scenario: Nivel baja/rápida (1)
 
 - **WHEN** el jugador elige calidad 1
-- **THEN** pixelRatio = 1, sin sombras, sin antialias, niebla normal y como máximo 4 luces puntuales encendidas
+- **THEN** pixelRatio = 1, sin sombras, sin antialias, niebla normal y como máximo 2 puntos + 2 spots visibles
 
 #### Scenario: Nivel alta (2)
 
 - **WHEN** el jugador elige calidad 2
-- **THEN** pixelRatio = devicePixelRatio (máx 1.5), sombras encendidas (incluida la de la fuente luminosa más cercana), antialias encendido, niebla normal y hasta 8 luces puntuales encendidas
+- **THEN** pixelRatio = devicePixelRatio (máx 1.5), antialias encendido, niebla normal, sombras del sol encendidas y 8 puntos + 8 spots visibles como máximo (las luces dinámicas no proyectan sombra)
 
 #### Scenario: Bajar la calidad apaga las luces
 
 - **WHEN** el jugador pasa de calidad 2 o 1 a calidad 0
-- **THEN** todas las luces puntuales y los conos de farola se apagan en el frame siguiente, sin recargar la página ni reiniciar el mundo
+- **THEN** todas las luces dinámicas (puntos y spots) se ocultan en el frame siguiente, sin recargar la página ni reiniciar el mundo
 
 #### Scenario: Subir la calidad vuelve a encenderlas
 
 - **WHEN** el jugador pasa de calidad 0 a 1 o 2
-- **THEN** las fuentes luminosas cercanas vuelven a encenderse hasta el nuevo presupuesto, sin recargar la página
+- **THEN** se hace visible el set fijo del nuevo nivel (2 + 2 o 8 + 8) y las fuentes cercanas vuelven a encenderse, sin recargar la página
 
 ### Requirement: Brillo del juego configurable
 

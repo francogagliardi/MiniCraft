@@ -20,7 +20,7 @@ Verificado sobre el código actual (`index.html`, Three.js `0.160.0` por importm
 
 **Goals**
 
-- Antorchas y farolas alumbran de verdad alrededor, con un pool fijo de luces y una sola sombra dinámica (la fuente más cercana, solo en calidad 2). La lucerita brilla con su material unlit pero no emite luz.
+- Antorchas y farolas alumbran de verdad alrededor, con un pool fijo de luces sin sombras dinámicas (la oclusión la resuelven `blockedLOS` y la atenuación ambiental `skyReachable`). La lucerita brilla con su material unlit pero no emite luz.
 - Atenuar la luz ambiental cuando el jugador no ve el cielo, para que encerrarse se vea oscuro aunque el `HemisphereLight` no proyecte sombra.
 - Apagado automático y en caliente al bajar la calidad (nivel 0 = sin luces).
 - Antorcha orientable en piso, pared y techo con un solo ítem.
@@ -29,7 +29,7 @@ Verificado sobre el código actual (`index.html`, Three.js `0.160.0` por importm
 
 **Non-Goals**
 
-- Propagación de luz por vóxel / horneado, sombras por fuente (más de una sombra a la vez), parpadeo.
+- Propagación de luz por vóxel / horneado, sombras dinámicas de antorchas/farolas, parpadeo.
 - Cambiar el ciclo día/noche o las constantes de iluminación global (`NIGHT_MIN`, `HEMI_DAY`, `SUN_DAY`): el brillo del jugador solo se clampea a su rango `[1,3]`.
 - Validación de soporte en el servidor.
 - Reemplazar los materiales unlit de los bloques emisores.
@@ -38,27 +38,27 @@ Verificado sobre el código actual (`index.html`, Three.js `0.160.0` por importm
 
 ### 1. Pool fijo de luces
 
-Se crean **8 `PointLight`** y **2 `SpotLight`** (para farolas) una sola vez, al inicializar la escena (junto a `hemi`/`sun`), con `intensity = 0`, `castShadow = false`, `visible = true` y agregadas al `scene`. Cada spot tiene su propio `Object3D` target, también en la escena. Nunca se agregan ni se quitan en caliente.
+Se crean **8 `PointLight`** y **8 `SpotLight`** (para farolas) una sola vez, al inicializar la escena (junto a `hemi`/`sun`), con `intensity = 0`, `castShadow = false`, `visible = false` y agregadas al `scene`. Cada spot tiene su propio `Object3D` target, también en la escena. Nunca se agregan ni se quitan en caliente.
 
 Por qué:
 
 - Tres.js compila el programa de cada material para la cantidad de luces **visibles** en la escena. Agregar o quitar luces (o alternar `visible`) dispara una recompilación de shaders y un hitch visible.
-- Con el pool fijo, el costo de shader es constante: un solo programa con `NUM_POINT_LIGHTS = 8` y `NUM_SPOT_LIGHTS = 2`, compilado en el primer frame junto con el resto de los materiales.
-- Apagar = `intensity = 0`, no `visible = false` ni `scene.remove`.
+- Con el pool fijo el costo de shader queda acotado y **estable por nivel**: el peor caso es un programa con `NUM_POINT_LIGHTS = 8` y `NUM_SPOT_LIGHTS = 8`, y el set visible se decide solo al arrancar o al cambiar de calidad (decisión 17).
+- Apagar una fuente = `intensity = 0`; `visible` lo fija `applyLightVisibility()` con el set fijo del nivel y no cambia al caminar.
 
 Unidades: en r160 `PointLight` usa **candela** con `decay = 2` por defecto (`useLegacyLights` ya es `false`). La irradiancia cae como `I/(π·d²)`, así que las intensidades de la tabla son del orden de 10-25, no de 1. Los `SpotLight` usan la misma unidad, `angle = 1.15`, `penumbra = 0.5`, `distance = 14` y `decay = 2`.
 
 ### 2. Presupuesto por calidad
 
-| Nivel | Nombre | Luces encendidas |
+| Nivel | Nombre | Luces visibles |
 |---|---|---|
 | 0 | Super optimizada (2 núcleos) | 0 |
-| 1 | Baja/rápida (default táctil) | 4 |
-| 2 | Alta (default PC) | 8 |
+| 1 | Baja/rápida (default táctil) | 2 puntos + 2 spots = 4 |
+| 2 | Alta (default PC) | 8 puntos + 8 spots = 16 |
 
-`applyQuality(level)` fija `LIGHT_BUDGET[level]` y llama a `refreshLights(true)` para aplicar el recorte en el mismo frame. No toca el tamaño del pool. Los 2 `SpotLight` de farola **cuentan dentro del mismo presupuesto**: una farola ocupa un spot o, si se acabaron, un punto; nunca suma una luz extra.
+`POINT_VISIBLE = [0, 2, 8]` y `SPOT_VISIBLE = [0, 2, 8]` definen el set FIJO por nivel; `LIGHT_BUDGET` es su suma (`[0, 4, 16]`). `applyQuality(level)` fija `LIGHT_BUDGET[level]`, llama a `applyLightVisibility()` (una sola recompilación, acción discreta del usuario) y después a `refreshLights(true)`. No toca el tamaño del pool. Los conos de farola **cuentan dentro del mismo presupuesto**: una farola ocupa un spot; nunca suma una luz extra y nunca cae a un punto. Con presupuesto 0 el pool entero queda oculto (`visible = false`), no solo con intensidad 0.
 
-Trade-off aceptado: con nivel 0 las 8 luces siguen existiendo en el shader con intensidad 0 (costo ALU de 8 luces muertas por fragmento), a cambio de no recompilar shaders al cambiar de nivel. Si en la práctica molesta en 2 núcleos, la alternativa es recompilar a propósito en el cambio de nivel (acción discreta del usuario), no en cada frame.
+Durante el juego la cantidad de luces visibles **no cambia**: caminar solo reasigna intensidades dentro del set fijo, así que no hay recompilas en caliente (decisión 17).
 
 ### 3. Índice de fuentes por chunk
 
@@ -76,8 +76,8 @@ En `buildGlobalsForChunk(cx,cz)` se arma/actualiza `chunkLights["cx,cz"] = [x,y,
 2. Recorre los chunks en radio 2 alrededor del chunk del jugador (máximo 25 chunks).
 3. Junta candidatos de `chunkLights`, descarta los que están más lejos que `LIGHT_MAX_DIST` (20) y se queda con los `K = LIGHT_BUDGET[level]` de menor distancia² al ojo (inserción acotada, sin ordenar todo).
 4. Aplica `lightFade(d, LIGHT_MAX_DIST, LIGHT_FADE_BAND)` (banda de 6 bloques) a la intensidad: 1 hasta 14 bloques, `smoothstep` decreciente de 14 a 20 y 0 en el corte. Así la fuente no desaparece de golpe al alejarse.
-5. Reparte las `K` fuentes con `lightSlots(ids, K, LAMP_POOL_SIZE)`: cada farola toma un spot libre y, cuando no quedan, cae al pool de puntos; el resto de las fuentes usa los puntos. Asigna a cada slot posición, color, `intensity * fade`, `distance` y `decay` según la spec del id; pone `intensity = 0` en todo el pool que sobra (spots incluidos).
-6. Fija el shadow caster con `shadowCaster(slots, QUALITY_LEVEL)` y `setShadowCaster(kind, light)`: solo la fuente `slots[0]` (la más cercana) proyecta sombra y solo en calidad 2.
+5. Reparte las `K` fuentes con `lightSlots(ids, K, LAMP_POOL_SIZE)`: cada farola toma un spot libre y, si no quedan, se omite (queda apagada hasta que se libere uno); nunca cae al pool de puntos. Las antorchas usan los puntos. `lightSlots` devuelve `{ spot, slot, src }`, con `src` = índice de la fuente en la lista ordenada: como una farola omitida no consume slot, `refreshLights` aplica cada slot a `best[src]` y no por posición. Asigna a cada slot **visible para el nivel** (`slot < POINT_VISIBLE[QUALITY_LEVEL]` / `SPOT_VISIBLE[QUALITY_LEVEL]`) posición, color, `intensity * fade`, `distance` y `decay` según la spec del id; los slots ocultos y todo el pool que sobra quedan con `intensity = 0`.
+6. No toca `visible` ni `castShadow`: el set visible es fijo por nivel (`applyLightVisibility`) y las luces del pool no proyectan sombras (decisión 12). La oclusión ya se resolvió en el paso 3 con `blockedLOS`.
 
 Se fuerza también al cambiar de calidad y cuando `refreshAt` marca `lightsDirty` (para que una antorcha recién puesta alumbre en el mismo tick, no hasta 0.25 s después).
 
@@ -119,7 +119,7 @@ Descartado: codificar la orientación en el id (necesitaría 3-4 ids nuevos y ro
 - **Id y DEFS**: `LAMP=64` en la línea de constantes compartida, entrada en `DEFS` con `name:'Farola 💡'`, `lamp:1`, `hard:.2`, `tile:37`, `css` propio. **No** es `cube` ni `glow`, así que `isSolid` la considera no sólida y no se meshéa como cubo.
 - **Atlas**: tile 37 (pantalla metálica con marco) y reutilización del tile 11 para la cara cálida inferior. Nada de binarios.
 - **Render**: se emite desde `emitGlobalCell` al builder `TM` (material unlit `matTorch`, `alphaTest` + `DoubleSide`): varilla fina de `y=1.0` a `0.88`, pantalla de cuatro caras que se ensancha de `0.88` a `0.72`, y cara inferior cálida en `y=0.72`. Queda colgando dentro de la celda, con el anclaje arriba.
-- **Luz**: ancla en `(.5, .68, .5)`, justo debajo de la pantalla (la cara cálida está en `.72`). La farola usa un `SpotLight` con el target 1.2 bloques abajo (`y - .5`), así que alumbra hacia abajo y no el techo que tiene encima (ver decisión 11); si no hay spot libre, cae al pool de puntos como fallback.
+- **Luz**: ancla en `(.5, .68, .5)`, justo debajo de la pantalla (la cara cálida está en `.72`). La farola usa un `SpotLight` con el target 1.2 bloques abajo (`y - .5`), así que alumbra hacia abajo y no el techo que tiene encima (ver decisión 11); si no hay spot libre, queda apagada y nunca usa el pool de puntos.
 - **No bloquea**: `mobBlocked` la exime (junto a la antorcha). Sin esto el drift `mobBlocked ↔ isSolid` falla y los mobs/bot la esquivan.
 
 ### 8. Colocación por cara
@@ -154,9 +154,9 @@ No se ejecuta en el handler `pedit`: el cliente que rompió el soporte ya manda 
 - El bot usa `mobBlocked`, que se actualiza en el bloque compartido `worldgen` (cliente y servidor lo evalúan del mismo texto).
 - Antorchas existentes en `world.json`/`edits` no se migran: la orientación es derivada.
 
-### 11. Farola direccional: dos `SpotLight` en el pool
+### 11. Farola direccional: ocho `SpotLight` en el pool, siempre hacia abajo
 
-La farola no usa una `PointLight` omni: tiene **2 `SpotLight`** creados una sola vez (`LAMP_POOL_SIZE = 2`) además del pool de puntos.
+La farola no usa una `PointLight` omni: tiene **8 `SpotLight`** creados una sola vez (`LAMP_POOL_SIZE = 8`, el presupuesto máximo de la calidad 2) además del pool de puntos.
 
 | Parámetro | Valor | Por qué |
 |---|---|---|
@@ -166,19 +166,20 @@ La farola no usa una `PointLight` omni: tiene **2 `SpotLight`** creados una sola
 | `decay` | `2` | Unidades físicas de r160, igual que el resto |
 | target | `(x+.5, y-.5, z+.5)` | Directamente abajo del ancla `(x+.5, y+.68, z+.5)` |
 
-- Cada spot tiene su `Object3D` target propio, agregado a la escena; `refreshLights` lo reposiciona junto con el spot.
-- Las farolas usan primero los 2 slots de spot; si hay más farolas que slots, las que sobran caen al pool de puntos (omni) como fallback. El presupuesto total no cambia: los spots cuentan dentro de `LIGHT_BUDGET`.
-- Se descarta un `SpotLight` por farola: la cantidad de luces es fija para no recompilar shaders en caliente.
+- Cada spot tiene su `Object3D` target propio, agregado a la escena; `refreshLights` lo reposiciona junto con el spot. **Todas** las farolas encendidas apuntan hacia abajo, sin excepción.
+- Las farolas usan los 8 slots de spot y **nunca** el pool de puntos: una omni iluminaría el techo que la farola tiene encima. Con más farolas que spots, las que sobran quedan apagadas hasta que se libere uno. El presupuesto total no cambia: los spots cuentan dentro de `LIGHT_BUDGET`.
+- Se descarta un `SpotLight` por farola: la cantidad de luces es fija. Con 2 spots, la séptima farola de una sala caía al pool de puntos y encendía el techo, y al caminar se alternaban cuáles eran punto y cuáles spot; con 8 el caso de la captura queda cubierto y el tipo de luz de cada farola ya no depende de la distancia al jugador.
+- La visibilidad del pool es fija por nivel (decisión 17): en calidad 1 se ven 2 spots y 2 puntos; en calidad 2, los 8 y 8. Cambiar de calidad paga una recompilación discreta, pero caminar entre farolas no recompila nada.
 
-### 12. Sombra de la fuente más cercana (solo calidad 2)
+### 12. Sin sombras dinámicas: oclusión por línea de vista y ambiente
 
-Sin sombras, encerrarse en bloques no oscurece: la luz atraviesa paredes. Se aprueba que **una sola fuente proyecte sombra**: la más cercana al jugador (`slots[0]`), y solo con `QUALITY_LEVEL === 2` (el nivel donde `renderer.shadowMap` ya está habilitado).
+Las antorchas y farolas son prescindibles como emisores de sombra: cada `castShadow = true` en una luz dinámica agrega mapas y variantes de shader, y cuando el caster cambia de fuente se paga una recompilación/recreación en caliente. En una GPU de 4 GB eso se percibe como tirones al caminar.
 
-- Farola → `castShadow` en su `SpotLight`: mapa `512`, `near .1`, `far = distance`, `bias -0.0005`.
-- Antorcha → `castShadow` en su `PointLight`: mapa `256`, `near .1`, `far = distance`, `bias -0.002`.
-- `shadowCaster(slots, quality)` es puro y devuelve `{ spot, slot }` o `null`; en calidad 0/1 devuelve `null` y **todas** las luces quedan con `castShadow = false`.
-- Se registra el caster (`kind + uuid`) en `shadowCasterKey`: `castShadow` solo se toca cuando cambia la fuente, no en cada tick, para no recompilar shaders ni recrear mapas.
-- Trade-off aceptado: las demás fuentes no proyectan sombra, pero ya no pueden atravesar paredes porque `refreshLights` descarta las ocluidas con `blockedLOS` (decisión 15). El objetivo es que la zona donde está el jugador se vea oscura al encerrarse.
+- **Todas** las luces del pool (`lightPool` y `lampPool`) quedan con `castShadow = false` siempre. No existe `setShadowCaster`, ni `shadowCasterKey`, ni `shadowCasterLight`: no hay estado que cambie en runtime.
+- La fuga de luz se corrige donde importa: `refreshLights` descarta con `blockedLOS` toda fuente cuya línea de vista al ojo esté cortada por un bloque opaco (decisión 15), en cualquier calidad. Esa es la oclusión real que ve el jugador.
+- El encierro se percibe por la atenuación ambiental (`skyReachable` + `ENCLOSED_DIM`, decisión 14): adentro de una caja, `ambientK` baja a `.10` y la escena se ve nocturna aunque el `HemisphereLight` no proyecte sombra.
+- El sol conserva su sombra en calidad 2 (`sun.castShadow`, `renderer.shadowMap`): es una sola luz direccional y no cambia durante el juego.
+- Trade-off aceptado: una fuente visible puede iluminar una cara que “debería” estar en sombra si el muestreo de `blockedLOS` no cruza el obstáculo (casos de menos de 1/3 de bloque). A cambio, el costo de luces es estable y no hay recompilas al moverse.
 
 ### 13. Brillo del cliente: clamp y reaplicación en caliente
 
@@ -191,7 +192,7 @@ El brillo (`mc-brightness`, slider 1–3) es **solo del cliente** y puede venir 
 
 ### 14. Atenuación ambiental cuando el jugador no ve el cielo
 
-El `HemisphereLight` es ambiental y no proyecta sombra, así que encerrarse detrás de bloques opacos seguía viéndose claro: la sombra de la fuente más cercana solo bloquea la luz puntual, no el ambiente.
+El `HemisphereLight` es ambiental y no proyecta sombra, así que encerrarse detrás de bloques opacos seguía viéndose claro: una sombra dinámica de una fuente solo bloquearía la luz puntual, no el ambiente.
 
 Solución solo del cliente:
 
@@ -209,11 +210,11 @@ Trade-off: la accesibilidad es local (radio 24), no un cómputo de cielo global;
 
 ### 15. Oclusión por línea de vista y encierro a nivel noche (pedido tras probar)
 
-Probar en Docker mostró dos problemas: la luz seguía atravesando paredes y encerrarse apenas oscurecía. Causa: la sombra solo existe para la fuente más cercana y solo en calidad 2, y `ENCLOSED_DIM = .32` dejaba el ambiente al 32 %.
+Probar en Docker mostró dos problemas: la luz seguía atravesando paredes y encerrarse apenas oscurecía. Causa: la única oclusión era una sombra dinámica de la fuente más cercana (y solo en calidad 2), y `ENCLOSED_DIM = .32` dejaba el ambiente al 32 %.
 
 - `blockedLOS(isOpaqueAt, ax,ay,az, bx,by,bz)` en el bloque puro: muestrea los voxeles del segmento fuente↔ojo a ~3 pasos por bloque (`LOS_STEPS_PER_BLOCK`) y devuelve `true` al primer bloque opaco. Las celdas del origen y del destino se saltean (la fuente vive dentro de la antorcha/farola y el ojo en aire), así que origen y destino en la misma celda nunca se auto-ocluyen. Sin `THREE`/DOM y sin DDA completa: suficiente para paredes de 1 bloque y muros en diagonal, mucho más barato que un raycast real.
 - `refreshLights` descarta el candidato antes de entrar al top-K si `blockedLOS` contra `eyePos()` da `true`, usando el ancla aproximada de `LIGHT_SPEC` (`antorcha .62`, `farola .68`). La oclusión ya no depende de la calidad ni de que la fuente sea la más cercana. Se aplica a `TORCH` y `LAMP` (GLOW no emite).
-- La sombra de la fuente más cercana se mantiene tal cual: sigue siendo la única sombra dinámica, pero ahora una fuente ocluida ni siquiera entra al pool.
+- `blockedLOS` es la **única** oclusión de las luces dinámicas: reemplaza a la sombra de la fuente más cercana (eliminada en la decisión 12) y una fuente ocluida ni siquiera entra al pool.
 - `ENCLOSED_DIM` baja a `.10` (10 % de ambiente: nivel noche) y el suavizado pasa a `ambientK += (ambientTarget-ambientK)*Math.min(1,dt*6)`, para que el encierro se perciba en pocas décimas y la salida vuelva suave a 1.
 - Costo: por actualización (cada 250 ms) se muestrean a lo sumo `K` candidatos cercanos con ~3 muestras por bloque de distancia (≤ ~60 por fuente a 20 bloques), con `get`/`isOpaque` del índice de chunks ya existente. No hay trabajo nuevo por frame.
 - Trade-off: el muestreo puede dejar pasar luz por un vértice exacto de dos bloques en diagonal o tapar una fuente visible a través de un hueco menor a un tercio de bloque. Se acepta: es barato, estable y elimina la fuga principal (fuente en otra habitación).
@@ -235,17 +236,28 @@ Se separan dos factores con una responsabilidad cada uno:
 - Resultado: con brillo 3× la noche sigue siendo noche en cielo/niebla/fondo, pero el ambiente, el sol y la luna suben. Con brillo 1× nada cambia (`paletteFactor === (L - NIGHT_MIN)/(1 - NIGHT_MIN)` y `Lb === L`).
 - El handler del slider sigue reaplicando en caliente (`airL = -1; applyAtmosphere(light(dayV)); tickSky(dayV);`) y el arranque sigue clampeando `mc-brightness`. Es un cambio solo del cliente: si el server desplegado sirve un build viejo, hay que redeployar.
 
+### 17. Visibilidad fija del pool por nivel (reemplaza la visibilidad dinámica)
+
+Mantener las 16 luces (8 puntos + 8 spots) siempre visibles compila todos los materiales con `NUM_POINT_LIGHTS = 8` y `NUM_SPOT_LIGHTS = 8` aunque haya una sola antorcha cerca; alternar `visible` según el uso recompila en caliente y produce tirones al caminar. Por eso el set visible es **fijo por nivel**:
+
+- `POINT_VISIBLE = [0, 2, 8]` y `SPOT_VISIBLE = [0, 2, 8]`: en calidad 0 no hay luces; en calidad 1 se ven 2 puntos y 2 spots; en calidad 2, los 8 y 8.
+- `applyLightVisibility()` no recibe argumentos: lee `QUALITY_LEVEL` y hace `lightPool[i].visible = i < pv`, `lampPool[i].visible = i < sv`. Se llama **una vez al arrancar** y en cada `applyQuality` (junto a `refreshLights(true)`). No hay debounce, ni conteos, ni `tickLightVisibility`.
+- `refreshLights` solo asigna intensidad a los slots visibles del nivel (`slot < pv` / `slot < sv`); los ocultos quedan en 0. Nunca escribe `visible`.
+- Con calidad 0 (`K <= 0`) el pool ya está oculto por `applyLightVisibility` y `refreshLights` solo apaga intensidades.
+- Costo: caminar no cambia la cantidad de luces, así que el programa compilado es estable durante el juego. La única recompilación es al cambiar de calidad, una acción discreta del usuario. En calidad 1 el shader compila `NUM_POINT_LIGHTS = 2` y `NUM_SPOT_LIGHTS = 2`; en calidad 2, 8 y 8.
+
 ## File Map
 
 | Archivo | Cambio |
 |---|---|
-| `index.html` (escena, ~827-873) | Pool de 8 `PointLight` + 2 `SpotLight` (farolas, targets propios), sin sombras al crearse, + tabla de specs |
-| `index.html` (`applyQuality`, ~962-980) | `LIGHT_BUDGET` por nivel + `refreshLights(true)` (los spots cuentan en el presupuesto) |
+| `index.html` (escena, ~827-873) | Pool de 8 `PointLight` + 8 `SpotLight` (farolas, targets propios), ocultas al crearse, sin sombras, + tabla de specs |
+| `index.html` (`applyQuality`, ~962-980) | `LIGHT_BUDGET` por nivel + `applyLightVisibility()` (set fijo, una recompila por cambio) + `refreshLights(true)` |
 | `index.html` (constantes, ~489-501) | `LAMP=64` en el bloque compartido; `mobBlocked` la exime |
 | `index.html` (`DEFS`/`INVENTORY`, ~583-651) | Entrada de `LAMP`, `tile:37`, `lamp:1`, `hard:.2`; `INVENTORY` la incluye |
 | `index.html` (atlas, ~683-801) | Tile 37 dibujado (pantalla) |
-| `index.html` (bloque `/* lighting:start */`) | `isLightEmitter` (sin `GLOW`), `LIGHT_SPEC`, `LIGHT_BUDGET`, `LAMP_POOL_SIZE`, `lightSlots`, `shadowCaster`, `clampBrightness`, `paletteFactor`, `torchSupportKind`, `torchQuads` (base de pared embebida con `TORCH_WALL_INSET`), `lightAnchor`, `ENCLOSED_DIM`, `skyExposed`, `SKY_REACH_RADIUS`, `skyReachable`, `blockedLOS` |
-| `index.html` (`refreshLights`, ~1603) | Reparto farola→spot / resto→punto, culling por `blockedLOS` contra `eyePos()`, target del spot hacia abajo y `setShadowCaster` |
+| `index.html` (bloque `/* lighting:start */`) | `isLightEmitter` (sin `GLOW`), `LIGHT_SPEC`, `POINT_VISIBLE`/`SPOT_VISIBLE`/`LIGHT_BUDGET`, `LAMP_POOL_SIZE = 8`, `lightSlots` (sin fallback, con `src`), `clampBrightness`, `paletteFactor`, `torchSupportKind`, `torchQuads` (base de pared embebida con `TORCH_WALL_INSET`), `lightAnchor`, `ENCLOSED_DIM`, `skyExposed`, `SKY_REACH_RADIUS`, `skyReachable`, `blockedLOS` |
+| `index.html` (`applyLightVisibility`, ~1770) | Set fijo por nivel: `visible = i < POINT_VISIBLE[QUALITY_LEVEL]` / `i < SPOT_VISIBLE[QUALITY_LEVEL]`, sin debounce ni conteos |
+| `index.html` (`refreshLights`, ~1789) | Reparto farola→spot (omitida si no hay spot) / antorcha→punto, `src`, culling por `blockedLOS` contra `eyePos()`, target del spot hacia abajo, intensidad solo en slots visibles del nivel; no toca `visible` ni `castShadow` |
 | `index.html` (`buildGlobalsForChunk`, ~1422) | Índice `chunkLights` y `lightsDirty` |
 | `index.html` (`emitGlobalCell`, ~1309-1321) | Antorcha orientable + rama `LAMP` |
 | `index.html` (`applyAtmosphere`/`tickSky`, ~1085-1176) | `paletteFactor(L)` para la paleta/visibilidad; `Lb` solo en las intensidades (multiplicadas por `ambientK`) |
@@ -259,13 +271,14 @@ Se separan dos factores con una responsabilidad cada uno:
 
 ## Risks / Trade-offs
 
-- **Costo por fragmento**: 8 luces puntuales + 2 spots en todos los materiales Lambert (opacos, translúcidos, flores). En GPUs integradas de 2 núcleos es el riesgo principal; mitigación: nivel 0 apaga todo y nivel 1 baja a 4. Se mide FPS en Docker con el mundo cargado antes de aprobar.
-- **Luces muertas en nivel 0**: siguen en el shader con `intensity = 0`. Es el precio de no recompilar. Si molesta, se acepta un hitch puntual al cambiar de nivel.
-- **Fugas de luz**: mitigadas con `blockedLOS` en `refreshLights` (toda fuente ocluida se descarta, en cualquier calidad) y con la sombra de la fuente más cercana en calidad 2. Queda un caso borde: el muestreo de ~3 pasos por bloque puede dejar pasar luz por el vértice exacto de dos bloques en diagonal o tapar un hueco menor a un tercio de bloque.
+- **Costo por fragmento**: el peor caso es 8 luces puntuales + 8 spots en todos los materiales Lambert (opacos, translúcidos, flores). El set compilado es fijo por nivel: calidad 0 = 0 luces, calidad 1 = 2 + 2, calidad 2 = 8 + 8. Es el costo estable que se acepta a cambio de no recompilar al caminar; nivel 0 oculta todo. Se mide FPS en Docker con el mundo cargado antes de aprobar.
+- **Sin recompilas en caliente**: caminar ya no cambia la cantidad de luces visibles, así que no hay variantes nuevas de shader durante el juego. Cambiar de calidad sí recompila una vez (`applyLightVisibility`), pero es una acción discreta del usuario.
+- **Luces muertas en calidad 0**: quedan creadas pero ocultas (`visible = false`), así el shader no las evalúa. Cambiar a 0 y volver a 2 recompila una vez por cambio, que es una acción discreta del usuario.
+- **Fugas de luz**: mitigadas con `blockedLOS` en `refreshLights` (toda fuente ocluida se descarta, en cualquier calidad). No hay sombras dinámicas; queda un caso borde: el muestreo de ~3 pasos por bloque puede dejar pasar luz por el vértice exacto de dos bloques en diagonal o tapar un hueco menor a un tercio de bloque.
+- **Farolas apagadas por falta de cono**: con más de 8 farolas en el radio, las lejanas no alumbran hasta que se libera un spot. Es preferible a la alternancia punto/spot y al techo iluminado; el jugador igual las ve encendidas (su modelo es unlit).
 - **Costo de la oclusión**: por actualización (cada 0.25 s) se muestrean hasta K candidatos con ~3 muestras por bloque de distancia (≤ ~60 por fuente a 20 bloques) usando `get`/`isOpaque` del índice de chunks. No hay trabajo nuevo por frame; el peor caso es una pared de antorchas cercanas, acotado por distancia y presupuesto.
 - **Costo del BFS al cielo**: `skyReachable` corre solo al cambiar la celda de la cabeza y como máximo cada 0.3 s (no por frame). Al aire libre sale por `skyExposed` en O(alto) (~0.05 ms medidos); adentro explora el volumen conectado y queda acotado por `SKY_REACH_RADIUS` (cubo de 49×49×H) y por `SKY_REACH_MAX_CELLS = 20000` (~4 ms medidos en una caverna sellada enorme). El tope solo puede marcar de más como encierro un espacio sin cielo y mayor a 20 000 celdas, que ya se percibe como cueva.
-- **Costo de la sombra**: un `PointLight` con sombra renderiza 6 caras de cubo (256²) y un `SpotLight` una (512²), por frame. Se acota a una sola fuente y a calidad 2; en 0/1 no hay sombras dinámicas de fuentes.
-- **Memoria de shadow maps**: cada luz que fue caster conserva su mapa al dejar de serlo (máximo 8 puntos + 2 spots). Se prefiere no destruirlo para no recompilar si vuelve a ser la más cercana.
+- **Sin sombras dinámicas**: las luces del pool no proyectan sombra, así que no hay mapas de cubo por frame ni memoria de shadow maps más allá del sol. Reduce el costo de GPU y elimina el cambio de caster en runtime.
 - **Costo de selección**: 25 chunks × fuentes indexadas cada 0.25 s. Normalmente decenas de candidatos; un chunk denso de antorchas es el peor caso y se acota por distancia y cadencia.
 - **Cascada**: un `refreshAt` por lote y no por vecino; si se implementa con `editBlock` ingenuo se reconstruyen hasta 12 chunks por rotura y se nota el tirón.
 - **Drift de `mobBlocked`**: el test compara id por id contra `DEFS`. Si se agrega `LAMP` y no se exime, el test falla (deseado) y los mobs la esquivan.
@@ -277,15 +290,16 @@ Se separan dos factores con una responsabilidad cada uno:
 
 - ¿Conviene un tope por chunk en el índice de luces (p. ej. 128 fuentes) para acotar el peor caso, o se deja sin tope y se mide primero en Docker? Decisión tentativa: sin tope en la v1, medir con una pared de antorchas.
 - ¿La luz de las fuentes debería atenuarse de día (multiplicar por `light(dayV)`) para que no se note un aporte extra a pleno sol? Decisión tentativa: no, el ambiente diurno ya la tapa y atenuarla agrega estado por frame.
-- ~~¿La farola debería usar `SpotLight` sin sombras para un cono realmente hacia abajo?~~ Resuelto: sí, 2 `SpotLight` en el pool (decisión 11). Probado en navegador: la farola dejó de iluminar el techo.
-- ¿Conviene liberar los shadow maps de las luces que dejan de ser caster (`shadow.map?.dispose()`)? Decisión tentativa: no en la v1; la memoria está acotada a 10 mapas y liberarlos obliga a recrearlos si la fuente vuelve a ser la más cercana.
+- ~~¿La farola debería usar `SpotLight` sin sombras para un cono realmente hacia abajo?~~ Resuelto: sí, spots en el pool (decisión 11). Probado en navegador: la farola dejó de iluminar el techo. Tras la captura con 7 farolas se subieron de 2 a 8 conos (el presupuesto máximo) y se eliminó el fallback a punto: las que sobran quedan apagadas.
+- ~~¿Conviene mantener `visible = true` en todo el pool?~~ Resuelto: se usa un set **fijo por nivel** (`POINT_VISIBLE`/`SPOT_VISIBLE`), aplicado al arrancar y al cambiar de calidad. No hay visibilidad dinámica ni debounce: caminar no recompila shaders.
+- ~~¿Conviene liberar los shadow maps de las luces que dejan de ser caster?~~ Resuelto: no aplica; las luces del pool nunca proyectan sombra (decisión 12).
 
 ## Test Strategy
 
-Nuevo `server/test/lighting.mjs` (archivo 23) con dos capas:
+Nuevo `server/test/lighting.mjs` (archivo 24) con dos capas:
 
-- **Puros** (extrayendo el bloque `/* lighting:start */`): `isLightEmitter` para `TORCH`/`LAMP` y negativos (incluida `GLOW`); `LIGHT_SPEC` con monotonía lamp > torch; `LIGHT_BUDGET` 0/4/8; `LAMP_POOL_SIZE = 2` y ancla `y=.68`; `lightSlots` (farola→spot, fallback a punto, presupuesto compartido); `shadowCaster` (solo la más cercana y solo calidad 2); `clampBrightness` en `[1,3]` y no finitos → 1; `paletteFactor(0.50) = 0`, `paletteFactor(1) = 1` y monotonía; `torchSupportKind` con las seis combinaciones (piso, techo, cada pared, precedencia piso>techo>pared, fallback); `torchQuads` devuelve 8 vértices, con la llama del lado libre y, en las cuatro paredes, el quad **cruza la cara** (mínimo relativo < 0 y máximo > 0) con el resto de coordenadas en `[0,1]` y la base pegada (centro a ≤ .02 de la cara, embebido por `TORCH_WALL_INSET`); `lightAnchor` cae dentro de la celda; `skyExposed` (columna abierta, bloque arriba, misma celda/abajo, borde `top`) y `ENCLOSED_DIM` en `(0,.15]`; `skyReachable` (exterior, caja cerrada, caja con un hueco de 1 bloque, ventana de vidrio, radio insuficiente, cueva sin salida, `y0 >= top`) y `SKY_REACH_RADIUS` en `(0,40)`; `blockedLOS` (camino abierto, pared entre medio, pared pegada a la fuente, muro en diagonal, bloque fuera del segmento, origen/destino en la misma celda, distancia cero y camino largo abierto).
-- **Estáticos de `index.html`**: `applyAtmosphere` usa `paletteFactor(L)` para `d` y `Lb` solo en `hemi.intensity`/`sun.intensity`; `tickSky` usa `paletteFactor(L)` para la visibilidad del sol y `Lb` solo en `sun.intensity`/`moonLight.intensity`; existen 8 `PointLight` + 2 `SpotLight` creadas fuera de `applyQuality` con `castShadow = false` y target propio en la escena, `applyQuality` no agrega/quita luces, `refreshLights` reparte con `lightSlots`, apunta el target hacia abajo y registra el caster con `setShadowCaster` (512 spot / 256 punto, `near .1`, `far = distance`, bias), el handler de brillo reaplica `applyAtmosphere`/`tickSky` y el arranque clampea `BRIGHTNESS`, `chunkLights` se puebla en `buildGlobalsForChunk`, `refreshAt`/`pedit` marcan `lightsDirty`, `doPlace` usa `isSolid(get(h.x,h.y,h.z))` y rechaza `LAMP` con `ny !== -1`, `breakOrphanSupports` existe y no se llama en el handler `pedit`, `mobBlocked` exime `LAMP`, `DEFS[64]` tiene `lamp:1` y `tile:37`, `INVENTORY` la incluye, `refreshLights` usa `blockedLOS` contra `eyePos()` con `isOpaque(get(...))`, el loop consulta `skyReachable` (no `skyExposed`) con `SKY_REACH_RADIUS` y `H-1`, solo al cambiar de celda (`skyCell`/`skyPending`) con tope de 300 ms, `refreshAt` marca `skyPending` para reflejar ediciones sin moverse, trata la puerta cerrada como opaca y suaviza `ambientK` con `dt*6`, y el guard de la atmósfera incluye `airAmbient`.
+- **Puros** (extrayendo el bloque `/* lighting:start */`): `isLightEmitter` para `TORCH`/`LAMP` y negativos (incluida `GLOW`); `LIGHT_SPEC` con monotonía lamp > torch; `POINT_VISIBLE = [0,2,8]`, `SPOT_VISIBLE = [0,2,8]` y `LIGHT_BUDGET = [0,4,16]` (suma por nivel); `LAMP_POOL_SIZE = 8` y ancla `y=.68`; `lightSlots` (7 farolas → 7 spots; 9 farolas → 8 spots y la novena omitida, nunca a punto; mezcla farola/antorcha → spots y puntos respectivamente; `src` conserva el índice aun con omitidas; presupuesto compartido); `clampBrightness` en `[1,3]` y no finitos → 1; `paletteFactor(0.50) = 0`, `paletteFactor(1) = 1` y monotonía; `torchSupportKind` con las seis combinaciones (piso, techo, cada pared, precedencia piso>techo>pared, fallback); `torchQuads` devuelve 8 vértices, con la llama del lado libre y, en las cuatro paredes, el quad **cruza la cara** (mínimo relativo < 0 y máximo > 0) con el resto de coordenadas en `[0,1]` y la base pegada (centro a ≤ .02 de la cara, embebido por `TORCH_WALL_INSET`); `lightAnchor` cae dentro de la celda; `skyExposed` (columna abierta, bloque arriba, misma celda/abajo, borde `top`) y `ENCLOSED_DIM` en `(0,.15]`; `skyReachable` (exterior, caja cerrada, caja con un hueco de 1 bloque, ventana de vidrio, radio insuficiente, cueva sin salida, `y0 >= top`) y `SKY_REACH_RADIUS` en `(0,40)`; `blockedLOS` (camino abierto, pared entre medio, pared pegada a la fuente, muro en diagonal, bloque fuera del segmento, origen/destino en la misma celda, distancia cero y camino largo abierto).
+- **Estáticos de `index.html`**: `applyAtmosphere` usa `paletteFactor(L)` para `d` y `Lb` solo en `hemi.intensity`/`sun.intensity`; `tickSky` usa `paletteFactor(L)` para la visibilidad del sol y `Lb` solo en `sun.intensity`/`moonLight.intensity`; existen 8 `PointLight` + 8 `SpotLight` creadas fuera de `applyQuality` con `castShadow = false` y `visible = false` al nacer, con target propio en la escena (8 targets), `applyQuality` no agrega/quita luces y llama a `applyLightVisibility()`, `lightSlots` no tiene fallback para la farola, `refreshLights` aplica cada slot a `best[src]`, apunta el target hacia abajo, solo enciende slots visibles del nivel y **no toca `visible` ni `castShadow`**; no existen `shadowCaster`, `setShadowCaster`, `shadowCasterKey` ni `shadowCasterLight`; `applyLightVisibility()` no recibe conteos, lee `QUALITY_LEVEL` y `POINT_VISIBLE`/`SPOT_VISIBLE`, se aplica al arrancar y en cada cambio de calidad, y no quedan `LIGHT_VIS_MS` ni `tickLightVisibility`; el handler de brillo reaplica `applyAtmosphere`/`tickSky` y el arranque clampea `BRIGHTNESS`, `chunkLights` se puebla en `buildGlobalsForChunk`, `refreshAt`/`pedit` marcan `lightsDirty`, `doPlace` usa `isSolid(get(h.x,h.y,h.z))` y rechaza `LAMP` con `ny !== -1`, `breakOrphanSupports` existe y no se llama en el handler `pedit`, `mobBlocked` exime `LAMP`, `DEFS[64]` tiene `lamp:1` y `tile:37`, `INVENTORY` la incluye, `refreshLights` usa `blockedLOS` contra `eyePos()` con `isOpaque(get(...))`, el loop consulta `skyReachable` (no `skyExposed`) con `SKY_REACH_RADIUS` y `H-1`, solo al cambiar de celda (`skyCell`/`skyPending`) con tope de 300 ms, `refreshAt` marca `skyPending` para reflejar ediciones sin moverse, trata la puerta cerrada como opaca y suaviza `ambientK` con `dt*6`, y el guard de la atmósfera incluye `airAmbient`.
 - **Estáticos de `server/server.js`**: sigue aceptando `v <= 64` sin validar soporte (sin cambios, como guarda de regresión).
 
-RED primero: el archivo corre y falla por bloque/API ausente, no por sintaxis. Después GREEN y `cd server && npm test` con 23/23 archivos verdes.
+RED primero: el archivo corre y falla por bloque/API ausente, no por sintaxis. Después GREEN y `cd server && npm test` con 24/24 archivos verdes.

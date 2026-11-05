@@ -2,13 +2,13 @@
 
 ## Purpose
 
-Define la iluminación local que producen las fuentes del mundo —antorchas y farolas—, con un conjunto acotado de luces —puntos y conos de farola— que se reparte por cercanía al jugador y descarta las fuentes ocluidas por bloques, se apaga junto con la calidad gráfica y hace que solo la fuente más cercana proyecte sombra en calidad alta. La lucerita (`GLOW`) queda afuera: brilla con su material unlit pero no emite luz alrededor.
+Define la iluminación local que producen las fuentes del mundo —antorchas y farolas—, con un conjunto acotado de luces —puntos para antorchas y conos hacia abajo para farolas— que se reparte por cercanía al jugador y descarta las fuentes ocluidas por bloques, apaga junto con la calidad gráfica y mantiene una cantidad de luces visibles fija por nivel, sin recompilar shaders en caliente. Las luces dinámicas no proyectan sombras: la oclusión la resuelve el descarte por línea de vista y la atenuación ambiental. Una farola nunca usa un punto, así que no alterna de tipo ni ilumina el techo al moverse. La lucerita (`GLOW`) queda afuera: brilla con su material unlit pero no emite luz alrededor.
 
 ## ADDED Requirements
 
 ### Requirement: Las fuentes luminosas alumbran alrededor
 
-El sistema SHALL emitir luz local desde cada bloque luminoso activo (`TORCH`, `LAMP`) para alumbrar la geometría opaca y translúcida vecina. La luz SHALL NOT modificar la luz ambiental del ciclo día/noche. Las fuentes SHALL NOT proyectar sombras, con la única excepción de la fuente más cercana al jugador en el nivel de calidad alto (ver requisito de sombra).
+El sistema SHALL emitir luz local desde cada bloque luminoso activo (`TORCH`, `LAMP`) para alumbrar la geometría opaca y translúcida vecina. La luz SHALL NOT modificar la luz ambiental del ciclo día/noche. Las fuentes dinámicas SHALL NOT proyectar sombras: la oclusión SHALL resolverse descartando las fuentes sin línea de vista al ojo (`blockedLOS`) y atenuando el ambiente bajo techo.
 
 #### Scenario: La antorcha ilumina de noche
 
@@ -34,29 +34,29 @@ El bloque `GLOW` SHALL NOT emitir luz local ni entrar en el índice de fuentes. 
 - **WHEN** hay un bloque `GLOW` colocado
 - **THEN** no aporta luz a los bloques vecinos y conserva su brillo propio
 
-### Requirement: Solo la fuente más cercana proyecta sombra
+### Requirement: Las luces dinámicas no proyectan sombras
 
-El sistema SHALL hacer que una única fuente —la más cercana al jugador— proyecte sombra, y solo en el nivel de calidad alto. En los niveles de calidad 0 y 1, y en todas las fuentes que no son la más cercana, ninguna luz SHALL proyectar sombra. El sistema SHALL NOT cambiar qué luz proyecta sombra en cada actualización si la fuente elegida no cambió.
+Las luces del pool de antorchas y farolas SHALL NOT proyectar sombras dinámicas en ningún nivel de calidad. La oclusión SHALL resolverse descartando toda fuente sin línea de vista al ojo (`blockedLOS`) y atenuando el ambiente cuando el jugador no ve el cielo. El sol SHALL conservar su sombra en el nivel de calidad alto.
 
-#### Scenario: Encerrarse en bloques oscurece
+#### Scenario: Una antorcha no proyecta sombra
 
-- **WHEN** el jugador se encierra dentro de bloques con una fuente de luz afuera o del otro lado de la pared
-- **THEN** la zona encerrada queda oscura porque la fuente más cercana proyecta sombra sobre las paredes y las fuentes ocluidas ni siquiera se encienden
+- **WHEN** hay una antorcha encendida cerca del jugador
+- **THEN** su `PointLight` ilumina con `castShadow = false` y no agrega mapas de sombra
 
-#### Scenario: La antorcha más cercana proyecta la sombra
+#### Scenario: Una farola no proyecta sombra
 
-- **WHEN** la fuente más cercana al jugador es una antorcha
-- **THEN** esa luz puntual es la única que proyecta sombra
+- **WHEN** hay una farola encendida cerca del jugador
+- **THEN** su `SpotLight` ilumina con `castShadow = false` y no agrega mapas de sombra
 
-#### Scenario: La farola más cercana proyecta la sombra
+#### Scenario: Fuente ocluida
 
-- **WHEN** la fuente más cercana al jugador es una farola
-- **THEN** la sombra la proyecta el cono de esa farola y las demás fuentes no proyectan
+- **WHEN** hay una fuente dentro del radio pero un bloque opaco corta la línea de vista al ojo
+- **THEN** la fuente no se enciende, sin depender de que exista una sombra dinámica
 
-#### Scenario: Calidad reducida sin sombras
+#### Scenario: El sol conserva su sombra
 
-- **WHEN** el nivel de calidad es 0 o 1
-- **THEN** ninguna fuente proyecta sombra y el mundo se ilumina como antes de esta mejora
+- **WHEN** el nivel de calidad es alto y el sol está sobre el horizonte
+- **THEN** el sol sigue proyectando sombra; solo las luces del pool quedan sin sombra
 
 ### Requirement: La luz no atraviesa bloques
 
@@ -84,17 +84,42 @@ El sistema SHALL descartar, al elegir las fuentes del pool, toda fuente cuya lí
 
 ### Requirement: Presupuesto acotado con selección por cercanía
 
-El sistema SHALL mantener un conjunto fijo de luces creadas al arrancar y SHALL encender, en cada actualización, solo las fuentes visibles más cercanas al jugador hasta el presupuesto vigente, dejando el resto con intensidad cero. SHALL NOT crear, destruir ni reordenar luces en caliente.
+El sistema SHALL mantener un conjunto fijo de luces creadas al arrancar y SHALL dejar visibles una cantidad fija por nivel: 0 en el nivel 0, 2 puntos + 2 spots en el nivel 1 y 8 + 8 en el nivel 2. Encenderá las fuentes visibles más cercanas dentro de ese set y apagará el resto. SHALL NOT crear ni destruir luces ni cambiar la cantidad visible al caminar. Los conos son solo para farolas y los puntos solo para antorchas; sin cono libre, la farola queda apagada.
 
 #### Scenario: Más fuentes que presupuesto
 
 - **WHEN** hay más bloques luminosos que el presupuesto del nivel de calidad vigente
 - **THEN** solo los más cercanos al jugador alumbran y el resto no aporta luz
 
+#### Scenario: Presupuesto del nivel 1
+
+- **WHEN** el nivel de calidad es 1
+- **THEN** hay como máximo 2 puntos y 2 spots visibles; las fuentes que no entran quedan apagadas
+
+#### Scenario: Presupuesto del nivel 2
+
+- **WHEN** el nivel de calidad es 2
+- **THEN** hay hasta 8 puntos y 8 spots visibles, y ninguna calidad superior agrega más luces
+
+#### Scenario: Siete farolas en una sala
+
+- **WHEN** hay siete farolas dentro del radio de selección con el presupuesto alto
+- **THEN** las siete alumbran con un cono hacia abajo y ninguna consume un punto
+
+#### Scenario: Más farolas que conos
+
+- **WHEN** hay más farolas que conos en el presupuesto
+- **THEN** las farolas que no obtienen cono quedan apagadas hasta que se libere uno, y los puntos siguen disponibles para las antorchas
+
 #### Scenario: Reasignación al moverse
 
 - **WHEN** el jugador se acerca a una fuente apagada y se aleja de una encendida
 - **THEN** en la siguiente actualización la fuente cercana se enciende y la lejana se atenúa hasta apagarse sin un salto visible
+
+#### Scenario: La farola no alterna de tipo al caminar
+
+- **WHEN** el jugador camina y cambian las farolas más cercanas
+- **THEN** cada farola que se enciende usa un cono hacia abajo; ninguna alterna entre cono y punto
 
 #### Scenario: La fuente más cercana nunca queda afuera
 
@@ -125,9 +150,38 @@ El sistema SHALL recalcular la selección de luces a intervalos regulares de apr
 - **WHEN** el jugador camina por el mundo con fuentes luminosas alrededor
 - **THEN** la actualización de luces no introduce una pausa perceptible en el frame
 
-### Requirement: Cambiar de calidad no recrea luces ni shaders
+### Requirement: La cantidad de luces visibles es fija por nivel
 
-El sistema SHALL crear las luces una única vez antes del primer render y SHALL limitarse a cambiar su intensidad y su posición al cambiar el nivel de calidad o al moverse; SHALL NOT agregar ni quitar luces de la escena en caliente.
+El sistema SHALL crear el pool completo de luces antes del primer render y SHALL dejar `visible` solo los primeros `POINT_VISIBLE[nivel]` puntos y `SPOT_VISIBLE[nivel]` spots: 0 en el nivel 0, 2 + 2 en el nivel 1 y 8 + 8 en el nivel 2. SHALL aplicar ese set una sola vez al arrancar y en cada cambio de calidad; SHALL NOT cambiar la cantidad de luces visibles al caminar ni en cada actualización de selección. Con presupuesto cero SHALL ocultar todo el pool.
+
+#### Scenario: Calidad 0 sin luces
+
+- **WHEN** el nivel de calidad es 0
+- **THEN** todas las luces del pool quedan ocultas y no aportan luz
+
+#### Scenario: Calidad 1 con set acotado
+
+- **WHEN** el nivel de calidad es 1
+- **THEN** quedan visibles 2 puntos y 2 spots; el resto del pool permanece oculto aunque haya fuentes cerca
+
+#### Scenario: Calidad 2 con el pool completo
+
+- **WHEN** el nivel de calidad es 2
+- **THEN** quedan visibles los 8 puntos y los 8 spots
+
+#### Scenario: Caminar no recompila shaders
+
+- **WHEN** el jugador camina y entran o salen fuentes del radio de selección
+- **THEN** la cantidad de luces visibles no cambia: solo se reasignan intensidades dentro del set fijo del nivel
+
+#### Scenario: Cambiar de calidad aplica el set en el acto
+
+- **WHEN** el jugador cambia el nivel de calidad
+- **THEN** la visibilidad del pool se aplica en ese cambio, una sola vez, sin esperar ni depender de las fuentes cercanas
+
+### Requirement: Cambiar de calidad no recrea luces
+
+El sistema SHALL crear las luces una única vez antes del primer render y SHALL limitarse a cambiar su intensidad, su posición y su visibilidad al cambiar el nivel de calidad o al moverse; SHALL NOT agregar ni quitar luces de la escena en caliente.
 
 #### Scenario: Alternar la calidad
 
@@ -137,7 +191,7 @@ El sistema SHALL crear las luces una única vez antes del primer render y SHALL 
 #### Scenario: Sin congelamiento al cambiar de nivel
 
 - **WHEN** el jugador cambia el nivel de calidad desde el menú
-- **THEN** el cambio se aplica en el frame siguiente, sin una pausa de compilación de materiales perceptible
+- **THEN** el cambio se aplica en el frame siguiente; la recompilación de shaders que implica el nuevo conjunto visible se paga una sola vez en ese cambio, no en cada actualización posterior
 
 ### Requirement: La luz se atenúa antes de salir del alcance
 

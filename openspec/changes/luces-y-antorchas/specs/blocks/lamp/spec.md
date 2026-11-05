@@ -46,7 +46,7 @@ El sistema SHALL colocar la farola solo cuando la cara apuntada mire hacia abajo
 
 ### Requirement: La farola ilumina hacia abajo
 
-El sistema SHALL emitir la luz de la farola desde el fondo de su pantalla en forma de cono dirigido hacia abajo, con un objetivo ubicado por debajo de la lámpara, con más intensidad y alcance que una antorcha, de modo que alumbre el piso y las paredes por debajo de ella sin iluminar el techo que tiene encima, sujeta al presupuesto de iluminación vigente. Si no hay un cono disponible en el presupuesto, la farola SHALL alumbrar con una luz puntual como reserva.
+El sistema SHALL emitir la luz de la farola desde el fondo de su pantalla como un cono dirigido hacia abajo, con más intensidad y alcance que una antorcha. Toda farola encendida SHALL apuntar hacia abajo y SHALL NOT usar una luz puntual omni; sin cono libre SHALL quedar apagada. SHALL NOT proyectar sombras dinámicas: la oclusión la resuelve el descarte de fuentes sin línea de vista. La cantidad de conos visibles SHALL ser fija por nivel (0, 2 y 8).
 
 #### Scenario: Alumbra el piso de noche
 
@@ -63,10 +63,30 @@ El sistema SHALL emitir la luz de la farola desde el fondo de su pantalla en for
 - **WHEN** se comparan una farola y una antorcha a la misma altura
 - **THEN** la luz de la farola llega más lejos y alumbra con más intensidad
 
+#### Scenario: Varias farolas en una sala
+
+- **WHEN** hay siete farolas encendidas dentro de una sala, dentro del radio de selección
+- **THEN** las siete alumbran con un cono hacia abajo y ninguna enciende el techo con una luz puntual
+
+#### Scenario: Caminar entre farolas no alterna el tipo de luz
+
+- **WHEN** el jugador camina y las farolas más cercanas cambian
+- **THEN** cada farola que entra en el pool lo hace con un cono hacia abajo; ninguna pasa de cono a luz puntual ni al revés
+
 #### Scenario: Más farolas que conos disponibles
 
-- **WHEN** hay más farolas encendidas que espacios de luz direccional
-- **THEN** las farolas que sobran alumbran con una luz puntual de reserva, sin exceder el presupuesto total
+- **WHEN** hay más farolas encendidas que conos disponibles en el presupuesto
+- **THEN** las farolas que sobran quedan apagadas —no usan una luz puntual de reserva— hasta que se libere un cono, sin exceder el presupuesto total
+
+#### Scenario: No proyecta sombra
+
+- **WHEN** una farola está encendida
+- **THEN** su `SpotLight` ilumina con `castShadow = false` y no agrega mapas de sombra
+
+#### Scenario: La cantidad de conos es fija por nivel
+
+- **WHEN** el jugador camina y entran o salen farolas del radio de selección
+- **THEN** la cantidad de conos visibles no cambia (2 en el nivel 1 y 8 en el nivel 2); solo se reasignan posiciones e intensidades
 
 #### Scenario: Sin presupuesto de luces
 
