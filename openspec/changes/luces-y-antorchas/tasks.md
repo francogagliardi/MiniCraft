@@ -1,0 +1,72 @@
+﻿# Tasks
+
+## 1. RED: tests de iluminación, presupuesto, orientaciones y farola
+
+- [x] 1.1 Crear `server/test/lighting.mjs` con los unitarios puros (extrayendo el bloque `/* lighting:start */` de `index.html`): `isLightEmitter` para `TORCH`/`GLOW`/`LAMP` y negativos; `LIGHT_BUDGET` 0/4/8; monotonía de `LIGHT_SPEC` (lamp > torch > glow en intensidad y distancia); `torchSupportKind` con piso, techo, las cuatro paredes, precedencia piso→techo→pared y fallback; `torchQuads` con 8 vértices dentro de la celda y llama del lado libre; `lightAnchor` dentro de la celda. Correr `cd server && node test/lighting.mjs` y verificar que falla por bloque ausente, no por sintaxis.
+- [x] 1.2 En `lighting.mjs`, agregar estáticos de `index.html`: 8 `PointLight` creadas fuera de `applyQuality`, `castShadow = false`, `applyQuality` no agrega ni quita luces, `chunkLights` poblado en `buildGlobalsForChunk`, `refreshAt`/`pedit` marcan `lightsDirty`, `doPlace` exige `isSolid(get(h.x,h.y,h.z))` y rechaza `LAMP` con `ny !== -1`, `breakOrphanSupports` existe y no se invoca en el handler `pedit`, `mobBlocked` exime `LAMP`, `DEFS[64]` con `lamp:1`/`tile:37`/`hard` y `INVENTORY` la incluye.
+- [x] 1.3 En `lighting.mjs`, agregar estáticos de `server/server.js`: sigue aceptando `v <= 64`, rechaza `v > 64` y no valida soporte (guarda de regresión, sin cambios de servidor).
+- [x] 1.4 Actualizar ids 0-63 → 0-64 en `server/test/static.mjs` (constantes y tiles), `server/test/worldgen.mjs` (regex `BED_Z_HEAD=63;` y drift `mobBlocked ↔ isSolid` con el id 64) y `server/test/bed-sleep.mjs` (regex de la línea de ids). Verificar que fallan contra el HTML actual.
+- [x] 1.5 Actualizar el conteo 22 → 23 en `server/package.json` (agregar `lighting.mjs` a la cadena), `config.mjs`, `lookguard.mjs`, `camera.mjs`, `zombie-protocol.mjs` y `bed-sleep.mjs`. Verificar que `npm test` falla por los tests nuevos y no por el conteo.
+- [x] 1.6 RED de las tres correcciones reportadas: en `lighting.mjs`, puros de `LAMP_POOL_SIZE = 2`, ancla `y=.68`, `lightSlots` (farola→spot y fallback), `shadowCaster` (solo la más cercana y solo calidad 2) y `clampBrightness`; estáticos del pool de `SpotLight` con target propio, `refreshLights` apuntando hacia abajo, `setShadowCaster` (512/256, near/far/bias) y el handler de brillo que reaplica `applyAtmosphere`/`tickSky`. Los símbolos nuevos se leen con `typeof` para que el rojo sea por feature ausente y no por `ReferenceError`.
+
+## 2. GREEN: bloque puro de iluminación y pool de luces
+
+- [x] 2.1 Agregar `LAMP=64` a la línea de constantes del bloque compartido `worldgen:start`, eximirla en `mobBlocked` y crear su entrada en `DEFS` (`name:'Farola 💡'`, `lamp:1`, `hard:.2`, `tile:37`, `css` propio) más su lugar en `INVENTORY` sin tocar la hotbar de 9.
+- [x] 2.2 Dibujar el tile 37 en el atlas (pantalla de la farola) y reutilizar el tile 11 para la cara cálida inferior.
+- [x] 2.3 Crear el bloque `/* lighting:start */ … /* lighting:end */` con `isLightEmitter`, `LIGHT_SPEC`, `LIGHT_BUDGET` (0/4/8), `torchSupportKind`, `torchQuads` y `lightAnchor`, autocontenido y sin `THREE`/`DOM` (los tests lo extraen y evalúan).
+- [x] 2.4 Crear el pool de 8 `PointLight` junto a la escena: `intensity=0`, `castShadow=false`, `visible=true`, `decay=2`, agregadas una sola vez al `scene`.
+- [x] 2.5 En `applyQuality`, fijar el presupuesto del nivel y llamar a `refreshLights(true)`; verificar que no se agregan ni se quitan luces de la escena.
+
+## 3. GREEN: índice por chunk y selección por frame
+
+- [x] 3.1 Poblar `chunkLights['cx,cz']` dentro del barrido existente de `buildGlobalsForChunk` (un `if (isLightEmitter(b))` por celda), limpiando la entrada antes de reconstruir.
+- [x] 3.2 Marcar `lightsDirty` en `refreshAt` para que una edición local o un `pedit` se reflejen en el tick siguiente.
+- [x] 3.3 Implementar `refreshLights(force)`: cadencia de 250 ms, chunks en radio 2, descarte por `LIGHT_MAX_DIST`, selección acotada de los K más cercanos y asignación de posición/color/intensidad/distancia/decay por id; el resto del pool en `intensity=0`.
+- [ ] 3.4 Llamar a `refreshLights(false)` en el loop principal y verificar que caminar entre zonas iluminadas no produce tirones.
+- [x] 3.5 Fade suave antes del corte: `LIGHT_MAX_DIST = 20`, `LIGHT_FADE_BAND = 6` y `lightFade` (smoothstep) multiplicando la intensidad, para que la fuente no desaparezca de golpe al alejarse (pedido del usuario tras probar en Docker).
+- [x] 3.6 Farola direccional: `LAMP_POOL_SIZE = 2` `SpotLight` creados una sola vez (además del pool de puntos), con `Object3D` target propio en la escena, `angle = 1.15`, `penumbra = .5`, `distance = 14` y `decay = 2`; `refreshLights` ubica el spot en `(x+.5, y+.68, z+.5)` y el target en `(x+.5, y-.5, z+.5)`; `LIGHT_SPEC[64].anchor` baja a `[.5,.68,.5]`; las farolas usan primero los spots y las que sobran caen al pool de puntos sin cambiar el presupuesto total.
+- [x] 3.7 Sombra de la fuente más cercana: solo `QUALITY_LEVEL === 2`, solo `slots[0]` con `castShadow = true` (spot 512 o punto 256, `near .1`, `far = distance`, bias); en calidad 0/1 todas las luces quedan sin sombra. `setShadowCaster` registra tipo + uuid para no tocar `castShadow` en cada tick.
+- [x] 3.8 Brillo del cliente: `clampBrightness` acota el valor cargado y el del slider a `[1,3]` (no finitos → 1); `brightSlider.oninput` reaplica en caliente con `airL = -1; applyAtmosphere(light(dayV)); tickSky(dayV);`. Sin tocar `NIGHT_MIN`, `HEMI_DAY`, `SUN_DAY` ni el servidor.
+- [x] 3.9 Antorcha de pared al ras: `TORCH_BASE_A` baja a `.09` y la pared usa base propia `TORCH_WALL_BASE_Y = .35`, largo `.6` y ancho `.2`; la punta inclinada queda debajo de `y=1`, los 8 vértices caen en `[0,1]` y la base queda a ≤ .1 de la cara en las cuatro direcciones (test nuevo en `lighting.mjs`).
+- [x] 3.10 La lucerita (`GLOW`) no emite luz: `isLightEmitter` queda en `TORCH || LAMP` y `LIGHT_SPEC`/`chunkLights` dejan de incluirla; conserva su material unlit y su render. Spec `world/lighting`, design y tests de monotonía/deltas actualizados.
+- [x] 3.11 Atenuación ambiental bajo techo: `skyExposed` y `ENCLOSED_DIM = .32` en el bloque puro; el loop consulta la columna de la cabeza cada ~0.2 s y suaviza `ambientK` por `dt`; `applyAtmosphere`/`tickSky` la multiplican y el guard `airAmbient` reaplica en caliente. Sin tocar constantes globales ni el servidor.
+- [x] 3.12 Culling por línea de vista (pedido tras probar): `blockedLOS(isOpaqueAt, ax,ay,az, bx,by,bz)` en el bloque puro (muestreo a ~3 pasos por bloque, celdas de origen/destino salteadas, sin THREE/DOM); `refreshLights` descarta el candidato ocluido contra `eyePos()` usando el ancla aproximada de `LIGHT_SPEC` (antorcha `.62`, farola `.68`) antes de entrar al top-K. Aplica a `TORCH` y `LAMP` en cualquier calidad; la sombra de la fuente más cercana se mantiene. Tests puros en `lighting.mjs` (abierto, pared, pared pegada, diagonal, bloque fuera del segmento, misma celda, distancia cero) y estáticos (`blockedLOS` + `eyePos()` + `isOpaque(get(...))`).
+- [x] 3.13 Encierro a nivel noche (pedido tras probar): `ENCLOSED_DIM` baja de `.32` a `.10` (10 % de ambiente) y el loop suaviza con `ambientK += (ambientTarget-ambientK)*Math.min(1,dt*6)`; al salir vuelve suave a 1. Test de `ENCLOSED_DIM` en `(0,.15]` y estático de `dt*6`.
+- [x] 3.14 Accesibilidad al cielo con ventanas (pedido tras probar): `skyReachable(isOpaqueAt, x0, y0, z0, top, radius)` en el bloque puro —BFS de 6 direcciones por celdas no opacas, cubo de `radius` horizontal y `0 <= y <= top`, corte por `skyExposed` cuando la columna de la celda visitada ya está libre— más `SKY_REACH_RADIUS = 24` y tope de celdas visitadas. El loop lo consulta desde la celda de la cabeza con `H-1` y el predicado `isOpaque(b) || (isDoor(b) && !doorOpen(b))` (el vidrio y las losas no bloquean), solo al cambiar de celda (`skyCell`/`skyPending`) y como máximo cada ~0.3 s; `ENCLOSED_DIM` sigue en `.10`. Tests puros (exterior, caja cerrada, hueco de 1 bloque, ventana de vidrio, radio insuficiente, `y0 >= top`) y estáticos del loop.
+- [x] 3.15 Antorcha de pared al ras (pedido tras probar): `TORCH_BASE_A` baja de `.09` a `.04` y la rama de pared de `torchQuads` clampea cada coordenada de los 8 vértices a `[0,1]`; la base toca la cara en las cuatro direcciones (mínimo 0 medido desde la cara) sin salir de la celda. Test nuevo en `lighting.mjs`.
+- [x] 3.16 Recalcular el cielo tras una edición (pedido tras probar): `refreshAt` marca `skyPending = true` junto a `lightsDirty`, así romper o colocar un techo, pared o ventana se refleja aunque el jugador no cambie de celda (respetando el throttle de ~0.3 s). Estático nuevo en `lighting.mjs`.
+- [x] 3.17 Brillo solo en intensidades (pedido tras probar): `paletteFactor(L) = (L - NIGHT_MIN)/(1 - NIGHT_MIN)` en el bloque puro; `applyAtmosphere` lo usa para cielo/niebla/fondo y `hemi.color`/`groundColor`, y `Lb = brightLevel(L)` solo para `hemi.intensity`/`sun.intensity`; `tickSky` usa `paletteFactor(L)` para `sunSprite.visible` y `Lb` solo en `sun.intensity`/`moonLight.intensity`. Con brillo 3× la noche se aclara pero el cielo/niebla siguen nocturnos; con 1× no cambia nada. Tests puros y estáticos en `lighting.mjs` y ajuste de `config.mjs`.
+- [x] 3.18 Antorcha de pared embebida (pedido tras probar): `TORCH_WALL_INSET = .06` mueve la geometría de pared hacia adentro del soporte a lo largo de `-dir`; el eje del soporte ya no se clampea (cruza la cara) y `y`/eje perpendicular siguen en `[0,1]`; `lightAnchor('wall', dir)` acompaña el inset. Test de cruce en las 4 paredes + base a ≤ .02 de la cara en `lighting.mjs`.
+
+## 4. GREEN: antorcha orientable y farola
+
+- [x] 4.1 Reemplazar el render fijo de `TORCH` en `emitGlobalCell` por `torchQuads(kind, dir)` según `torchSupportKind`, manteniendo el mismo tile 32, `alphaTest` y `DoubleSide`.
+- [x] 4.2 Agregar la rama `LAMP` en `emitGlobalCell` al builder `TM`: varilla de `y=1.0` a `0.88`, pantalla ensanchada de `0.88` a `0.72` y cara inferior cálida en `0.72`.
+- [x] 4.3 Verificar que la orientación y el ancla de luz se calculan en los bordes de chunk (leen `get()` del mundo completo, no del chunk).
+
+## 5. GREEN: colocación por cara y cascada de soporte
+
+- [x] 5.1 En `doPlace`, para `TORCH` y `LAMP`, exigir `isSolid(get(h.x,h.y,h.z))` (bloque clickeado) y, solo para `LAMP`, exigir `h.ny === -1`, con toasts claros; mantener la antorcha exenta de `ocupadoPor`.
+- [x] 5.2 Implementar `breakOrphanSupports(x,y,z)`: revisar las 6 celdas vecinas, detectar `TORCH`/`LAMP` sin soporte, aplicar las roturas en lote (`rawSet` + `edits`/`netSend`) y hacer un único `refreshAt` por conjunto de chunks afectados.
+- [x] 5.3 Llamarla solo desde la rama local de `doBreak` cuando el bloque roto era sólido; verificar que el handler `pedit` no la dispara y que no hay recursión.
+- [ ] 5.4 Probar a mano (sin Docker todavía) que romper una pared tumba la antorcha y que romper un techo tumba la farola.
+
+## 6. GREEN: inventario, paso de mobs y compatibilidad
+
+- [x] 6.1 Verificar el nombre `Farola 💡`, el ícono por CSS y que la hotbar sigue en 9 slots.
+- [x] 6.2 Verificar que `mobBlocked(64) === false` y que el test de drift `mobBlocked ↔ isSolid` pasa id por id con el id 64.
+- [ ] 6.3 Cargar un mundo guardado con antorchas existentes (sin metadata) y confirmar que se orientan solas y no desaparecen.
+- [x] 6.4 Confirmar que el servidor no cambió: `v=64` se acepta y se difunde por `pedit`, y un cliente sin el bloque lo ignora.
+
+## 7. Integración y suite
+
+- [x] 7.1 Correr `cd server && npm test` y verificar **23/23** archivos verdes (reintentar una vez `zombie-protocol.mjs` si aparece el flake conocido de cadencia `phit`).
+- [x] 7.2 Verificar que no quedan referencias a 22 tests ni a ids hasta 63 en los tests tocados.
+- [x] 7.3 Correr `openspec validate luces-y-antorchas --strict` y confirmar que pasa.
+
+## Workflow follow-up
+
+- Levantar con `docker compose up --build -d minicraft` (el bot no cambia: `bot/` no se toca), esperar a que responda y avisar en el mismo mensaje el link local y la clave admin de esa corrida en una sola línea (`http://localhost:3000 · admin: <clave>`), o `admin deshabilitado` si arrancó sin clave. Pedir aprobación explícita.
+- Qué mirar en http://localhost:3000: de noche una antorcha ilumina los bloques de alrededor (y la lucerita, más suave); colocar antorcha en piso, pared y techo y ver que se orienta sola; colgar una farola del techo y ver el charco de luz abajo; pasar a calidad 0 y confirmar que todas las luces se apagan sin recargar; volver a 2 y confirmar que se reencienden; romper la pared de una antorcha y el techo de una farola y ver que caen; caminar a través de una farola y ver que un animal/zombi la atraviesa; medir FPS en calidad 0 y 2.
+- Al aprobar, en orden: `docker compose down`, commits en español (`feat(lighting):`, `feat(blocks):`, `chore(openspec):`), push a `main` y `openspec archive luces-y-antorchas`. Verificar que `git status` quede limpio.
+- Después de archivar, ajustar los `## Purpose` que quedaron desactualizados en las specs vivas: `openspec/specs/blocks/torch` todavía dice "antorchas decorativas (sin luz real)" y `openspec/specs/blocks/placement` no menciona la rotura en cascada. El archivado no toca los Purpose, así que se editan a mano.
