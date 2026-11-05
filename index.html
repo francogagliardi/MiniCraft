@@ -307,6 +307,9 @@
       <button class="skinBtn" data-skin="giant" role="radio" aria-checked="false">Gigante</button>
       <button class="skinBtn" data-skin="small" role="radio" aria-checked="false">Pequeño</button>
       <button class="skinBtn" data-skin="zombie" role="radio" aria-checked="false">Zombi</button>
+      <button class="skinBtn" data-skin="mujer" role="radio" aria-checked="false">Mujer</button>
+      <button class="skinBtn" data-skin="moreno" role="radio" aria-checked="false">Piel oscura</button>
+      <button class="skinBtn" data-skin="gojo" role="radio" aria-checked="false">Gojo</button>
     </div>
     <div class="tiny" id="skinHint">Así te ven los demás y así de grande es tu hitbox: el tamaño cambia ojo y alcances; velocidad, salto y vida no. Jugás en primera persona.</div>
     <div id="loading">Conectando…</div>
@@ -2262,9 +2265,14 @@ const SKIN_SPECS = {
   small:  { label:'Pequeño', height:0.90,   scale:0.90/BASE_H,    colors:{ skin:0xf2c89b, pants:0x3a5a8c } },
   zombie: { label:'Zombi',   height:BASE_H, scale:1,              colors:{ skin:0x6a9a4a, shirt:0x2b3327, pants:0x23262b, hair:0x3d4a2f, eye:0xff2020 } },
   robot:  { label:'Robot',   height:1.90,   scale:1,              colors:{ shell:0x9aa3ad, dark:0x596169, trim:0x2f7dff, eye:0x3ef2ff, light:0xffd447 } },
+  // Personajes: variantes visuales del rig de 1.97 con paleta FIJA en el catálogo (no dependen del
+  // hue del id), así se ven igual para todos los jugadores y no cambian la jugabilidad.
+  mujer:  { label:'Mujer',       height:BASE_H, scale:1, colors:{ skin:0xf6cfae, shirt:0xc2537f, pants:0x3b4668, hair:0x5a3418 } },
+  moreno: { label:'Piel oscura', height:BASE_H, scale:1, colors:{ skin:0x6f4a32, shirt:0x35719c, pants:0x2b3040, hair:0x15100d } },
+  gojo:   { label:'Gojo',        height:BASE_H, scale:1, colors:{ skin:0xf6ddc9, shirt:0x232a3d, pants:0x171b26, hair:0xf2f5fb, blindfold:0x111319 } },
 };
 // El menú sólo ofrece aspectos de jugador: `robot` queda reservado para el bot cazador.
-const PLAYER_SKINS = ['human', 'fat', 'giant', 'small', 'zombie'];
+const PLAYER_SKINS = ['human', 'fat', 'giant', 'small', 'zombie', 'mujer', 'moreno', 'gojo'];
 const DEFAULT_SKIN = 'human';
 // Un id válido del catálogo se conserva (incluido `robot`); cualquier otra cosa (ausente, vacío,
 // tipo inválido o desconocido) cae en el aspecto por defecto sin lanzar.
@@ -2399,7 +2407,48 @@ function makeAvatar(id, name, admin, skin, opts){
       m.position.set(x,y,z); m.castShadow=true; mats.push(m.material);
       m.userData.avatarId=id; body.add(m); if(pvp) avatarTargets.push(m); return m;
     };
-    if(sid==='fat'){
+    if(sid==='mujer'){
+      // Mujer (1.97): torso angosto, falda acampanada y melena que enmarca la cara. Paleta fija
+      // del catálogo (no depende del id); todas las piezas quedan por debajo del top 1.97.
+      B(.44,.62,.28,shirt,0,1.06,0);                 // torso angosto (vs .50 del humano)
+      B(.50,.26,.34,pants,0,.68,0);                  // falda acampanada
+      B(.42,.42,.42,skinTone,0,1.65,0);              // cabeza
+      B(.44,.14,.44,hair,0,1.9,0);                   // pelo (top 1.97)
+      B(.40,.36,.12,hair,0,1.62,-.24);               // melena trasera
+      B(.10,.34,.16,hair,-.25,1.6,0); B(.10,.34,.16,hair,.25,1.6,0); // mechones laterales
+      B(.44,.08,.06,hair,0,1.84,.2);                 // flequillo
+      B(.28,.20,.16,shirt,-.14,1.14,.19); B(.28,.20,.16,shirt,.14,1.14,.19); // pecho (misma remera)
+      B(.07,.08,.02,0x222222,-.1,1.66,.22); B(.07,.08,.02,0x222222,.1,1.66,.22); // ojos
+      armL=B(.14,.58,.14,skinTone,-.3,1.06,0); armR=B(.14,.58,.14,skinTone,.3,1.06,0);
+      legL=B(.18,.56,.18,pants,-.12,.28,0); legR=B(.18,.56,.18,pants,.12,.28,0);
+    } else if(sid==='moreno'){
+      // Piel oscura (1.97): mismo rig y proporciones que `human` (se lee como otro jugador, no
+      // como un disfraz) con piel oscura, casquete corto y barba sutil; paleta fija del catálogo.
+      B(.50,.70,.30,shirt,0,1.05,0);                 // torso
+      B(.42,.42,.42,skinTone,0,1.65,0);              // cabeza
+      B(.44,.16,.44,hair,0,1.89,0);                  // casquete corto (top 1.97)
+      B(.28,.10,.06,hair,0,1.5,.19);                 // barba sutil
+      B(.07,.08,.02,0x222222,-.1,1.66,.22); B(.07,.08,.02,0x222222,.1,1.66,.22); // ojos
+      armL=B(.16,.62,.16,skinTone,-.35,1.05,0); armR=B(.16,.62,.16,skinTone,.35,1.05,0);
+      legL=B(.20,.70,.20,pants,-.13,.35,0); legR=B(.20,.70,.20,pants,.13,.35,0);
+    } else if(sid==='gojo'){
+      // Gojo (1.97): uniforme oscuro de cuello alto con cinturón, pelo blanco en puntas y venda
+      // negra que cubre la franja de los ojos (no se dibujan ojos). Envuelve la cabeza y lleva
+      // nudo en la nuca para reconocerse de frente, de perfil y de espaldas.
+      const blind=spec.colors.blindfold;
+      B(.50,.70,.30,shirt,0,1.05,0);                 // torso
+      B(.52,.06,.32,0x0e1118,0,.72,0);               // cinturón
+      B(.26,.12,.28,shirt,0,1.42,0);                 // cuello alto
+      B(.42,.42,.42,skinTone,0,1.65,0);              // cabeza
+      B(.44,.14,.44,hair,0,1.9,0);                   // pelo (top 1.97)
+      B(.12,.12,.10,hair,-.13,1.88,.18); B(.12,.12,.10,hair,0,1.88,.18); B(.12,.12,.10,hair,.13,1.88,.18); // puntas
+      B(.14,.12,.12,hair,0,1.86,-.2);                // punta trasera
+      B(.10,.14,.10,hair,-.22,1.86,0); B(.10,.14,.10,hair,.22,1.86,0); // mechones laterales
+      B(.46,.12,.46,blind,0,1.68,0);                 // venda (cubre los ojos)
+      B(.07,.07,.07,blind,0,1.68,-.25);              // nudo de la venda en la nuca
+      armL=B(.16,.62,.16,shirt,-.35,1.05,0); armR=B(.16,.62,.16,shirt,.35,1.05,0);
+      legL=B(.20,.70,.20,pants,-.13,.35,0); legR=B(.20,.70,.20,pants,.13,.35,0);
+    } else if(sid==='fat'){
       // Gordo (1.70): torso ancho con panza y extremidades rechonchas; la silueta cambia por
       // geometría, no por escala (así el nombre y la barra quedan a la altura del catálogo).
       B(.78,.62,.46,shirt,0,.90,0);                        // torso ancho

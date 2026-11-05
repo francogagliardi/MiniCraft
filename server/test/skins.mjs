@@ -1,9 +1,10 @@
-// Tests del catálogo de aspectos del avatar remoto (change aspectos-jugador, specs net/avatar y
-// ui/skins): extrae el bloque /* skins:start */ ... /* skins:end */ de index.html y lo evalúa
-// aislado con `new Function` SIN THREE (mismo patrón que client-robot.mjs/avatar.mjs). Verifica el
-// catálogo (ids, alturas, escala), el fallback a `human`, las alturas derivadas de etiqueta/barra/
-// saludo/daño y, con estáticos, el cableado en makeAvatar/addRemote/applyPm/greetRemote/hitok y el
-// selector del menú (#skinPicker, localStorage `mc-skin`, `skin` en el hello).
+// Tests del catálogo de aspectos del avatar remoto (changes aspectos-jugador y skins-personajes,
+// specs net/avatar y ui/skins): extrae el bloque /* skins:start */ ... /* skins:end */ de
+// index.html y lo evalúa aislado con `new Function` SIN THREE (mismo patrón que
+// client-robot.mjs/avatar.mjs). Verifica el catálogo (ids, alturas, escala), el fallback a
+// `human`, las alturas derivadas de etiqueta/barra/saludo/daño y, con estáticos, el cableado en
+// makeAvatar/addRemote/applyPm/greetRemote/hitok, las ramas de mujer/moreno/gojo y el selector
+// del menú (#skinPicker, localStorage `mc-skin`, `skin` en el hello).
 // Uso: node test/skins.mjs   (sale con código != 0 si algo falla)
 import fs from 'fs';
 import path from 'path';
@@ -32,6 +33,21 @@ const grabFn = (name) => {
   return '';
 };
 
+// Extrae el cuerpo `{ ... }` (llaves balanceadas) de la rama `sid==='ID'` de un fuente. Permite
+// verificar los estáticos de cada personaje sin depender del largo ni del orden de makeAvatar.
+const branchBody = (src, id) => {
+  const m = new RegExp(`(?:sid|skin)\\s*===\\s*'${id}'`).exec(src);
+  if (!m) return '';
+  const open = src.indexOf('{', m.index + m[0].length);
+  if (open < 0) return '';
+  let depth = 0;
+  for (let k = open; k < src.length; k++) {
+    if (src[k] === '{') depth++;
+    else if (src[k] === '}') { depth--; if (depth === 0) return src.slice(open + 1, k); }
+  }
+  return '';
+};
+
 // ---- extracción del bloque skins (sin THREE) ----
 const START = '/* skins:start */', END = '/* skins:end */';
 const i = html.indexOf(START), j = html.indexOf(END);
@@ -48,11 +64,11 @@ if (present) {
 }
 const T = (name, fn) => { if (!API) { ok(false, `${name}: sin API skins`); return; } try { fn(); } catch (e) { ok(false, `${name}: ${e.message}`); } };
 
-// 1. catálogo: seis ids exactos, etiquetas, alturas y escala
+// 1. catálogo: nueve ids exactos, etiquetas, alturas y escala
 T('catálogo de aspectos', () => {
   const ids = Object.keys(API.SKIN_SPECS).sort();
-  ok(ids.join(',') === 'fat,giant,human,robot,small,zombie',
-    `el catálogo tiene exactamente seis aspectos (${ids.join(',')})`);
+  ok(ids.join(',') === 'fat,giant,gojo,human,moreno,mujer,robot,small,zombie',
+    `el catálogo tiene exactamente nueve aspectos (${ids.join(',')})`);
   for (const id of ids) {
     const s = API.SKIN_SPECS[id];
     ok(typeof s.label === 'string' && s.label.trim().length > 0, `${id}: declara etiqueta (${s.label})`);
@@ -68,15 +84,30 @@ T('catálogo de aspectos', () => {
   ok(API.SKIN_SPECS.small.height === 0.9, `small mide exactamente 0.9 (${API.SKIN_SPECS.small.height})`);
   ok(API.SKIN_SPECS.robot.height === 1.90, `robot mide 1.90 nominal (${API.SKIN_SPECS.robot.height})`);
 
-  ok(API.PLAYER_SKINS.length === 5, `PLAYER_SKINS tiene cinco opciones (${API.PLAYER_SKINS.length})`);
-  ok(API.PLAYER_SKINS.join(',') === 'human,fat,giant,small,zombie',
-    `PLAYER_SKINS son los cinco de jugador (${API.PLAYER_SKINS.join(',')})`);
+  // los tres personajes nuevos: etiquetas aprobadas por el usuario, altura del rig humano
+  ok(API.SKIN_SPECS.mujer.label === 'Mujer', `mujer: etiqueta visible "Mujer" (${API.SKIN_SPECS.mujer.label})`);
+  ok(API.SKIN_SPECS.moreno.label === 'Piel oscura',
+    `moreno: etiqueta visible "Piel oscura" (${API.SKIN_SPECS.moreno.label})`);
+  ok(API.SKIN_SPECS.gojo.label === 'Gojo', `gojo: etiqueta visible "Gojo" (${API.SKIN_SPECS.gojo.label})`);
+  for (const id of ['mujer', 'moreno', 'gojo'])
+    ok(API.SKIN_SPECS[id].height === API.BASE_H, `${id}: mide 1.97, el rig humano (${API.SKIN_SPECS[id].height})`);
+  for (const id of ['mujer', 'moreno', 'gojo'])
+    for (const key of ['skin', 'shirt', 'pants', 'hair'])
+      ok(typeof API.SKIN_SPECS[id].colors[key] === 'number',
+        `${id}: paleta fija declara ${key} (${API.SKIN_SPECS[id].colors[key]})`);
+  ok(API.SKIN_SPECS.moreno.colors.skin === 0x6f4a32, 'moreno: piel oscura del catálogo');
+  ok(API.SKIN_SPECS.gojo.colors.blindfold === 0x111319,
+    `gojo: la venda declara su color (${API.SKIN_SPECS.gojo.colors.blindfold})`);
+
+  ok(API.PLAYER_SKINS.length === 8, `PLAYER_SKINS tiene ocho opciones (${API.PLAYER_SKINS.length})`);
+  ok(API.PLAYER_SKINS.join(',') === 'human,fat,giant,small,zombie,mujer,moreno,gojo',
+    `PLAYER_SKINS son las ocho de jugador (${API.PLAYER_SKINS.join(',')})`);
   ok(!API.PLAYER_SKINS.includes('robot'), 'robot no es una opción de jugador');
   ok(API.DEFAULT_SKIN === 'human', 'el aspecto por defecto es human');
 });
 
 T('escala de los modelos', () => {
-  for (const id of ['human', 'fat', 'zombie', 'robot'])
+  for (const id of ['human', 'fat', 'zombie', 'robot', 'mujer', 'moreno', 'gojo'])
     ok(API.SKIN_SPECS[id].scale === 1, `${id}: no se escala (scale 1)`);
   for (const id of ['giant', 'small']) {
     const s = API.SKIN_SPECS[id];
@@ -89,13 +120,18 @@ T('escala de los modelos', () => {
 
 // 2. fallback a human
 T('resolveSkin', () => {
-  for (const id of ['human', 'fat', 'giant', 'small', 'zombie', 'robot'])
+  for (const id of ['human', 'fat', 'giant', 'small', 'zombie', 'robot', 'mujer', 'moreno', 'gojo'])
     ok(API.resolveSkin(id) === id, `${id}: un id válido se conserva`);
   ok(API.resolveSkin('robot') === 'robot', 'robot sigue siendo válido (aspecto del bot)');
-  for (const bad of [undefined, '', null, 42, {}, [], 'dragon', 'Human!'])
+  for (const bad of [undefined, '', null, 42, {}, [], 'dragon', 'desconocida', 'Human!'])
     ok(API.resolveSkin(bad) === 'human', `valor inválido ${JSON.stringify(bad)} ⇒ human`);
+  ok(API.skinSpec('desconocida') === API.SKIN_SPECS.human,
+    'skinSpec(desconocida) cae en la spec humana');
   ok(API.skinSpec('dragon') === API.SKIN_SPECS.human, 'skinSpec(desconocido) cae en la spec humana');
+  ok(API.skinSpec('gIANT') === API.SKIN_SPECS.giant, 'skinSpec normaliza mayúsculas');
   ok(API.skinSpec('giant') === API.SKIN_SPECS.giant, 'skinSpec(giant) devuelve la spec del gigante');
+  ok(API.skinSpec('mujer') === API.SKIN_SPECS.mujer && API.skinSpec('gojo') === API.SKIN_SPECS.gojo,
+    'skinSpec devuelve la spec de los personajes nuevos');
 });
 
 // 3. alturas derivadas de etiqueta, barra, saludo y daño
@@ -135,7 +171,7 @@ T('alturas derivadas', () => {
   ok(/resolveSkin\s*\(/.test(ma), 'makeAvatar resuelve el aspecto con resolveSkin');
   ok(/SKIN_SPECS\[/.test(ma), 'makeAvatar lee el catálogo (SKIN_SPECS)');
   const branch = id => new RegExp(`(?:sid|skin)\\s*===\\s*'${id}'`).test(ma);
-  for (const id of ['fat', 'giant', 'small', 'zombie', 'robot'])
+  for (const id of ['fat', 'giant', 'small', 'zombie', 'robot', 'mujer', 'moreno', 'gojo'])
     ok(branch(id), `makeAvatar tiene la rama ${id}`);
   ok(/makeRobotModel\s*\(/.test(ma) && /makeRobotModel\([^)]*avatarTargets\.push/.test(ma),
     'la rama robot sigue usando makeRobotModel con sus mallas en avatarTargets');
@@ -149,6 +185,44 @@ T('alturas derivadas', () => {
   ok(!/(?<![\w.])g\.scale\.setScalar/.test(ma), 'g NO se escala (posición, yaw y texto quedan intactos)');
   ok(/emissive\s*:/.test(ma) && !/mats\.push\(eyeMat\)/.test(ma),
     'los ojos emisivos del zombie quedan FUERA de mats (el flash de daño no los apaga)');
+
+  // ramas de los personajes nuevos (change skins-personajes): cada una arma sus piezas con B(...)
+  // y conserva las extremidades y la altura del catálogo.
+  const MJ = branchBody(ma, 'mujer'), MO = branchBody(ma, 'moreno'), GJ = branchBody(ma, 'gojo');
+
+  ok(MJ.length > 0, 'la rama mujer se extrae de makeAvatar');
+  ok(/\.50,\.26,\.34/.test(MJ), 'mujer: falda acampanada de .50,.26,.34');
+  ok(/\.44,\.62,\.28/.test(MJ), 'mujer: torso angosto (vs .50 del humano)');
+  ok(/1\.62,-\.24/.test(MJ), 'mujer: melena trasera en la nuca');
+  ok((MJ.match(/\.10,\.34,\.16/g) || []).length >= 2, 'mujer: mechones laterales a los costados');
+  ok(/\.44,\.08,\.06/.test(MJ), 'mujer: flequillo');
+  ok((MJ.match(/\.28,\.20,\.16/g) || []).length >= 2 && /1\.14,\.19/.test(MJ),
+    'mujer: pecho de dos piezas .28,.20,.16 sobre el torso');
+  ok(!/hue|hsl\(/.test(MJ), 'mujer: no deriva la ropa del hue del id (paleta fija)');
+
+  ok(MO.length > 0, 'la rama moreno se extrae de makeAvatar');
+  ok(/\.44,\.16,\.44/.test(MO), 'moreno: casquete corto de pelo (.44,.16,.44)');
+  ok(/\.28,\.10,\.06/.test(MO), 'moreno: barba sutil (.28,.10,.06)');
+  for (const piece of ['.50,.70,.30', '.42,.42,.42', '.16,.62,.16', '.20,.70,.20'])
+    ok(MO.includes(piece), `moreno: conserva la pieza del rig humano (${piece})`);
+  ok(!/hue|hsl\(/.test(MO), 'moreno: no deriva la ropa del hue del id (paleta fija)');
+
+  ok(GJ.length > 0, 'la rama gojo se extrae de makeAvatar');
+  ok(/\.46,\.12,\.46/.test(GJ), 'gojo: venda que envuelve la cabeza (.46,.12,.46)');
+  ok(!/\.07,\.08,\.02/.test(GJ), 'gojo: no dibuja ojos en la cara (la venda los cubre)');
+  ok(/blindfold/.test(GJ), 'gojo: la venda usa el color blindfold del catálogo');
+  ok(/1\.68,-\.25/.test(GJ), 'gojo: nudo de la venda en la nuca');
+  ok((GJ.match(/\.12,\.12,\.10/g) || []).length >= 3 && /1\.88/.test(GJ),
+    'gojo: pelo blanco en puntas sobre el casquete');
+  ok(/\.26,\.12,\.28/.test(GJ) && /\.52,\.06,\.32/.test(GJ),
+    'gojo: cuello alto y cinturón del uniforme');
+  ok(!/hue|hsl\(/.test(GJ), 'gojo: no deriva la ropa del hue del id (paleta fija)');
+
+  for (const [id, body] of [['mujer', MJ], ['moreno', MO], ['gojo', GJ]]) {
+    for (const limb of ['armL', 'armR', 'legL', 'legR'])
+      ok(new RegExp(`\\b${limb}\\s*=\\s*B\\(`).test(body), `${id}: asigna ${limb} con B(...)`);
+    ok(!/g\.scale|setScalar/.test(body), `${id}: no escala g (etiqueta y barra a la altura del catálogo)`);
+  }
 
   const ar = grabFn('addRemote');
   ok(/a\.skin\s*=\s*resolveSkin\(p\.skin\)/.test(ar), 'addRemote guarda el id resuelto (no el string crudo)');
@@ -171,9 +245,14 @@ T('alturas derivadas', () => {
   ok(picker.length > 0, 'el menú tiene #skinPicker');
   ok(/role="radiogroup"/.test(picker), 'el selector es un radiogroup accesible');
   const opts = [...picker.matchAll(/data-skin="([^"]+)"/g)].map(m => m[1]);
-  ok(opts.length === 5, `el selector ofrece cinco aspectos (${opts.length})`);
-  ok(opts.join(',') === 'human,fat,giant,small,zombie', `las opciones son las de jugador (${opts.join(',')})`);
+  ok(opts.length === 8, `el selector ofrece ocho aspectos (${opts.length})`);
+  ok(opts.join(',') === 'human,fat,giant,small,zombie,mujer,moreno,gojo',
+    `las opciones son las ocho de jugador (${opts.join(',')})`);
   ok(!opts.includes('robot'), 'robot no aparece en el selector');
+  ok(/>Mujer<\/button>/.test(picker), 'el selector muestra la etiqueta Mujer');
+  ok(/>Piel oscura<\/button>/.test(picker), 'el selector muestra la etiqueta Piel oscura');
+  ok(/>Gojo<\/button>/.test(picker), 'el selector muestra la etiqueta Gojo');
+  ok((picker.match(/role="radio"/g) || []).length === 8, 'los ocho botones son radios');
   for (const id of opts) ok(/aria-checked="(?:true|false)"/.test(picker), `${id}: botón con aria-checked`);
 
   const hint = (html.match(/id="skinHint"[^>]*>([^<]*)</) || [])[1] || '';
@@ -199,7 +278,7 @@ T('alturas derivadas', () => {
 // 6. escala de jugabilidad derivada del aspecto (10.1)
 T('sizeFactor, playerBox, eyeHeight y playerTop', () => {
   const f = API.sizeFactor;
-  for (const id of ['human', 'zombie'])
+  for (const id of ['human', 'zombie', 'mujer', 'moreno', 'gojo'])
     ok(f(id) === 1, `${id}: factor de tamaño 1 (${f(id)})`);
   ok(near(f('fat'), 0.862944, 1e-6), `fat: factor ≈ 0.86294 (${f('fat')})`);
   ok(near(f('giant'), 2.538071, 1e-6), `giant: factor ≈ 2.53807 (${f('giant')})`);
@@ -222,6 +301,14 @@ T('sizeFactor, playerBox, eyeHeight y playerTop', () => {
   ok(near(API.eyeHeight('giant'), 4.112, 1e-3), `giant: ojo ≈ 4.112 (${API.eyeHeight('giant')})`);
   ok(near(API.eyeHeight('small'), 0.740, 1e-3), `small: ojo ≈ 0.740 (${API.eyeHeight('small')})`);
 
+  // los personajes nuevos juegan exactamente como el humano
+  for (const id of ['mujer', 'moreno', 'gojo']) {
+    const b = box(id);
+    ok(b.r === 0.3 && b.h === 1.8, `${id}: caja exacta 0.3 × 1.8 (${b.r} × ${b.h})`);
+    ok(API.eyeHeight(id) === 1.62, `${id}: ojo 1.62 (${API.eyeHeight(id)})`);
+    ok(API.playerTop(id) === 1.97, `${id}: top 1.97 (${API.playerTop(id)})`);
+  }
+
   ok(API.playerTop('human') === 1.97 && API.playerTop('giant') === 5 && API.playerTop('small') === 0.9,
     'playerTop devuelve la altura real de la spec');
 });
@@ -236,6 +323,9 @@ T('reachFor', () => {
     near(API.reachFor(6, 'small'), 2.741, 1e-3),
     `small: alcances ≈ 3.655 / 2.102 / 2.741 (${API.reachFor(8, 'small')} / ${API.reachFor(4.6, 'small')} / ${API.reachFor(6, 'small')})`);
   ok(API.reachFor(8, 'dragon') === 8, 'un aspecto desconocido conserva el alcance base');
+  for (const id of ['mujer', 'moreno', 'gojo'])
+    ok(API.reachFor(8, id) === 8 && API.reachFor(4.6, id) === 4.6 && API.reachFor(6, id) === 6,
+      `${id}: conserva los alcances 8 / 4.6 / 6`);
 });
 
 // 7. estáticos del cableado de la escala (10.2)
@@ -297,13 +387,16 @@ try { SRV = require(path.join(root, 'server', 'skins.js')); } catch (e) { SRV = 
 {
   ok(SRV !== null, 'server/skins.js existe y se puede importar');
   ok(SRV && SRV.BASE_H === 1.97, `server/skins.js declara BASE_H 1.97 (${SRV && SRV.BASE_H})`);
-  ok(SRV && SRV.SKIN_SIZE && Object.keys(SRV.SKIN_SIZE).length === 6,
-    'server/skins.js exporta SKIN_SIZE con los seis aspectos');
-  for (const id of ['human', 'fat', 'giant', 'small', 'zombie', 'robot']) {
-    const want = API ? API.SKIN_SPECS[id].height / API.BASE_H : null;
+  ok(SRV && SRV.SKIN_SIZE && Object.keys(SRV.SKIN_SIZE).length === 9,
+    'server/skins.js exporta SKIN_SIZE con los nueve aspectos');
+  for (const id of ['human', 'fat', 'giant', 'small', 'zombie', 'robot', 'mujer', 'moreno', 'gojo']) {
+    const spec = API && API.SKIN_SPECS[id];
+    const want = spec ? spec.height / API.BASE_H : NaN;
     ok(SRV && SRV.SKIN_SIZE && near(SRV.SKIN_SIZE[id], want, 1e-12),
       `${id}: el factor del servidor coincide con el cliente (${SRV && SRV.SKIN_SIZE && SRV.SKIN_SIZE[id]})`);
   }
+  for (const id of ['mujer', 'moreno', 'gojo'])
+    ok(SRV && SRV.SKIN_SIZE && SRV.SKIN_SIZE[id] === 1, `${id}: factor 1 en el servidor`);
   ok(SRV && typeof SRV.sizeFactor === 'function', 'server/skins.js exporta sizeFactor');
   if (SRV && typeof SRV.sizeFactor === 'function') {
     ok(SRV.sizeFactor('human') === 1 && SRV.sizeFactor('zombie') === 1, 'servidor: human/zombie factor 1');
@@ -318,6 +411,8 @@ try { SRV = require(path.join(root, 'server', 'skins.js')); } catch (e) { SRV = 
     ok(SRV.swordReach('small') < 2.2, `swordReach(small) < 2.2 (${SRV.swordReach('small')})`);
     ok(near(SRV.swordReach('giant'), 11.675, 1e-3) && near(SRV.swordReach('small'), 2.102, 1e-3),
       'swordReach escala 4.6 por el factor del aspecto');
+    for (const id of ['mujer', 'moreno', 'gojo'])
+      ok(SRV.swordReach(id) === 4.6, `${id}: conserva el alcance de espada del humano (4.6)`);
   }
   const zsrc = fs.readFileSync(path.join(root, 'server', 'zombie.js'), 'utf8');
   ok(/function\s+hit\s*\([^)]*playerPos\s*,\s*skin\s*\)/.test(zsrc),
@@ -339,8 +434,17 @@ try { SRV = require(path.join(root, 'server', 'skins.js')); } catch (e) { SRV = 
     const row = byId.get(id);
     if (!row || row.height !== API.SKIN_SPECS[id].height) same = false;
   }
-  ok(same && rows.length === 6,
-    `README documenta los seis aspectos con las alturas del catálogo (${rows.map(r => r.id + ':' + r.height).join(', ')})`);
+  ok(same && rows.length === 9,
+    `README documenta los nueve aspectos con las alturas del catálogo (${rows.map(r => r.id + ':' + r.height).join(', ')})`);
+  const newRows = rows.filter(r => ['mujer', 'moreno', 'gojo'].includes(r.id));
+  ok(newRows.length === 3 && newRows.every(r => r.height === 1.97),
+    'README documenta mujer, moreno y gojo con altura 1.97');
+  ok(rows.some(r => r.id === 'moreno' && /piel oscura|Piel oscura/.test(r.label)),
+    'README etiqueta moreno como "Piel oscura"');
+  ok(rows.some(r => r.id === 'gojo' && r.label === 'Gojo'), 'README etiqueta gojo como "Gojo"');
+  ok(newRows.every(r => /variante visual|visual/i.test(r.note)),
+    'README aclara que los personajes nuevos son variantes visuales de 1.97');
+  ok(newRows.some(r => r.id === 'moreno' && /barba/i.test(r.note)), 'README menciona la barba de moreno');
   ok(rows.filter(r => r.id === 'giant' || r.id === 'small').every(r => /ya no es s[oó]lo visual/i.test(r.note)),
     'README aclara que giant/small ya no son sólo visuales');
   ok(/ojo/i.test(readme) && /hitbox|caja/i.test(readme) && /alcance/i.test(readme),

@@ -13,6 +13,10 @@ const SKIN_SIZE = {
   small: 0.90 / BASE_H,
   zombie: 1,
   robot: 1.90 / BASE_H,
+  // Personajes de `skins-personajes`: variantes visuales del rig de 1.97, misma jugabilidad.
+  mujer: 1,
+  moreno: 1,
+  gojo: 1,
 };
 
 // Factor de tamaño del aspecto; cualquier valor ausente o desconocido se comporta como human.

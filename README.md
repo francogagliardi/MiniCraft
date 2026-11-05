@@ -71,6 +71,9 @@ en el `hello`; el server sólo la difunde.
 | `giant` | Gigante | 5.00 | Escala `5.00/1.97`: **ya no es sólo visual** — ojo, hitbox y alcances ×2.538 |
 | `small` | Pequeño | 0.90 | Escala `0.90/1.97`: **ya no es sólo visual** — ojo, hitbox y alcances ×0.457 |
 | `zombie` | Zombi | 1.97 | Piel verde, ojos rojos y ropa oscura; **no** es la criatura hostil |
+| `mujer` | Mujer | 1.97 | Variante visual de 1.97: torso angosto, pecho marcado, falda, melena y mechones; paleta fija |
+| `moreno` | Piel oscura | 1.97 | Variante visual de 1.97 con el rig de `human`: piel oscura, pelo corto y barba sutil |
+| `gojo` | Gojo | 1.97 | Variante visual de 1.97: uniforme oscuro, pelo blanco en puntas y venda negra (sin ojos) |
 | `robot` | Robot | 1.90 | Nominal; reservado para el bot, no aparece en el menú |
 
 La altura real del rig humano es **1.97** (cabellera incluida): la etiqueta con el
