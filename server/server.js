@@ -347,6 +347,15 @@ wss.on('connection', (ws) => {
     }
     if (!me) return;
 
+    // Ping de aplicación (spec net/latency, aditivo): eco del ts SOLO al emisor, sin
+    // broadcast ni persistencia. Un server viejo ignora `ping`; un cliente viejo
+    // ignora `pong`. No toca el heartbeat de WebSocket ni el guardado del mundo.
+    if (m.t === 'ping') {
+      const ts = Number(m.ts);
+      if (Number.isFinite(ts)) send(ws, { t: 'pong', ts });
+      return;
+    }
+
     if (m.t === 'mv') {
       if (!Array.isArray(m.p)) return;
       ws.lastMv = Date.now();

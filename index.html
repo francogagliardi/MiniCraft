@@ -56,6 +56,12 @@
   .pill:hover { background:rgba(20,30,50,.75); }
   .pill.on { background:#4fae4f; border-color:#fff; }
   .pill.off { opacity:.45; cursor:not-allowed; }
+  /* indicador opcional de FPS y ping (spec ui/hud): debajo del logo, sin robar clicks */
+  #perf { position:fixed; top:64px; left:16px; z-index:10; pointer-events:none;
+    background:rgba(20,30,50,.5); color:#eaf2ff; backdrop-filter:blur(10px);
+    font-size:11px; font-weight:700; line-height:1; padding:6px 10px; border-radius:10px;
+    border:1px solid rgba(255,255,255,.2); font-variant-numeric:tabular-nums; white-space:nowrap; }
+  #perf.hidden { display:none; }
   /* vida */
   #health { position:fixed; bottom:108px; left:50%; transform:translateX(-50%); z-index:10; font-size:20px;
     letter-spacing:2px; pointer-events:none; filter:drop-shadow(0 2px 4px rgba(0,0,0,.4)); }
@@ -237,6 +243,10 @@
 #configPanel .cfg-row label { font-weight:700; color:#1e2a3d; font-size:15px; margin-bottom:6px; display:block; }
 #configPanel .cfg-row .val { font-weight:700; color:#2f9e32; }
 #configPanel input[type=range] { width:100%; accent-color:#2f9e32; cursor:pointer; }
+#configPanel .cfg-row .cfg-check { display:flex; align-items:center; gap:10px; font-weight:700;
+  color:#1e2a3d; font-size:15px; cursor:pointer; margin:0; }
+#configPanel .cfg-row .cfg-check input[type=checkbox] { width:18px; height:18px; margin:0;
+  accent-color:#2f9e32; cursor:pointer; }
 #configPanel select { width:100%; font-family:inherit; font-weight:600; font-size:15px; padding:10px 14px; border-radius:12px; border:1px solid rgba(30,42,61,.2); background:rgba(255,255,255,.7); color:#1e2a3d; cursor:pointer; }
 #configPanel select option { background:#fff; color:#1e2a3d; }
 #configPanel h2 { font-size:32px; font-weight:900; color:#1e2a3d; line-height:1; margin:0 0 10px 0; }
@@ -262,6 +272,8 @@
     <div class="pill" id="btnFull" title="Pantalla completa (P)">⛶</div>
   </div>
 </div>
+
+<div id="perf" class="hidden" aria-live="off">FPS — · Ping —</div>
 
 <div id="health"></div>
 <div id="toast"></div>
@@ -354,6 +366,9 @@
         <option value="1">Baja/rápida</option>
         <option value="2">Alta</option>
       </select>
+    </div>
+    <div class="cfg-row">
+      <label class="cfg-check" for="showStats"><input type="checkbox" id="showStats"> Mostrar FPS y ping</label>
     </div>
     <button class="btn btn-player" id="btnConfigBack">Volver</button>
   </div>
@@ -3658,12 +3673,81 @@ document.getElementById('chatSend').addEventListener('pointerdown',e=>{
 });
 function sendChat(text){ if(mp) netSend({ t:'chat', text }); else chatMsg('🌿',text); }
 
+/* ============ INDICADOR OPCIONAL DE FPS Y PING ============ */
+/* perf:start */
+// Cálculo puro del indicador (docs: specs ui/hud y net/latency). Sin THREE ni DOM para
+// poder evaluarlo aislado desde server/test/stats.mjs.
+const PERF_WINDOW_MS = 500;         // ventana de FPS: ~2 actualizaciones por segundo
+const PERF_PING_MS = 2000;          // intervalo entre pings de aplicación
+const PERF_PING_TIMEOUT_MS = 3000;  // sin pong en este plazo el ping visible pasa a —
+const PERF_TICK_MS = 500;           // chequeo del temporizador de ping
+const PERF_SMOOTH_PREV = 0.6, PERF_SMOOTH_NEW = 0.4; // suavizado entre ventanas
+
+// Texto de una sola línea: `FPS 60 · Ping 24 ms`; sin medición, guion largo.
+function formatPerf(fps, ping){
+  const f = Number.isFinite(fps) ? 'FPS ' + Math.round(fps) : 'FPS —';
+  const p = Number.isFinite(ping) ? 'Ping ' + Math.round(ping) + ' ms' : 'Ping —';
+  return f + ' · ' + p;
+}
+// FPS de una ventana: frames transcurridos sobre el tiempo real (null si no hay ventana).
+function perfFpsOf(frames, elapsedMs){
+  const e = Number(elapsedMs);
+  if(!Number.isFinite(e) || e <= 0 || !Number.isFinite(frames) || frames < 0) return null;
+  return Math.round(frames * 1000 / e);
+}
+// Suavizado exponencial (0.6/0.4): evita saltar entre 58/60/62 por un frame suelto.
+function perfSmooth(prev, fps){
+  if(!Number.isFinite(fps)) return Number.isFinite(prev) ? prev : null;
+  if(!Number.isFinite(prev) || prev <= 0) return fps;
+  return Math.round(prev * PERF_SMOOTH_PREV + fps * PERF_SMOOTH_NEW);
+}
+// RTT con el reloj monotónico local: redondeada; un valor negativo (reloj que salta) se descarta.
+function perfRtt(sentTs, nowTs){
+  const d = Number(nowTs) - Number(sentTs);
+  if(!Number.isFinite(d) || d < 0) return null;
+  return Math.round(d);
+}
+/* perf:end */
+let STATS_ON = false;   // toggle "Mostrar FPS y ping" (mc-stats): arranca oculto
+let perfFps = null;     // FPS suavizado de la última ventana
+let perfPing = null;    // RTT de aplicación en ms (null = —)
+let perfFrames = 0;     // frames contados desde el inicio de la ventana
+let perfWinAt = 0;      // inicio de la ventana actual
+let perfLastText = '';  // último texto escrito en #perf (evita writes por frame)
+let perfPend = false;   // hay un ping esperando su pong
+let perfSentAt = 0;     // performance.now() del ping pendiente
+const perfEl = document.getElementById('perf');
+function renderPerf(){
+  if(!perfEl) return;
+  if(!STATS_ON){ perfEl.classList.add('hidden'); return; } // oculto: no se toca el DOM de más
+  perfEl.classList.remove('hidden');
+  const txt = formatPerf(perfFps, perfPing);
+  if(txt === perfLastText) return; // sin cambios visibles: no se reescribe textContent
+  perfLastText = txt;
+  perfEl.textContent = txt;
+}
+// Temporizador del ping de aplicación: sin multijugador no se envía nada (modo solo = Ping —).
+function tickPerfPing(){
+  if(!mp || !NET || NET.readyState !== 1) return;
+  const now = performance.now();
+  if(perfPend && now - perfSentAt > PERF_PING_TIMEOUT_MS){
+    perfPend = false; perfPing = null; renderPerf(); // sin pong: no mostrar un valor viejo
+    return;
+  }
+  if(!perfPend && now - perfSentAt >= PERF_PING_MS){
+    perfPend = true; perfSentAt = now;
+    netSend({ t:'ping', ts: now });
+  }
+}
+
 /* ============ RED MULTIJUGADOR ============ */
 let mp=false, myId=0, NET=null;
 // TODO envío al server pasa por acá: siempre JSON + solo si está conectado
 function netSend(o){
   if(mp&&NET&&NET.readyState===1){ try{ NET.send(JSON.stringify(o)); }catch(e){} }
 }
+// El ping de aplicación se evalúa cada PERF_TICK_MS: sin `mp` no sale nada (modo solo).
+setInterval(tickPerfPing, PERF_TICK_MS);
 function connectMP(wantedMode){
   return new Promise(resolve=>{
     if(location.protocol.indexOf('http')!==0){ resolve({ solo:true }); return; }
@@ -3753,6 +3837,16 @@ function setupNetHandlers(){
         if(m.dead===1||m.dead===0) z.dead=m.dead===1;
       }
     }
+    else if(m.t==='pong'){
+      // RTT de aplicación (spec net/latency): solo vale el pong de un ping pendiente.
+      // El ts es nuestro propio performance.now(), así que no se sincronizan relojes.
+      if(perfPend){
+        perfPend=false;
+        const rtt=perfRtt(m.ts, performance.now());
+        if(rtt!==null) perfPing=rtt;
+        renderPerf();
+      }
+    }
   };
   NET.onclose=()=>{
     if(mp){ mp=false; NET=null;
@@ -3760,6 +3854,8 @@ function setupNetHandlers(){
       for(const id of [...remotes.keys()]) removeRemote(id);
       for(const id of [...zombies.keys()]) removeZombie(id);
     }
+    // el ping de aplicación no sobrevive al cierre: pasa a — (spec net/latency)
+    perfPend=false; perfPing=null; renderPerf();
   };
   setInterval(()=>{
     sendMove();
@@ -3849,6 +3945,13 @@ document.getElementById('qualitySelect').onchange=e=>{
   QUALITY_LEVEL = parseInt(e.target.value);
   applyQuality(QUALITY_LEVEL);
   try{ localStorage.setItem('mc-quality', QUALITY_LEVEL); }catch(e){}
+};
+// Toggle del indicador (spec ui/hud): se aplica en caliente y se recuerda por dispositivo.
+document.getElementById('showStats').onchange=e=>{
+  STATS_ON = e.target.checked;
+  try{ localStorage.setItem('mc-stats', STATS_ON ? '1' : '0'); }catch(e){}
+  perfLastText = ''; // fuerza a escribir el texto nuevo al mostrarlo de nuevo
+  renderPerf();
 };
 function applyModeUI(){
   const fly=document.getElementById('btnFly');
@@ -3943,6 +4046,11 @@ document.getElementById('brightSlider').value = BRIGHTNESS;
 document.getElementById('brightVal').textContent = BRIGHTNESS.toFixed(1) + '×';
 document.getElementById('qualitySelect').value = String(QUALITY_LEVEL);
 applyQuality(QUALITY_LEVEL); // restaura en caliente la calidad guardada (spec ui/config)
+// Indicador de FPS/ping (spec ui/hud): oculto salvo '1'; un valor ausente o corrupto es oculto.
+try{ STATS_ON = localStorage.getItem('mc-stats') === '1'; }catch(e){ STATS_ON = false; }
+document.getElementById('showStats').checked = STATS_ON;
+perfLastText = '';
+renderPerf();
 await new Promise(r=>setTimeout(r,40));
 document.getElementById('loading').style.display='none';
 document.getElementById('btnPlayer').style.display='block';
@@ -4045,6 +4153,17 @@ function tickCactus(){
 function loop(now){
   requestAnimationFrame(loop);
   const dt=Math.min((now-last)/1000,.05); last=now;
+  // Indicador opcional (spec ui/hud): contar frames es O(1) por frame. Solo al cerrar la
+  // ventana de 500 ms se recalcula y se escribe el DOM, y renderPerf() evita el write si
+  // el texto no cambió. Se cuenta siempre para que al encender el toggle el valor ya esté.
+  if(!perfWinAt) perfWinAt=now;
+  perfFrames++;
+  if(now-perfWinAt>=PERF_WINDOW_MS){
+    const raw=perfFpsOf(perfFrames, now-perfWinAt);
+    if(raw!==null) perfFps=perfSmooth(perfFps, raw);
+    perfFrames=0; perfWinAt=now;
+    renderPerf();
+  }
   // El giro pendiente se drena ANTES de armar la cámara (physicsGravity): sin frame de atraso
   // y con el tope por frame. Al salir de play el lock se pierde y el buffer se limpia.
   if(started&&state==='play'&&!dead&&!TOUCH) drainLook(player,MOUSE_SENSITIVITY,LOOK_MAX_RAD_PER_FRAME);

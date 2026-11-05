@@ -3,7 +3,8 @@
 // las constantes MOUSE_SENSITIVITY/BRIGHTNESS/QUALITY_LEVEL, applyQuality(),
 // el pointermove táctil y el drenaje por frame del mouse con MOUSE_SENSITIVITY,
 // applyAtmosphere con BRIGHTNESS, la persistencia localStorage
-// (mc-mouse-sens, mc-brightness, mc-quality), que npm test da de alta 21 archivos
+// (mc-mouse-sens, mc-brightness, mc-quality, mc-stats), el toggle "Mostrar FPS y
+// ping" del panel, que npm test da de alta 24 archivos
 // y las regresiones del reporte en navegador (panel oculto, sensibilidad del mouse,
 // brillo sin lavado blanco).
 // Uso: node test/config.mjs   (sale con código != 0 si algo falla)
@@ -50,6 +51,14 @@ const grabFn = (name) => {
     'las 3 opciones de calidad tienen sus etiquetas');
   ok(/id="sensSlider"[^>]*value="1"/.test(html), 'el slider de sensibilidad arranca en 1');
   ok(/id="brightSlider"[^>]*value="1"/.test(html), 'el slider de brillo arranca en 1');
+  // change fps-ping-hud (spec ui/config): fila del toggle de FPS y ping
+  const cfgBody = html.slice(html.indexOf('id="configPanel"'), html.indexOf('id="btnConfigBack"'));
+  ok(/id="showStats"/.test(cfgBody), 'el panel tiene el toggle de FPS y ping (#showStats)');
+  ok(/type="checkbox"[^>]*id="showStats"|id="showStats"[^>]*type="checkbox"/.test(cfgBody),
+    '#showStats es un checkbox');
+  ok(/<label[^>]*for="showStats"[^>]*>/.test(cfgBody), '#showStats tiene un label asociado (accesible)');
+  ok(/Mostrar FPS y ping/.test(cfgBody), 'la fila se llama "Mostrar FPS y ping"');
+  ok(!/id="showStats"[^>]*checked/.test(html), 'el toggle arranca desmarcado (indicador oculto)');
 }
 
 // ---- 2. Constantes y lógica JS ----
@@ -108,6 +117,12 @@ const grabFn = (name) => {
     "el boot restaura localStorage('mc-brightness')");
   ok(/localStorage\.getItem\(\s*'mc-quality'/.test(html),
     "el boot restaura localStorage('mc-quality')");
+  ok(/getElementById\('showStats'\)\.onchange/.test(html),
+    'showStats.onchange cableado (aplica el toggle en caliente)');
+  ok(/localStorage\.setItem\(\s*'mc-stats'/.test(html),
+    "se persiste localStorage('mc-stats')");
+  ok(/localStorage\.getItem\(\s*'mc-stats'/.test(html),
+    "el boot restaura localStorage('mc-stats')");
   ok(/0\.0042\s*\*\s*parseFloat/.test(html),
     'sensSlider escribe MOUSE_SENSITIVITY = 0.0042 * valor');
   ok(/applyQuality\(QUALITY_LEVEL\)/.test(html),
@@ -176,13 +191,14 @@ const grabFn = (name) => {
     'tickSky deriva la visibilidad del cielo de la fase, no del brillo (paletteFactor)');
 }
 
-// ---- 6. Alta en la suite (23 archivos) ----
+// ---- 6. Alta en la suite (24 archivos) ----
 {
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'server', 'package.json'), 'utf8'));
   const s = pkg.scripts.test;
   ok(/test\/config\.mjs/.test(s), 'npm test da de alta test/config.mjs');
+  ok(/test\/stats\.mjs/.test(s), 'npm test da de alta test/stats.mjs');
   const count = (s.match(/test\/[\w-]+\.mjs/g) || []).length;
-  ok(count === 23, `el script test enumera 23 archivos (${count})`);
+  ok(count === 24, `el script test enumera 24 archivos (${count})`);
   ok(!/count\s*===\s*20/.test(s), 'package.json ya no menciona 20 archivos');
 }
 

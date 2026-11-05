@@ -1,5 +1,6 @@
 // Test end-to-end del protocolo multijugador: levanta el server de verdad
-// y verifica welcome, movimiento, bloques, daño PvP, muerte, chat y admin key.
+// y verifica welcome, movimiento, bloques, daño PvP, muerte, chat, admin key
+// y el ping/pong de aplicación (aditivo, eco solo al emisor).
 // Uso: node test/protocol.mjs   (sale con código != 0 si algo falla)
 import { spawn } from 'child_process';
 import fs from 'fs';
@@ -180,6 +181,35 @@ try {
   a.ws.send(JSON.stringify({ t: 'chat', text: 'hola' }));
   const ch = await nextOf(b.seen, b.seen.length, 'chat');
   ok(ch.from === 'Atac' && ch.text === 'hola', 'chat');
+
+  // 6b. latencia de aplicación (spec net/latency): el server ecoda el ts SOLO al emisor
+  {
+    const nA2 = a.seen.length, nB3 = b.seen.length;
+    a.ws.send(JSON.stringify({ t: 'ping', ts: 12345 }));
+    const pong = await nextOf(a.seen, nA2, 'pong');
+    ok(pong.ts === 12345, 'el server responde pong con el mismo ts (12345)');
+    await wait(300);
+    ok(!b.seen.slice(nB3).some(m => m.t === 'pong' || m.t === 'ping'),
+      'los demás jugadores no reciben ni el ping ni su pong');
+
+    // un ping sin ts no responde y la sesión sigue viva
+    const nNoTs = a.seen.length;
+    a.ws.send(JSON.stringify({ t: 'ping' }));
+    await wait(300);
+    ok(!a.seen.slice(nNoTs).some(m => m.t === 'pong'), 'un ping sin ts no responde');
+
+    // un tipo desconocido no cierra la conexión
+    a.ws.send(JSON.stringify({ t: 'tipo-inexistente', x: 1 }));
+    await wait(300);
+    ok(a.ws.readyState === 1, 'un tipo de mensaje desconocido no cierra la conexión');
+
+    // la sesión sigue viva: un mv posterior llega a la víctima
+    const nVivo = b.seen.length;
+    a.ws.send(JSON.stringify({ t: 'mv', p: [81, 20, 88], yaw: 1, pitch: 0, hp: 10, dead: 0 }));
+    const pmVivo = await nextOf(b.seen, nVivo, 'pm');
+    ok(pmVivo.id === a.m.id && pmVivo.p[0] === 81,
+      'después de un ts inválido la sesión sigue viva (mv → pm)');
+  }
 
   // 7. sin fantasmas: sesión sin `mv` expira con `leave`, sesión viva con `mv` no
   // (segundo server con intervalos acortados por env: HB 200ms / idle 800ms)
