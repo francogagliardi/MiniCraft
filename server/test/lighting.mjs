@@ -2,11 +2,12 @@
 // blocks/lamp, blocks/placement y ui/config): extrae el bloque /* lighting:start */ ...
 // /* lighting:end */ de index.html y lo evalúa aislado con `new Function` SIN THREE
 // (mismo patrón que cactus.mjs/worldgen.mjs). Encima, estáticos con grabFn/grabObj sobre
-// el cableado del cliente (pool de 8 PointLight + 2 SpotLight de farola, presupuesto por
-// calidad, reparto spots/puntos, sombra de la fuente más cercana, brillo clampeado y
-// reaplicado, índice por chunk, selección cada 250 ms, colocación por cara y cascada de
-// soporte) y una guarda de regresión sobre la validación del servidor (v <= 64, sin
-// validar soporte).
+// el cableado del cliente (pool de 8 PointLight + 8 SpotLight de farola, visibilidad fija
+// por nivel de calidad —sin recompilas en caliente—, sin sombras dinámicas en el pool,
+// presupuesto por calidad, reparto spots/puntos —la farola nunca usa un punto—, brillo
+// clampeado y reaplicado, índice por chunk, selección cada 250 ms, colocación por cara y
+// cascada de soporte) y una
+// guarda de regresión sobre la validación del servidor (v <= 64, sin validar soporte).
 // Uso: node test/lighting.mjs   (sale con código != 0 si algo falla)
 import fs from 'fs';
 import path from 'path';
@@ -69,13 +70,14 @@ if (present) {
     // Los símbolos nuevos se leen con `typeof`: en RED no existen y eso no debe romper
     // los chequeos viejos del bloque (el rojo tiene que ser por la feature ausente).
     API = new Function(block + '\n;return {LT_TORCH, LT_GLOW, LT_LAMP, LIGHT_BUDGET, ' +
+      'POINT_VISIBLE: typeof POINT_VISIBLE !== "undefined" ? POINT_VISIBLE : undefined, ' +
+      'SPOT_VISIBLE: typeof SPOT_VISIBLE !== "undefined" ? SPOT_VISIBLE : undefined, ' +
       'LIGHT_MAX_DIST, LIGHT_FADE_BAND, LIGHT_PICK_MS, LIGHT_SPEC, isLightEmitter, torchSupportKind, ' +
       'torchQuads, lightAnchor, lightFade, ' +
       'LAMP_POOL_SIZE: typeof LAMP_POOL_SIZE === "number" ? LAMP_POOL_SIZE : undefined, ' +
       'LAMP_SPOT_ANGLE: typeof LAMP_SPOT_ANGLE === "number" ? LAMP_SPOT_ANGLE : undefined, ' +
       'LAMP_SPOT_PENUMBRA: typeof LAMP_SPOT_PENUMBRA === "number" ? LAMP_SPOT_PENUMBRA : undefined, ' +
       'lightSlots: typeof lightSlots === "function" ? lightSlots : null, ' +
-      'shadowCaster: typeof shadowCaster === "function" ? shadowCaster : null, ' +
       'clampBrightness: typeof clampBrightness === "function" ? clampBrightness : null, ' +
       'paletteFactor: typeof paletteFactor === "function" ? paletteFactor : null, ' +
       'TORCH_WALL_INSET: typeof TORCH_WALL_INSET === "number" ? TORCH_WALL_INSET : undefined, ' +
@@ -105,12 +107,23 @@ T('isLightEmitter', () => {
     ok(API.isLightEmitter(id) === false, `el bloque ${id} no emite luz`);
 });
 
-T('presupuesto por calidad', () => {
+T('presupuesto y visibilidad fija por calidad', () => {
+  ok(Array.isArray(API.POINT_VISIBLE) && API.POINT_VISIBLE.length === 3,
+    `POINT_VISIBLE tiene un valor por nivel (${JSON.stringify(API.POINT_VISIBLE)})`);
+  ok(JSON.stringify(API.POINT_VISIBLE) === '[0,2,8]',
+    `POINT_VISIBLE = [0,2,8] puntos por nivel (${JSON.stringify(API.POINT_VISIBLE)})`);
+  ok(Array.isArray(API.SPOT_VISIBLE) && API.SPOT_VISIBLE.length === 3,
+    `SPOT_VISIBLE tiene un valor por nivel (${JSON.stringify(API.SPOT_VISIBLE)})`);
+  ok(JSON.stringify(API.SPOT_VISIBLE) === '[0,2,8]',
+    `SPOT_VISIBLE = [0,2,8] spots por nivel (${JSON.stringify(API.SPOT_VISIBLE)})`);
   ok(Array.isArray(API.LIGHT_BUDGET) && API.LIGHT_BUDGET.length === 3,
     `LIGHT_BUDGET tiene un valor por nivel (${JSON.stringify(API.LIGHT_BUDGET)})`);
   ok(API.LIGHT_BUDGET[0] === 0, `nivel 0 (2 núcleos) → 0 luces (${API.LIGHT_BUDGET[0]})`);
-  ok(API.LIGHT_BUDGET[1] === 4, `nivel 1 → 4 luces (${API.LIGHT_BUDGET[1]})`);
-  ok(API.LIGHT_BUDGET[2] === 8, `nivel 2 → 8 luces (${API.LIGHT_BUDGET[2]})`);
+  ok(API.LIGHT_BUDGET[1] === 4, `nivel 1 → 2 puntos + 2 spots = 4 luces (${API.LIGHT_BUDGET[1]})`);
+  ok(API.LIGHT_BUDGET[2] === 16, `nivel 2 → 8 puntos + 8 spots = 16 luces (${API.LIGHT_BUDGET[2]})`);
+  for (let n = 0; n < 3; n++)
+    ok(API.LIGHT_BUDGET[n] === API.POINT_VISIBLE[n] + API.SPOT_VISIBLE[n],
+      `nivel ${n}: el presupuesto es la suma de puntos y spots visibles`);
   ok(API.LIGHT_MAX_DIST === 20, `LIGHT_MAX_DIST = 20 (${API.LIGHT_MAX_DIST})`);
   ok(API.LIGHT_FADE_BAND === 6, `LIGHT_FADE_BAND = 6 (${API.LIGHT_FADE_BAND})`);
   ok(API.LIGHT_PICK_MS === 250, `LIGHT_PICK_MS = 250 ms (${API.LIGHT_PICK_MS})`);
@@ -441,11 +454,15 @@ T('blockedLOS: la luz no atraviesa paredes', () => {
     'applyQuality NO agrega ni quita luces de la escena');
   ok(/refreshLights\s*\(\s*true\s*\)/.test(aq), 'applyQuality aplica el presupuesto con refreshLights(true)');
   ok(/lightBudget\s*=\s*LIGHT_BUDGET\[level\]/.test(aq), 'applyQuality fija lightBudget = LIGHT_BUDGET[level]');
+  ok(/applyLightVisibility\s*\(\s*\)/.test(aq),
+    'applyQuality fija la visibilidad del pool para el nivel (una sola recompila por cambio)');
 
   // el pool se arma una sola vez al inicializar la escena, con intensity 0 y sin sombras
   const poolSrc = html.slice(html.indexOf('LIGHT_POOL_SIZE'), html.indexOf('LIGHT_POOL_SIZE') + 1400);
   ok(/intensity\s*=\s*0|,\s*0\s*,/.test(poolSrc), 'las luces del pool nacen con intensidad 0');
   ok(/castShadow\s*=\s*false/.test(poolSrc), 'las luces del pool no proyectan sombras');
+  ok(/pl\.visible\s*=\s*false/.test(poolSrc),
+    'los puntos nacen ocultos: applyLightVisibility enciende el set fijo del nivel');
   ok(/decay\s*=\s*2/.test(poolSrc) || /,\s*2\s*\)/.test(poolSrc), 'las luces usan decay = 2');
   ok(/scene\.add\s*\(\s*pl\s*\)/.test(poolSrc), 'las luces se agregan una sola vez a la escena');
 
@@ -572,12 +589,12 @@ T('blockedLOS: la luz no atraviesa paredes', () => {
     'raycast considera la farola como objetivo apuntable');
 
   const spec = fs.readFileSync(path.join(root, 'openspec', 'changes', 'luces-y-antorchas', 'specs', 'ui', 'config', 'spec.md'), 'utf8');
-  ok(/presupuesto de luces puntuales/.test(spec), 'la spec ui/config documenta el presupuesto de luces');
+  ok(/cantidad fija de luces dinámicas/.test(spec), 'la spec ui/config documenta la cantidad fija de luces por nivel');
 }
 
 // 9. Farola direccional: spots creados una sola vez y ancla baja
 T('LAMP_POOL_SIZE y ancla de la farola', () => {
-  ok(API.LAMP_POOL_SIZE === 2, `LAMP_POOL_SIZE = 2 spots para farolas (${API.LAMP_POOL_SIZE})`);
+  ok(API.LAMP_POOL_SIZE === 8, `LAMP_POOL_SIZE = 8 spots para farolas (${API.LAMP_POOL_SIZE})`);
   const l = API.LIGHT_SPEC[64];
   ok(Array.isArray(l.anchor) && near(l.anchor[1], 0.68, 1e-9),
     `el ancla de la farola baja a y=0.68, debajo de la pantalla (${l.anchor && l.anchor[1]})`);
@@ -589,45 +606,57 @@ T('LAMP_POOL_SIZE y ancla de la farola', () => {
     `el borde del cono es suave, penumbra ~0.5 (${API.LAMP_SPOT_PENUMBRA})`);
 });
 
-T('lightSlots: farolas al spot con fallback al punto', () => {
+T('lightSlots: farolas solo a spots, sin fallback al punto', () => {
   const f = API.lightSlots;
   ok(typeof f === 'function', 'existe lightSlots(ids, budget, spots)');
   if (typeof f !== 'function') return;
-  const noLamp = f([33, 8], 2, 2);
+  const noLamp = f([33, 8], 2, 8);
   ok(noLamp.length === 2 && noLamp.every(s => s.spot === 0),
-    'sin farolas los spots quedan sin usar (todo va al pool de puntos)');
+    'sin farolas todo va al pool de puntos');
   ok(noLamp[0].slot === 0 && noLamp[1].slot === 1,
     'los puntos se numeran 0,1 en orden de cercanía');
-  const lamps = f([64, 33], 2, 2);
-  ok(lamps[0].spot === 1 && lamps[0].slot === 0, 'la farola más cercana usa el spot 0');
-  ok(lamps[1].spot === 0 && lamps[1].slot === 0,
-    'la antorcha siguiente usa el punto 0: spots y puntos comparten el presupuesto');
-  const over = f([64, 64, 64], 3, 2);
-  ok(over.length === 3, 'el presupuesto total no cambia porque haya spots');
-  ok(over[0].spot === 1 && over[1].spot === 1, 'las dos farolas más cercanas usan los dos spots');
-  ok(over[2].spot === 0 && over[2].slot === 0, 'la tercera farola cae al pool de puntos (fallback)');
-  ok(f([64, 64, 33], 2, 2).length === 2, 'el presupuesto recorta la lista de fuentes');
-  ok(f([64], 0, 2).length === 0, 'sin presupuesto no se enciende nada');
-  const half = f([64, 64], 2, 1);
-  ok(half[0].spot === 1 && half[1].spot === 0,
-    'si se acaban los spots, la farola siguiente cae al punto');
+  ok(noLamp[0].src === 0 && noLamp[1].src === 1,
+    'cada slot recuerda el índice de su fuente en ids (src)');
+  // 7 farolas (el caso de la captura): las 7 entran en los 8 spots, ninguna usa un punto.
+  const seven = f(Array(7).fill(64), 8, 8);
+  ok(seven.length === 7, 'las 7 farolas se encienden');
+  ok(seven.every(s => s.spot === 1), 'las 7 farolas usan spots (ninguna ilumina el techo)');
+  ok(seven.map(s => s.slot).join() === '0,1,2,3,4,5,6', 'los spots se numeran 0..6');
+  ok(seven.every((s, i) => s.src === i), 'cada farola conserva su índice de origen');
+  // 9 farolas: los 8 spots; la novena se omite y NO cae al pool de puntos.
+  const nine = f(Array(9).fill(64), 9, 8);
+  ok(nine.length === 8, 'con 9 farolas solo se encienden 8 (los 8 spots)');
+  ok(nine.every(s => s.spot === 1), 'la novena farola queda apagada: nunca cae al punto');
+  ok(nine[nine.length - 1].slot === 7, 'el último spot usado es el 7');
+  // Mezcla: farolas a spots y antorchas a puntos, sin cruzarse ni desalinearse.
+  const mix = f([64, 33, 64, 33], 8, 8);
+  ok(mix.length === 4, 'la mezcla enciende las 4 fuentes');
+  ok([0, 2].every(i => { const s = mix.find(x => x.src === i); return s && s.spot === 1; }),
+    'las farolas quedan en spots');
+  ok([1, 3].every(i => { const s = mix.find(x => x.src === i); return s && s.spot === 0; }),
+    'las antorchas quedan en puntos');
+  ok(f([64], 0, 8).length === 0, 'sin presupuesto no se enciende nada');
+  ok(f([64, 33], 1, 8).length === 1 && f([64, 33], 1, 8)[0].spot === 1,
+    'el presupuesto recorta la lista de fuentes (el spot también cuenta)');
+  // Un solo spot libre: la segunda farola se omite; la antorcha siguiente usa un punto.
+  const few = f([64, 64, 33], 8, 1);
+  ok(few.length === 2, 'con 1 spot se enciende 1 farola y la otra se omite');
+  ok(few[0].spot === 1 && few[0].slot === 0, 'la farola más cercana usa el spot 0');
+  ok(few[1].spot === 0 && few[1].slot === 0 && few[1].src === 2,
+    'la antorcha posterior usa el punto 0 aunque haya una farola omitida');
 });
 
-T('shadowCaster: solo la fuente más cercana y solo en calidad 2', () => {
-  const f = API.shadowCaster;
-  ok(typeof f === 'function', 'existe shadowCaster(slots, quality)');
-  if (typeof f !== 'function') return;
-  const slots = [{ spot: 1, slot: 0 }, { spot: 0, slot: 0 }];
-  const c2 = f(slots, 2);
-  ok(!!c2 && c2.spot === true && c2.slot === 0,
-    'calidad 2: la farola más cercana proyecta sombra');
-  ok(f(slots, 1) === null, 'calidad 1: ninguna luz proyecta sombra');
-  ok(f(slots, 0) === null, 'calidad 0: ninguna luz proyecta sombra');
-  ok(f([], 2) === null, 'sin fuentes no hay shadow caster');
-  const torch = f([{ spot: 0, slot: 3 }, { spot: 1, slot: 0 }], 2);
-  ok(!!torch && torch.spot === false && torch.slot === 3,
-    'si la más cercana es antorcha, la sombra va a su PointLight');
-  ok(f([{ spot: 1, slot: 0 }], 2).slot === 0, 'solo mira el slot 0: el resto no proyecta');
+T('sin sombras dinámicas en las luces del pool', () => {
+  ok(!/function\s+shadowCaster\s*\(/.test(html),
+    'no existe el selector shadowCaster(slots, quality): las luces dinámicas no proyectan sombra');
+  ok(!/function\s+setShadowCaster\s*\(/.test(html), 'no existe setShadowCaster(kind, light)');
+  ok(!/shadowCasterKey|shadowCasterLight/.test(html),
+    'no queda estado de shadow caster (ni claves ni luz registrada)');
+  const poolSrc = html.slice(html.indexOf('const LIGHT_POOL_SIZE'), html.indexOf('const LIGHT_POOL_SIZE') + 1400);
+  ok((poolSrc.match(/castShadow\s*=\s*false/g) || []).length >= 2,
+    'los puntos y los spots del pool nacen con castShadow = false');
+  ok(!/castShadow\s*=\s*true/.test(poolSrc), 'ninguna luz del pool enciende castShadow');
+  ok(/sun\.castShadow/.test(html), 'el sol conserva su sombra (calidad 2)');
 });
 
 // 9b. estáticos del cliente: pool de spots, targets y sombra registrada
@@ -636,6 +665,8 @@ T('shadowCaster: solo la fuente más cercana y solo en calidad 2', () => {
     'el SpotLight se instancia una sola vez en el código (dentro del loop del pool)');
   ok(/for\(let i=0;i<LAMP_POOL_SIZE;i\+\+\)/.test(html),
     'el pool de spots recorre LAMP_POOL_SIZE');
+  ok(/LAMP_POOL_SIZE\s*=\s*8/.test(html),
+    'LAMP_POOL_SIZE = 8 (el presupuesto máximo de la calidad 2)');
   const at = html.indexOf('new THREE.SpotLight(');
   const spotSrc = at < 0 ? '' : html.slice(at - 320, at + 900);
   ok(/new THREE\.SpotLight\([^)]*,\s*0\s*,/.test(spotSrc), 'los spots nacen con intensidad 0');
@@ -644,11 +675,20 @@ T('shadowCaster: solo la fuente más cercana y solo en calidad 2', () => {
   ok(/scene\.add\s*\(\s*tg\s*\)/.test(spotSrc), 'el target se agrega a la escena');
   ok(/sp\.target\s*=\s*tg/.test(spotSrc), 'el spot apunta a su target');
   ok(/scene\.add\s*\(\s*sp\s*\)/.test(spotSrc), 'el spot se agrega una sola vez a la escena');
+  ok(/lampTargets\.push\(\s*tg\s*\)/.test(spotSrc),
+    'el pool guarda los 8 targets (8 spots + 8 targets en la escena)');
+  ok(/lampPool\.push\(\s*sp\s*\)/.test(spotSrc), 'el pool guarda los 8 spots');
+
+  const ls = grabFn('lightSlots');
+  ok(/if\s*\(\s*ids\[i\]\s*===\s*LT_LAMP\s*\)\s*\{\s*if\s*\(\s*ns\s*<\s*spots\s*\)/.test(ls),
+    'lightSlots solo asigna la farola si queda un spot libre (sin fallback a punto)');
 
   const rl = grabFn('refreshLights');
   ok(/lampPool/.test(rl) && /lightSlots\(/.test(rl),
     'refreshLights reparte farolas/puntos con lightSlots (spots primero)');
   ok(/lampPool\[i\]\.intensity\s*=\s*0/.test(rl), 'refreshLights apaga los spots sobrantes');
+  ok(/best\[s\.src\]/.test(rl),
+    'cada slot se aplica a su fuente por src (las farolas omitidas no desalinean)');
   ok(/sp\.target|tg\.position\.set\(b\.x\+\.5,b\.y-\.5,b\.z\+\.5\)/.test(rl) &&
      /b\.y-\.5/.test(rl), 'el target del spot queda justo debajo de la farola (y-0.5)');
   ok(/sp\.position\.set\(b\.x\+ax,b\.y\+ay,b\.z\+az\)/.test(rl),
@@ -659,19 +699,47 @@ T('shadowCaster: solo la fuente más cercana y solo en calidad 2', () => {
     'el spot usa distancia y decay de la spec');
   ok(/sp\.intensity\s*=\s*spec\.intensity\s*\*\s*fade/.test(rl),
     'la intensidad del spot también pasa por lightFade');
-  ok(/shadowCaster\(/.test(rl) && /setShadowCaster\(/.test(rl),
-    'refreshLights registra el shadow caster de la fuente más cercana');
+  ok(!/setShadowCaster|shadowCaster\s*\(/.test(rl),
+    'refreshLights ya no elige ni registra un shadow caster');
+  ok(!/castShadow/.test(rl), 'refreshLights no toca castShadow');
+  ok(!/\.visible\s*=/.test(rl), 'refreshLights no toca visible (la visibilidad es fija por nivel)');
+  ok(!/applyLightVisibility/.test(rl),
+    'refreshLights no recompila shaders cambiando la visibilidad del pool');
+}
 
-  const sc = grabFn('setShadowCaster');
-  ok(sc.length > 0, 'el cliente define setShadowCaster(kind, light)');
-  ok(/shadowCasterKey/.test(sc), 'setShadowCaster recuerda el caster para no tocar castShadow cada tick');
-  ok((sc.match(/castShadow\s*=\s*false/g) || []).length >= 2,
-    'setShadowCaster apaga todas las luces antes de encender la elegida');
-  ok(/kind\s*===\s*2\s*\?\s*512\s*:\s*256/.test(sc),
-    'mapa de sombra 512 para el spot de farola y 256 para el punto');
-  ok(/camera\.near\s*=\s*\.1/.test(sc), 'shadow camera near = .1');
-  ok(/camera\.far\s*=\s*light\.distance/.test(sc), 'shadow camera far = distancia de la luz');
-  ok(/shadow\.bias\s*=/.test(sc), 'el shadow caster lleva bias (sin acne)');
+// 9c. Visibilidad fija por calidad: el set visible se decide UNA vez al arrancar y al
+// cambiar de nivel, no según el uso de cada tick. Así caminar no recompila shaders.
+{
+  const vis = grabFn('applyLightVisibility');
+  ok(vis.length > 0, 'el cliente define applyLightVisibility()');
+  ok(/function\s+applyLightVisibility\s*\(\s*\)/.test(vis),
+    'applyLightVisibility no recibe conteos: lee la calidad vigente');
+  ok(/QUALITY_LEVEL/.test(vis), 'lee QUALITY_LEVEL');
+  ok(/POINT_VISIBLE\[\s*QUALITY_LEVEL\s*\]/.test(vis),
+    'usa POINT_VISIBLE[QUALITY_LEVEL]');
+  ok(/SPOT_VISIBLE\[\s*QUALITY_LEVEL\s*\]/.test(vis),
+    'usa SPOT_VISIBLE[QUALITY_LEVEL]');
+  ok(/lightPool\[i\]\.visible\s*=\s*i\s*<\s*pv/.test(vis),
+    'deja visibles los primeros pv puntos del nivel');
+  ok(/lampPool\[i\]\.visible\s*=\s*i\s*<\s*sv/.test(vis),
+    'deja visibles los primeros sv spots del nivel');
+  ok(!/LIGHT_VIS_MS|lightVis|performance\.now|setTimeout/.test(vis),
+    'sin debounce ni estado de conteos usados');
+
+  ok(!/LIGHT_VIS_MS/.test(html), 'no queda LIGHT_VIS_MS en el cliente');
+  ok(!/tickLightVisibility/.test(html), 'no queda tickLightVisibility en el cliente');
+  ok((html.match(/applyLightVisibility\s*\(\s*\)/g) || []).length >= 2,
+    'la visibilidad se aplica al arrancar y en cada cambio de calidad');
+
+  const rf = grabFn('refreshLights');
+  ok(/POINT_VISIBLE\[\s*QUALITY_LEVEL\s*\]/.test(rf) &&
+     /SPOT_VISIBLE\[\s*QUALITY_LEVEL\s*\]/.test(rf),
+    'refreshLights lee la visibilidad fija de su nivel');
+  ok(/s\.slot\s*>=\s*sv/.test(rf) && /s\.slot\s*>=\s*pv/.test(rf),
+    'refreshLights ignora los slots que no están visibles en el nivel');
+  ok(!/\.visible\s*=/.test(rf), 'refreshLights nunca cambia visible');
+  ok(!/applyLightVisibility/.test(rf),
+    'refreshLights no llama a applyLightVisibility');
 }
 
 // 10. Brillo del cliente: clamp al cargar y reaplicación en caliente

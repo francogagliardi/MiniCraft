@@ -596,13 +596,21 @@ function freeForMob(buf, x, y, z){
 // tests (lighting.mjs lo extrae con new Function). Los ids se repiten acá a propósito:
 // el test los contrasta contra el bloque worldgen, así que un cambio de id rompe.
 const LT_TORCH = 33, LT_GLOW = 10, LT_LAMP = 64;
-const LIGHT_BUDGET = [0, 4, 8];   // luces encendidas por nivel de calidad (spec ui/config)
+// Luces del pool visibles por nivel de calidad (spec world/lighting): la cantidad es
+// FIJA por tipo. Cambiar `visible` obliga a Three a recompilar los materiales, así que el
+// set se decide solo al arrancar y al cambiar de calidad (acción discreta), nunca al
+// caminar. Apagar una fuente en runtime = intensity 0, no visible = false.
+const POINT_VISIBLE = [0, 2, 8];  // PointLight visibles (antorchas) por nivel
+const SPOT_VISIBLE  = [0, 2, 8];  // SpotLight visibles (farolas) por nivel
+const LIGHT_BUDGET = [0, 4, 16];  // = POINT_VISIBLE[n] + SPOT_VISIBLE[n] (spec ui/config)
 const LIGHT_MAX_DIST = 20;        // radio de selección en bloques
 const LIGHT_FADE_BAND = 6;        // últimos bloques: la luz baja a 0 antes de salir del pool
 const LIGHT_PICK_MS = 250;        // cadencia de reasignación del pool
-// Farolas: spots direccionales (además del pool de puntos). Si hay más farolas que
-// slots, las que sobran caen al pool de puntos como fallback.
-const LAMP_POOL_SIZE = 2;
+// Farolas: spots direccionales. LAMP_POOL_SIZE es el presupuesto máximo (el de la
+// calidad 2): una farola SIEMPRE usa un spot y NUNCA el pool de puntos (una omni
+// encendería el techo que tiene encima). Si hay más farolas que spots, las que sobran
+// se omiten (quedan apagadas) hasta que se libere un spot. Los puntos son solo antorchas.
+const LAMP_POOL_SIZE = 8;
 const LAMP_SPOT_ANGLE = 1.15, LAMP_SPOT_PENUMBRA = .5;
 // Tabla de emisión: color, intensidad (candela, decay 2), alcance y ancla local.
 const LIGHT_SPEC = {
@@ -690,23 +698,21 @@ function blockedLOS(isOpaqueAt, ax, ay, az, bx, by, bz){
   }
   return false;
 }
-// Reparte las fuentes (ya ordenadas por cercanía) entre spots de farola y pool de puntos:
-// una farola usa primero un slot direccional libre y, si no quedan, cae al punto. El
-// presupuesto total (spots + puntos) es el mismo: cada fuente ocupa un solo slot.
+// Reparte las fuentes (ya ordenadas por cercanía) entre spots de farola y pool de puntos.
+// Una farola SOLO puede ocupar un spot: si no queda spot libre se omite (queda apagada
+// hasta que se libere uno) y nunca cae al pool de puntos, porque una omni iluminaría el
+// techo. El resto (antorchas) usa los puntos. `src` es el índice de la fuente en `ids`:
+// las farolas omitidas no consumen slot, así que la salida puede quedar desalineada y el
+// llamador tiene que aplicar cada slot a `best[src]`, no por posición.
 function lightSlots(ids, budget, spots){
   const out = [];
   let ns = 0, np = 0;
   for (let i = 0; i < ids.length && out.length < budget; i++){
-    if (ids[i] === LT_LAMP && ns < spots) out.push({ spot: 1, slot: ns++ });
-    else out.push({ spot: 0, slot: np++ });
+    if (ids[i] === LT_LAMP){
+      if (ns < spots) out.push({ spot: 1, slot: ns++, src: i });
+    } else out.push({ spot: 0, slot: np++, src: i });
   }
   return out;
-}
-// Sombra: solo la fuente más cercana (slots[0]) y solo en calidad 2. Devuelve el slot
-// elegido con su tipo (`spot`) o null si ninguna luz debe proyectar.
-function shadowCaster(slots, quality){
-  if (quality !== 2 || !slots.length) return null;
-  return { spot: slots[0].spot === 1, slot: slots[0].slot };
 }
 // Brillo persistido (spec ui/config): solo finitos dentro del rango del slider [1,3].
 // Un valor viejo/ajeno (p. ej. el localStorage del server) no puede aclarar la noche.
@@ -1095,31 +1101,36 @@ scene.add(moonLight, moonLight.target);
    8 PointLight creadas UNA sola vez, antes del primer render. Nunca se agregan ni se
    quitan en caliente: Three compila el programa de cada material para la cantidad de
    luces visibles, así que sólo se cambia posición/color/intensidad (apagar = 0).
+   `visible` lo fija applyLightVisibility con el set FIJO del nivel de calidad (no según
+   el uso): así caminar no recompila shaders y sólo se paga una vez al cambiar de nivel.
+   Todas las luces del pool viven sin sombras dinámicas: la oclusión la resuelve
+   blockedLOS + la atenuación ambiental (skyReachable). El sol conserva su sombra.
    En r160 la intensidad va en candela con decay=2 (unidades físicas): 5-24, no 1. */
 const LIGHT_POOL_SIZE = 8;
 const lightPool = [];
 for(let i=0;i<LIGHT_POOL_SIZE;i++){
   const pl = new THREE.PointLight(0xffb060, 0, 9, 2);
   pl.castShadow = false;
-  pl.visible = true;
+  pl.visible = false; // arranca oculta: applyLightVisibility enciende el set del nivel
   scene.add(pl);
   lightPool.push(pl);
 }
 let lightBudget = LIGHT_BUDGET[QUALITY_LEVEL] || 0; // presupuesto del nivel vigente
 // Farolas: LAMP_POOL_SIZE SpotLight creados UNA vez (además del pool de puntos). Cada uno
 // tiene su Object3D target en la escena; refreshLights lo ubica justo debajo de la farola
-// para que el cono ilumine hacia abajo y no el techo que tiene encima.
+// para que el cono ilumine hacia abajo (target en y-0.5) y no el techo que tiene encima.
 const lampPool = [], lampTargets = [];
 for(let i=0;i<LAMP_POOL_SIZE;i++){
   const sp = new THREE.SpotLight(0xfff0c0, 0, 14, LAMP_SPOT_ANGLE, LAMP_SPOT_PENUMBRA, 2);
-  sp.castShadow = false;
-  sp.visible = true;
+  sp.castShadow = false; // sin sombras dinámicas en el pool
+  sp.visible = false;    // igual que los puntos: la visibilidad la fija el nivel
   const tg = new THREE.Object3D();
   scene.add(tg);
   sp.target = tg;
   scene.add(sp);
   lampPool.push(sp); lampTargets.push(tg);
 }
+applyLightVisibility(); // arranque: set fijo del nivel vigente (antes del primer render)
 let lastLightPick = -1e9, lightsDirty = true;
 const chunkLights = {}; // "cx,cz" -> [x,y,z,id, ...] de las fuentes del chunk
 const skyMat = new THREE.ShaderMaterial({
@@ -1245,6 +1256,9 @@ function applyQuality(level){
   sun.shadow.mapSize.set(level===0?512:2048, level===0?512:2048);
   // Presupuesto de luces puntuales: se aplica en caliente sobre el pool fijo.
   lightBudget = LIGHT_BUDGET[level] || 0;
+  // Visibilidad FIJA del nivel: aquí (y solo aquí + arranque) se paga la recompilación
+  // de shaders por cambiar de calidad. refreshLights no toca `visible`.
+  applyLightVisibility();
   refreshLights(true);
 }
 
@@ -1756,27 +1770,22 @@ function refreshAt(x,z){
   lightsDirty = true; // el índice pudo cambiar (edit local o pedit): recalcular en el tick
   skyPending = true;  // una edición puede tapar/destapar el cielo: recalcular (con throttle)
 }
+// Visibilidad fija del pool por nivel de calidad: los primeros pv puntos y sv spots
+// quedan visibles; el resto se oculta. Se llama UNA vez al arrancar y en cada
+// applyQuality. No depende del uso (ni de cuántas fuentes haya cerca), así que caminar
+// nunca cambia la cantidad de luces y no recompila materiales.
+function applyLightVisibility(){
+  const pv = POINT_VISIBLE[QUALITY_LEVEL] || 0;
+  const sv = SPOT_VISIBLE[QUALITY_LEVEL] || 0;
+  for(let i=0;i<lightPool.length;i++) lightPool[i].visible = i < pv;
+  for(let i=0;i<lampPool.length;i++) lampPool[i].visible = i < sv;
+}
 // Elige las fuentes más cercanas al ojo y las asigna al pool fijo. Corre cada
 // LIGHT_PICK_MS (o al instante si `force`/`lightsDirty`): chunks en radio 2, descarte
 // por LIGHT_MAX_DIST y selección acotada de los K más cercanos (K = presupuesto).
-// Sombra de la fuente más cercana: registra tipo+slot y solo toca `castShadow` cuando
-// cambia el caster (evita recompilar shaders en cada tick). kind: 0=ninguna, 1=punto, 2=spot.
-let shadowCasterKey = '';
-function setShadowCaster(kind, light){
-  const key = (kind && light) ? kind+':'+light.uuid : '';
-  if(key === shadowCasterKey) return;
-  shadowCasterKey = key;
-  for(const l of lightPool) l.castShadow = false;
-  for(const l of lampPool) l.castShadow = false;
-  if(!key) return;
-  light.castShadow = true;
-  const size = kind === 2 ? 512 : 256;
-  light.shadow.mapSize.set(size, size);
-  light.shadow.camera.near = .1;
-  light.shadow.camera.far = light.distance;
-  light.shadow.camera.updateProjectionMatrix();
-  light.shadow.bias = kind === 2 ? -0.0005 : -0.002;
-}
+// No toca `visible` ni `castShadow`: el set visible es fijo por nivel
+// (applyLightVisibility) y las luces del pool no proyectan sombras. Acá solo se escribe
+// intensidad/posición/color; apagar una fuente = intensity 0.
 function refreshLights(force){
   const now=performance.now();
   if(!force && !lightsDirty && now-lastLightPick < LIGHT_PICK_MS) return;
@@ -1784,7 +1793,10 @@ function refreshLights(force){
   const K=lightBudget|0;
   for(let i=0;i<lightPool.length;i++) lightPool[i].intensity=0;
   for(let i=0;i<lampPool.length;i++) lampPool[i].intensity=0;
-  if(K<=0){ setShadowCaster(0, null); return; }
+  if(K<=0) return;
+  // Cuántos slots están visibles en este nivel: los ocultos no se encienden aunque
+  // entren en el top-K (quedan con intensity 0). El set visible no cambia acá.
+  const pv=POINT_VISIBLE[QUALITY_LEVEL]||0, sv=SPOT_VISIBLE[QUALITY_LEVEL]||0;
   const e=eyePos();
   const opaqueAt=(x,y,z)=>isOpaque(get(x,y,z));
   const pcx=(e.x/CH)|0, pcz=(e.z/CH)|0;
@@ -1812,11 +1824,15 @@ function refreshLights(force){
       if(best.length>K) best.pop();
     }
   }
-  // Reparto: la farola usa primero un spot direccional; si se acaban los slots (o no es
-  // farola), va al pool de puntos. El presupuesto total (spots + puntos) no cambia.
+  // Reparto: la farola SOLO puede ocupar un spot; si no queda uno libre se omite (nunca
+  // usa un punto, que iluminaría el techo). Las antorchas van al pool de puntos. `src`
+  // mantiene la correspondencia con `best` aunque haya farolas omitidas.
   const slots=lightSlots(best.map(b=>b.id), K, lampPool.length);
   for(let i=0;i<slots.length;i++){
-    const b=best[i], s=slots[i], spec=LIGHT_SPEC[b.id];
+    const s=slots[i], b=best[s.src], spec=LIGHT_SPEC[b.id];
+    // Solo se encienden slots visibles para el nivel. Los que exceden el set fijo
+    // quedan apagados (intensity 0) sin tocar `visible`.
+    if(s.spot){ if(s.slot>=sv) continue; } else if(s.slot>=pv) continue;
     let ax,ay,az;
     if(b.id===LT_TORCH){
       const sup=torchSupportKind({
@@ -1847,9 +1863,6 @@ function refreshLights(force){
       pl.intensity=spec.intensity*fade;
     }
   }
-  // Sombra: solo la fuente más cercana (slots[0]) y solo en calidad 2.
-  const sh=shadowCaster(slots, QUALITY_LEVEL);
-  setShadowCaster(sh?(sh.spot?2:1):0, sh?(sh.spot?lampPool[sh.slot]:lightPool[sh.slot]):null);
 }
 /* ============ PUERTAS (bisagra animada) ============ */
 // Las puertas no van al mesh de chunks: son paneles finos con pivote que
