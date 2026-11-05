@@ -183,7 +183,7 @@ function createHorde(env) {
         if (d <= ATTACK_RANGE && Math.abs(p.pos[1] - z.y) <= 1.5 && now - z.lastAtk >= ATTACK_CD_MS) {
           z.lastAtk = now;
           z.atk = (z.atk || 0) + 1; // el contador de golpes viaja en el snapshot (decisión 16)
-          events.push({ t: 'phit', to: z.target, from: 'Zombi', fromId: 0, dmg: ZOMBIE_DMG, dx: dx / d, dz: dz / d });
+          events.push({ t: 'phit', to: z.target, from: 'Zombi', fromId: z.i, dmg: ZOMBIE_DMG, dx: dx / d, dz: dz / d });
         }
       } else {
         wander(z, now, dt);

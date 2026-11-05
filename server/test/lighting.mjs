@@ -588,7 +588,7 @@ T('blockedLOS: la luz no atraviesa paredes', () => {
   ok(/dd\.lamp/.test(grabFn('raycast')) || /\.lamp/.test(grabFn('raycast')),
     'raycast considera la farola como objetivo apuntable');
 
-  const spec = fs.readFileSync(path.join(root, 'openspec', 'changes', 'luces-y-antorchas', 'specs', 'ui', 'config', 'spec.md'), 'utf8');
+  const spec = fs.readFileSync(path.join(root, 'openspec', 'specs', 'ui', 'config', 'spec.md'), 'utf8');
   ok(/cantidad fija de luces dinámicas/.test(spec), 'la spec ui/config documenta la cantidad fija de luces por nivel');
 }
 

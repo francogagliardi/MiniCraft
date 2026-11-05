@@ -242,6 +242,20 @@ const P = (id, x, y, z, dead = 0) => ({ id, pos: [x, y, z], dead });
     const s3 = ha.tick(0.05, { night: false, now: 202000, players: [P(7, 50.5, 13, 51.2)] });
     ok(s3.zs.find(e => e.i === 11).atk === 1, 'atk no vuelve a subir antes de ATTACK_CD_MS');
   }
+  // 11.4 el phit identifica al zombi atacante: dos zombis distintos mandan fromId
+  // distintos (antes todos mandaban 0 y el test de protocolo los mezclaba).
+  {
+    const hf = mkHorde();
+    addZ(hf, { i: 21, x: 50.5, z: 50.5 });
+    addZ(hf, { i: 22, x: 50.5, z: 50.5 });
+    const sf = hf.tick(0.05, { night: false, now: 400000, players: [P(7, 50.5, 13, 51.2)] });
+    const ph = sf.events.filter(e => e.t === 'phit');
+    ok(ph.length === 2, `los dos zombis emiten phit (${ph.length})`);
+    ok(ph.every(e => e.fromId === 21 || e.fromId === 22),
+      `el phit lleva el id del zombi atacante (${ph.map(e => e.fromId).join(',')})`);
+    ok(new Set(ph.map(e => e.fromId)).size === 2,
+      'dos zombis distintos mandan fromId distintos (no todos 0)');
+  }
   // 11.3 (triangulación) el atk solo cambia al golpear: no cambia al perder/re-adquirir
   // el objetivo ni al moverse; el muerto conserva su último atk durante la ventana
   {
