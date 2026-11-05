@@ -107,7 +107,7 @@ const T2 = (name, fn) => { if (!WGP) { ok(false, `${name}: sin predicados de mob
 
 // 2.1 mobBlocked: exento lo pasable, bloquea el resto
 T2('mobBlocked', () => {
-  const pasable = [0, 12, 13, 14, 33, 24, 28, 30, 32];      // aire, agua, flores, antorcha, puertas abiertas
+  const pasable = [0, 12, 13, 14, 33, 64, 24, 28, 30, 32];   // aire, agua, flores, antorcha, farola, puertas abiertas
   const traba  = [1, 2, 3, 4, 6, 7, 8, 10, 23, 27, 29, 31, 34, 39]; // pasto..escaleras, puertas cerradas
   const badP = pasable.filter(v => WGP.mobBlocked(v) !== false);
   const badT = traba.filter(v => WGP.mobBlocked(v) !== true);
@@ -128,7 +128,7 @@ T2('mobBlocked', () => {
   };
   let DEFS = null;
   try {
-    const idDecl = html.match(/const AIR=0, GRASS=1[\s\S]*?BED_Z_HEAD=63;/)[0];
+    const idDecl = html.match(/const AIR=0, GRASS=1[\s\S]*?LAMP=64;/)[0];
     DEFS = new Function(idDecl + '; const SWORD=100, PICK=101; return (' + grabObj('const DEFS = ') + ');')();
   } catch (e) { ok(false, 'parseo de DEFS para drift: ' + e.message); }
   if (DEFS && WGP) {

@@ -44,6 +44,7 @@ const STAIR_COBBLE_E = 47, STAIR_COBBLE_W = 48, STAIR_COBBLE_S = 49, STAIR_COBBL
 const STAIR_BRICK_E = 51, STAIR_BRICK_W = 52, STAIR_BRICK_S = 53, STAIR_BRICK_N = 54;
 const STAIR_SBRICK_E = 55, STAIR_SBRICK_W = 56, STAIR_SBRICK_S = 57, STAIR_SBRICK_N = 58;
 const BED = 59, BED_X_FOOT = 60, BED_X_HEAD = 61, BED_Z_FOOT = 62, BED_Z_HEAD = 63;
+const LAMP = 64;
 const grabObj = (marker) => {
   let i = html.indexOf(marker);
   i = html.indexOf('{', i);
@@ -294,12 +295,14 @@ ok(html.includes('Necesitás la espada'), 'aviso al atacar sin espada');
     // brillo neutro (BRIGHTNESS=1): la fórmula real se cubre en config.mjs
     const brightLevel = new Function('BRIGHTNESS',
       'return function brightLevel(L)' + grabObj('function brightLevel('))(1);
+    const paletteFactor = new Function('NIGHT_MIN',
+      'return function paletteFactor(L)' + grabObj('function paletteFactor('))(NIGHT_MIN);
     const ctxFor = (underVal) => ({
-      under: underVal, brightLevel,
+      under: underVal, brightLevel, paletteFactor,
       scene: { fog:{ color:mkC(), near:0, far:0 }, background:mkC() },
       skyMat: { uniforms:{ top:{value:mkC()}, bot:{value:mkC()} } },
       hemi: { color:mkC(), groundColor:mkC(), intensity:0 },
-      sun: { intensity:0 }, sunSprite: { visible:true },
+      sun: { intensity:0 }, sunSprite: { visible:true }, ambientK:1,
       NIGHT_MIN:0.50, HEMI_DAY:0.95, SUN_DAY:1.9, WATER_FOG:0x1a6fd0,
       FOG_DAY:mkC(), FOG_NIGHT:mkC(), BG_DAY:mkC(), BG_NIGHT:mkC(),
       SKY_TOP_DAY:mkC(), SKY_TOP_NIGHT:mkC(), SKY_BOT_DAY:mkC(), SKY_BOT_NIGHT:mkC(),
@@ -517,12 +520,15 @@ ok(html.includes('Necesitás la espada'), 'aviso al atacar sin espada');
     const isNightFn = new Function('NIGHT_START', 'return function isNight(v)' + grabObj('function isNight(v)'))(NIGHT_START);
     const brightFn = new Function('BRIGHTNESS',
       'return function brightLevel(L)' + grabObj('function brightLevel('))(1);
+    const paletteFn = new Function('NIGHT_MIN',
+      'return function paletteFactor(L)' + grabObj('function paletteFactor('))(NIGHT_MIN);
     const dayProg = new Function('NIGHT_START', 'return function dayProg(v)' + grabObj('function dayProg('))(NIGHT_START);
     const nightProg = new Function('NIGHT_START', 'return function nightProg(v)' + grabObj('function nightProg('))(NIGHT_START);
     const mkBody = () => ({ position: mkOut(), visible:true, lookAt(){} });
     const ctx = {
-      light: lightFn, isNight: isNightFn, brightLevel: brightFn, skyArc, dayProg, nightProg,
-      NIGHT_MIN, MOON_LIGHT, SUN_SHADOW_MIN_Y, LOW: false, SUN_DAY: 1.9,
+      light: lightFn, isNight: isNightFn, brightLevel: brightFn, paletteFactor: paletteFn,
+      skyArc, dayProg, nightProg,
+      NIGHT_MIN, MOON_LIGHT, SUN_SHADOW_MIN_Y, LOW: false, SUN_DAY: 1.9, ambientK: 1,
       W: 208, SKY_R, SKY_TILT, SKY_Y0, LIGHT_R,
       sun: { position: mkOut(), castShadow: true, intensity: 0 }, sunSprite: mkBody(),
       moonSprite: mkBody(), moonLight: { position: mkOut(), intensity: 0 },

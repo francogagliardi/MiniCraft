@@ -287,7 +287,7 @@ T('clampCam', () => {
     'camObstacle ignora flores y glow (no frenan la cámara)');
 }
 
-// 10. alta en la suite (22 archivos)
+// 10. alta en la suite (23 archivos)
 {
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'server', 'package.json'), 'utf8'));
   const s = pkg.scripts.test;
@@ -296,11 +296,11 @@ T('clampCam', () => {
 
   const lg = fs.readFileSync(path.join(root, 'server', 'test', 'lookguard.mjs'), 'utf8');
   ok(/'camera'/.test(lg), 'lookguard.mjs lista camera entre los tests de la suite');
-  ok(/count\s*===\s*22/.test(lg), 'lookguard.mjs espera 22 archivos');
+  ok(/count\s*===\s*23/.test(lg), 'lookguard.mjs espera 23 archivos');
 
   const zp = fs.readFileSync(path.join(root, 'server', 'test', 'zombie-protocol.mjs'), 'utf8');
   ok(/'camera'/.test(zp), 'zombie-protocol.mjs lista camera entre los tests de la suite');
-  ok(/22 archivos/.test(zp), 'zombie-protocol.mjs documenta 22 archivos');
+  ok(/23 archivos/.test(zp), 'zombie-protocol.mjs documenta 23 archivos');
 }
 
 // 11. documentación

@@ -84,13 +84,14 @@ const grabObj = (marker) => {
   }
   throw new Error('no balanceado: ' + marker);
 };
-const BED = 59, BED_X_FOOT = 60, BED_X_HEAD = 61, BED_Z_FOOT = 62, BED_Z_HEAD = 63;
-const idsLine = html.match(/const AIR=0, GRASS=1[\s\S]*?BED_Z_HEAD=63;/);
-ok(!!idsLine, 'ids: la línea de constantes llega hasta BED_Z_HEAD=63');
+const BED = 59, BED_X_FOOT = 60, BED_X_HEAD = 61, BED_Z_FOOT = 62, BED_Z_HEAD = 63, LAMP = 64;
+const idsLine = html.match(/const AIR=0, GRASS=1[\s\S]*?LAMP=64;/);
+ok(!!idsLine, 'ids: la línea de constantes llega hasta LAMP=64');
 if (idsLine) {
   const l = idsLine[0];
   ok(/BED=59/.test(l) && /BED_X_FOOT=60/.test(l) && /BED_X_HEAD=61/.test(l) &&
      /BED_Z_FOOT=62/.test(l) && /BED_Z_HEAD=63/.test(l), 'ids 59-63 declarados');
+  ok(/LAMP=64/.test(l), 'id 64 (farola) declarado');
 }
 let DEFS = null;
 try {
@@ -188,13 +189,13 @@ ok(/sleepBed/.test(server), 'server recuerda la celda de la cama por durmiente')
 // ---------- 4. bot ----------
 ok(/t:\s*'hello'[^;]*bot:\s*true/s.test(bot), 'el bot declara bot:true en el hello');
 
-// ---------- 5. alta en la suite (22 archivos) ----------
+// ---------- 5. alta en la suite (23 archivos) ----------
 {
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'server', 'package.json'), 'utf8'));
   const s = pkg.scripts.test;
   ok(/test\/bed-sleep\.mjs/.test(s), 'npm test da de alta test/bed-sleep.mjs');
   const count = (s.match(/test\/[\w-]+\.mjs/g) || []).length;
-  ok(count === 22, `el script test enumera 22 archivos (${count})`);
+  ok(count === 23, `el script test enumera 23 archivos (${count})`);
 }
 
 if (fails) { console.log(`\n💥 ${fails} chequeo(s) fallaron`); process.exit(1); }

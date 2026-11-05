@@ -70,7 +70,7 @@ const grabFn = (name) => {
     'pointermove aplica dy * MOUSE_SENSITIVITY (pitch)');
   const atm = grabFn('applyAtmosphere');
   ok(atm.length > 0, 'se puede extraer el cuerpo de applyAtmosphere');
-  ok(/BRIGHTNESS/.test(atm), 'applyAtmosphere usa BRIGHTNESS');
+  ok(/brightLevel\(/.test(atm), 'applyAtmosphere usa brightLevel (que aplica BRIGHTNESS)');
   ok(/function\s+applyQuality\s*\(/.test(html), 'existe function applyQuality(level)');
   const aq = grabFn('applyQuality');
   ok(aq.length > 0, 'se puede extraer el cuerpo de applyQuality');
@@ -137,8 +137,10 @@ const grabFn = (name) => {
   ok(qGet >= 0 && /applyQuality\(QUALITY_LEVEL\)/.test(html.slice(qGet, qGet + 600)),
     'el boot aplica la calidad guardada (applyQuality tras restaurar mc-quality)');
   const atmReg = grabFn('applyAtmosphere');
-  ok(/const Lb\s*=/.test(atmReg) && /const d\s*=\s*\(Lb - NIGHT_MIN\)/.test(atmReg),
-    'applyAtmosphere deriva la fase de la luz con brillo (aclarar también cielo y niebla)');
+  ok(/const d\s*=\s*paletteFactor\(L\)/.test(atmReg),
+    'applyAtmosphere deriva la paleta de paletteFactor(L): el brillo no vuelve día la noche');
+  ok(/const Lb\s*=\s*brightLevel\(L\)/.test(atmReg),
+    'applyAtmosphere usa brightLevel(L) para las intensidades');
   ok(!/0xffffff/.test(atmReg), 'applyAtmosphere no lava el fondo hacia blanco (sin brillo raro de noche)');
   ok(/QUALITY_LEVEL\s*===\s*0\)\s*\?\s*100/.test(atmReg),
     'applyAtmosphere respeta la niebla corta del nivel 0');
@@ -170,16 +172,17 @@ const grabFn = (name) => {
     'tickSky apaga el sol directo de noche (la luna es la única luz direccional)');
   ok(!/SUN_DAY\s*\*\s*d\b/.test(skyB),
     'tickSky no pisa sun.intensity con la luz sin brillo (sin parpadeo al atardecer/amanecer)');
-  ok(/const d\s*=\s*\(Lb - NIGHT_MIN\)/.test(skyB), 'tickSky deriva la fase de la luz brillante');
+  ok(/const d\s*=\s*paletteFactor\(L\)/.test(skyB),
+    'tickSky deriva la visibilidad del cielo de la fase, no del brillo (paletteFactor)');
 }
 
-// ---- 6. Alta en la suite (22 archivos) ----
+// ---- 6. Alta en la suite (23 archivos) ----
 {
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'server', 'package.json'), 'utf8'));
   const s = pkg.scripts.test;
   ok(/test\/config\.mjs/.test(s), 'npm test da de alta test/config.mjs');
   const count = (s.match(/test\/[\w-]+\.mjs/g) || []).length;
-  ok(count === 22, `el script test enumera 22 archivos (${count})`);
+  ok(count === 23, `el script test enumera 23 archivos (${count})`);
   ok(!/count\s*===\s*20/.test(s), 'package.json ya no menciona 20 archivos');
 }
 

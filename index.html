@@ -498,7 +498,7 @@ const AIR=0, GRASS=1, DIRT=2, STONE=3, LOG=4, PLANKS=5, LEAVES=6, SAND=7, GLASS=
       STAIR_COBBLE_E=47, STAIR_COBBLE_W=48, STAIR_COBBLE_S=49, STAIR_COBBLE_N=50,
       STAIR_BRICK_E=51, STAIR_BRICK_W=52, STAIR_BRICK_S=53, STAIR_BRICK_N=54,
       STAIR_SBRICK_E=55, STAIR_SBRICK_W=56, STAIR_SBRICK_S=57, STAIR_SBRICK_N=58,
-      BED=59, BED_X_FOOT=60, BED_X_HEAD=61, BED_Z_FOOT=62, BED_Z_HEAD=63;
+      BED=59, BED_X_FOOT=60, BED_X_HEAD=61, BED_Z_FOOT=62, BED_Z_HEAD=63, LAMP=64;
 const WG_W = W, WG_H = H, WG_SURFACE = WATER_Y, WG_OX = OX, WG_OZ = OZ;
 function mulberry(seed){ let a = seed>>>0; return () => {
   a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a>>>15, 1|a);
@@ -556,10 +556,11 @@ function genWorld(buf, seed){
 }
 // Predicado de colisión de mob: versión mínima de isSolid (sin DEFS). No bloquean
 // el aire, el agua, las flores, la antorcha ni las puertas abiertas; todo lo demás
-// sí (losas y escaleras son cubos completos para el mob). El test de drift lo
-// contrasta id por id contra DEFS.
+// sí (losas y escaleras son cubos completos para el mob). La farola tampoco traba:
+// cuelga del techo y se atraviesa como la antorcha. El test de drift lo contrasta
+// id por id contra DEFS.
 function mobBlocked(v){
-  return !(v===AIR || v===WATER || v===FLOWER_R || v===FLOWER_Y || v===TORCH ||
+  return !(v===AIR || v===WATER || v===FLOWER_R || v===FLOWER_Y || v===TORCH || v===LAMP ||
     v===DOOR_OPEN || v===DOOR2_OPEN || v===DOORZ_OPEN || v===DOORZ2_OPEN);
 }
 // Altura del bloque sólido más alto de la columna + 1 (0 si la columna no tiene suelo).
@@ -574,6 +575,212 @@ function freeForMob(buf, x, y, z){
   return !mobBlocked(buf[(y*WG_W + z)*WG_W + x]) && !mobBlocked(buf[((y+1)*WG_W + z)*WG_W + x]);
 }
 /* worldgen:end */
+
+/* lighting:start */
+// Bloque puro (sin THREE/DOM) compartido por el render, la selección de luces y los
+// tests (lighting.mjs lo extrae con new Function). Los ids se repiten acá a propósito:
+// el test los contrasta contra el bloque worldgen, así que un cambio de id rompe.
+const LT_TORCH = 33, LT_GLOW = 10, LT_LAMP = 64;
+const LIGHT_BUDGET = [0, 4, 8];   // luces encendidas por nivel de calidad (spec ui/config)
+const LIGHT_MAX_DIST = 20;        // radio de selección en bloques
+const LIGHT_FADE_BAND = 6;        // últimos bloques: la luz baja a 0 antes de salir del pool
+const LIGHT_PICK_MS = 250;        // cadencia de reasignación del pool
+// Farolas: spots direccionales (además del pool de puntos). Si hay más farolas que
+// slots, las que sobran caen al pool de puntos como fallback.
+const LAMP_POOL_SIZE = 2;
+const LAMP_SPOT_ANGLE = 1.15, LAMP_SPOT_PENUMBRA = .5;
+// Tabla de emisión: color, intensidad (candela, decay 2), alcance y ancla local.
+const LIGHT_SPEC = {
+  [LT_TORCH]: { color: 0xffb060, intensity: 10, distance: 9,  decay: 2, anchor: [.5, .62, .5] },
+  // El ancla (.68) queda justo debajo de la pantalla, cuya cara cálida está en y=.72:
+  // el spot ilumina hacia abajo y no el techo que tiene encima.
+  [LT_LAMP]:  { color: 0xfff0c0, intensity: 24, distance: 14, decay: 2, anchor: [.5, .68, .5] },
+};
+// La lucerita (GLOW) queda afuera a propósito: brilla con su material unlit pero no
+// emite luz alrededor (spec world/lighting).
+function isLightEmitter(id){ return id === LT_TORCH || id === LT_LAMP; }
+// Factor mínimo de luz ambiental cuando el jugador no ve el cielo: el HemisphereLight
+// es ambiental y no proyecta sombra, así que encerrarse no oscurecía (solo la sombra
+// del pool bloquea luz puntual). A .10 el encierro se ve como de noche. Ver skyReachable
+// + ambientK en el loop.
+const ENCLOSED_DIM = .10;
+// ¿La celda (x,y,z) ve el cielo? Recorre la columna por encima de y hasta top
+// (inclusive) y devuelve false en cuanto encuentra un bloque opaco. El mismo nivel y
+// lo de abajo no cuentan: la celda es la de la cabeza, no su soporte.
+function skyExposed(isOpaqueAt, x, y, z, top){
+  for (let yy = y + 1; yy <= top; yy++) if (isOpaqueAt(x, yy, z)) return false;
+  return true;
+}
+// Radio horizontal (bloques) del BFS de accesibilidad al cielo.
+const SKY_REACH_RADIUS = 24;
+// Tope de celdas visitadas: acota el peor caso (caverna enorme) sin cambiar el
+// resultado en los casos reales; si no se llegó al cielo con ese presupuesto, se
+// considera encierro (estar tan adentro ya es estar encerrado).
+const SKY_REACH_MAX_CELLS = 20000;
+// ¿La celda (x0,y0,z0) llega al cielo por aire? BFS de 6 direcciones por celdas no
+// opacas, acotado por un cubo de `radius` horizontal alrededor de (x0,z0) y
+// 0 <= y <= top. Devuelve true al alcanzar y >= top. A diferencia de skyExposed, un
+// hueco o una ventana lateral sirven: al entrar a una celda con la columna libre se
+// corta ahí. El vidrio y las losas también pasan si el predicado no los marca opacos.
+// Sin THREE/DOM.
+function skyReachable(isOpaqueAt, x0, y0, z0, top, radius){
+  if (y0 >= top) return true;
+  if (y0 < 0) return false;
+  if (skyExposed(isOpaqueAt, x0, y0, z0, top)) return true;
+  const r = Math.max(0, Math.floor(radius)), W = r * 2 + 1, HH = top + 1;
+  const seen = new Uint8Array(W * W * HH);
+  const px = x0 - r, pz = z0 - r;
+  const start = (y0 * W + r) * W + r;
+  seen[start] = 1;
+  const queue = [start];
+  for (let q = 0; q < queue.length; q++){
+    const c = queue[q], dx = c % W, t = (c - dx) / W, dz = t % W, dy = (t - dz) / W;
+    const x = px + dx, y = dy, z = pz + dz;
+    for (let k = 0; k < 6; k++){
+      const nx = x + (k === 2 ? 1 : k === 3 ? -1 : 0);
+      const ny = y + (k === 0 ? 1 : k === 1 ? -1 : 0);
+      const nz = z + (k === 4 ? 1 : k === 5 ? -1 : 0);
+      if (ny < 0 || ny > top) continue;
+      if (nx < px || nx > px + W - 1 || nz < pz || nz > pz + W - 1) continue;
+      const ni = (ny * W + (nz - pz)) * W + (nx - px);
+      if (seen[ni]) continue;
+      if (isOpaqueAt(nx, ny, nz)) continue;
+      // La columna de esta celda ya está libre: no hace falta seguir el BFS.
+      if (skyExposed(isOpaqueAt, nx, ny, nz, top)) return true;
+      seen[ni] = 1;
+      if (queue.length >= SKY_REACH_MAX_CELLS) return false;
+      queue.push(ni);
+    }
+  }
+  return false;
+}
+// ¿Hay un bloque opaco cortando el segmento fuente↔ojo? Muestreo de voxeles a ~3 pasos
+// por bloque (suficiente para paredes de 1 bloque y para muros en diagonal, mucho más
+// barato que un raycast real). Las celdas del origen y del destino no cuentan: la fuente
+// vive dentro de su bloque (antorcha/farola) y el ojo, en aire. Sin THREE/DOM.
+const LOS_STEPS_PER_BLOCK = 3;
+function blockedLOS(isOpaqueAt, ax, ay, az, bx, by, bz){
+  const dx = bx - ax, dy = by - ay, dz = bz - az;
+  const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
+  if (dist < 1e-6) return false;
+  const sx = Math.floor(ax), sy = Math.floor(ay), sz = Math.floor(az);
+  const ex = Math.floor(bx), ey = Math.floor(by), ez = Math.floor(bz);
+  const steps = Math.max(1, Math.ceil(dist * LOS_STEPS_PER_BLOCK));
+  for (let i = 1; i < steps; i++){
+    const t = i / steps;
+    const cx = Math.floor(ax + dx*t), cy = Math.floor(ay + dy*t), cz = Math.floor(az + dz*t);
+    if (cx === sx && cy === sy && cz === sz) continue;
+    if (cx === ex && cy === ey && cz === ez) continue;
+    if (isOpaqueAt(cx, cy, cz)) return true;
+  }
+  return false;
+}
+// Reparte las fuentes (ya ordenadas por cercanía) entre spots de farola y pool de puntos:
+// una farola usa primero un slot direccional libre y, si no quedan, cae al punto. El
+// presupuesto total (spots + puntos) es el mismo: cada fuente ocupa un solo slot.
+function lightSlots(ids, budget, spots){
+  const out = [];
+  let ns = 0, np = 0;
+  for (let i = 0; i < ids.length && out.length < budget; i++){
+    if (ids[i] === LT_LAMP && ns < spots) out.push({ spot: 1, slot: ns++ });
+    else out.push({ spot: 0, slot: np++ });
+  }
+  return out;
+}
+// Sombra: solo la fuente más cercana (slots[0]) y solo en calidad 2. Devuelve el slot
+// elegido con su tipo (`spot`) o null si ninguna luz debe proyectar.
+function shadowCaster(slots, quality){
+  if (quality !== 2 || !slots.length) return null;
+  return { spot: slots[0].spot === 1, slot: slots[0].slot };
+}
+// Brillo persistido (spec ui/config): solo finitos dentro del rango del slider [1,3].
+// Un valor viejo/ajeno (p. ej. el localStorage del server) no puede aclarar la noche.
+function clampBrightness(v){
+  const n = typeof v === 'number' ? v : parseFloat(v);
+  return Number.isFinite(n) ? Math.min(3, Math.max(1, n)) : 1;
+}
+// Factor de paleta (spec ui/config): 0 = noche plena, 1 = día pleno. Sale SOLO de la
+// fase (L), no del brillo: subir el brillo aclara las intensidades, pero el cielo, la
+// niebla y el fondo conservan la paleta nocturna (la noche no se vuelve día). NIGHT_MIN
+// es la misma constante del ciclo; el fallback .50 permite evaluar el bloque puro
+// aislado en los tests (donde NIGHT_MIN no está definido).
+function paletteFactor(L){
+  const m = typeof NIGHT_MIN === 'number' ? NIGHT_MIN : .50;
+  return (L - m) / (1 - m);
+}
+// Factor de atenuación 1→0 (smoothstep) en la banda final del radio del pool: la luz
+// se apaga de a poco antes de que la fuente salga de la selección, así al alejarse no
+// desaparece de golpe. Fuera de la banda vale 1; en el corte vale 0.
+function lightFade(d, maxDist, band){
+  if (band <= 0 || d >= maxDist) return 0;
+  const edge = maxDist - band;
+  if (d <= edge) return 1;
+  const t = (maxDist - d) / band;
+  return t * t * (3 - 2 * t);
+}
+// Precedencia determinista: piso → techo → pared (+X, -X, +Z, -Z) → fallback piso.
+// `s` trae las seis caras como booleanos (sólido o no). Devuelve { kind, dir } con
+// `dir` = normal que sale de la cara del soporte hacia la celda de la antorcha (misma
+// convención que el `normal` del raycast): la antorcha se inclina hacia ese lado.
+function torchSupportKind(s){
+  if (!s) return { kind:'floor', dir:[0,1,0] };
+  if (s.below) return { kind:'floor', dir:[0,1,0] };
+  if (s.above) return { kind:'ceiling', dir:[0,-1,0] };
+  if (s.px) return { kind:'wall', dir:[-1,0,0] };
+  if (s.nx) return { kind:'wall', dir:[1,0,0] };
+  if (s.pz) return { kind:'wall', dir:[0,0,-1] };
+  if (s.nz) return { kind:'wall', dir:[0,0,1] };
+  return { kind:'floor', dir:[0,1,0] };
+}
+// Cross-quads de la antorcha en coordenadas locales de la celda: 8 vértices
+// [quad1 v0..v3, quad2 v0..v3]. En cada quad los índices 0/1 son el palo (UV v0) y
+// 2/3 la llama (UV v1); el render usa ese mismo orden para las UVs.
+// Piso: vertical (modelo de siempre). Techo: espejado en Y (llama abajo). Pared:
+// la base se embebe TORCH_WALL_INSET dentro del soporte (-dir) para que el dibujo del
+// palo —que tiene margen transparente en la textura— arranque pegado a la pared; lo
+// que queda dentro del bloque lo oculta la pared opaca. El eje del soporte cruza la
+// cara sin clampear (el resto de las coordenadas sí queda en [0,1]).
+const TORCH_LEAN = .5, TORCH_RISE = .866;
+const TORCH_WALL_BASE_Y = .35, TORCH_WALL_LEN = .6, TORCH_WALL_W = .2, TORCH_BASE_A = .04;
+const TORCH_WALL_INSET = .06;
+function torchQuads(kind, dir){
+  if (kind === 'ceiling')
+    return [[.2,1,.2],[.8,1,.8],[.8,.2,.8],[.2,.2,.2], [.8,1,.2],[.2,1,.8],[.2,.2,.8],[.8,.2,.2]];
+  if (kind !== 'wall')
+    return [[.2,0,.2],[.8,0,.8],[.8,.8,.8],[.2,.8,.2], [.8,0,.2],[.2,0,.8],[.2,.8,.8],[.8,.8,.2]];
+  const d = dir || [1,0,0];
+  const ax = d[0] !== 0 ? 0 : 2;                 // eje del soporte (X o Z)
+  // Centro de la base: apoyado en la cara del soporte (lado -dir) y embebido el inset.
+  const P = [.5, TORCH_WALL_BASE_Y, .5]; P[ax] = .5 - d[ax] * (.5 - TORCH_BASE_A + TORCH_WALL_INSET);
+  const L = [d[0]*TORCH_LEAN, TORCH_RISE, d[2]*TORCH_LEAN];         // eje del palo (inclinado)
+  const s2 = ax === 0 ? [TORCH_RISE*d[0], -TORCH_LEAN, 0]
+                      : [0, -TORCH_LEAN, TORCH_RISE*d[2]];          // perpendicular al palo
+  const hw = TORCH_WALL_W / 2;
+  const quad = (side) => {
+    const b0 = [P[0]-side[0]*hw, P[1]-side[1]*hw, P[2]-side[2]*hw];
+    const b1 = [P[0]+side[0]*hw, P[1]+side[1]*hw, P[2]+side[2]*hw];
+    const tip = (p) => [p[0]+L[0]*TORCH_WALL_LEN, p[1]+L[1]*TORCH_WALL_LEN, p[2]+L[2]*TORCH_WALL_LEN];
+    return [b0, b1, tip(b1), tip(b0)];
+  };
+  // El eje del soporte queda sin clampear para que el quad cruce la cara; `y` y el eje
+  // perpendicular se acotan a la celda (el resto de la geometría no sale del bloque).
+  return [...quad(ax === 0 ? [0,0,1] : [1,0,0]), ...quad(s2)]
+    .map(v => v.map((n, i) => i === ax ? n : Math.min(1, Math.max(0, n))));
+}
+// Ancla de la luz: centro de la llama. Piso/techo por tabla; pared calculada con la
+// misma inclinación y el mismo inset que torchQuads para que la luz salga del lado libre.
+function lightAnchor(kind, dir){
+  if (kind === 'ceiling') return [.5, .28, .5];
+  if (kind === 'wall'){
+    const d = dir || [1,0,0];
+    const ax = d[0] !== 0 ? 0 : 2;
+    const P = [.5, TORCH_WALL_BASE_Y, .5]; P[ax] = .5 - d[ax] * (.5 - TORCH_BASE_A + TORCH_WALL_INSET);
+    const k = TORCH_WALL_LEN * .8;
+    return [P[0] + d[0]*TORCH_LEAN*k, P[1] + TORCH_RISE*k, P[2] + d[2]*TORCH_LEAN*k];
+  }
+  return [.5, .62, .5];
+}
+/* lighting:end */
 // Escaleras: stairDir = eje de subida (0:+X=E 1:-X=W 2:+Z=S 3:-Z=N); mitad baja al frente (-dir), alta al fondo.
 const SWORD = 100; // item (no es bloque, no se puede poner en el mundo)
 const PICK = 101;  // item (no es bloque, no se puede poner en el mundo)
@@ -644,10 +851,11 @@ const DEFS = {
   [BED_X_HEAD]:{ name:'Cama 🛏️', css:'linear-gradient(135deg,#c94b4b 0 55%,#f4f1e8 55% 100%)', color:0xb03a3a, cube:1, bed:1, bedAxis:'x', bedHead:true, hard:.3, tiles:{top:34,side:36,bottom:36} },
   [BED_Z_FOOT]:{ name:'Cama 🛏️', css:'linear-gradient(135deg,#c94b4b 0 70%,#8a5f30 70% 100%)', color:0xb03a3a, cube:1, bed:1, bedAxis:'z', bedHead:false, hard:.3, tiles:{top:35,side:36,bottom:36} },
   [BED_Z_HEAD]:{ name:'Cama 🛏️', css:'linear-gradient(135deg,#c94b4b 0 55%,#f4f1e8 55% 100%)', color:0xb03a3a, cube:1, bed:1, bedAxis:'z', bedHead:true, hard:.3, tiles:{top:34,side:36,bottom:36} },
+  [LAMP]:   { name:'Farola 💡',  css:'linear-gradient(135deg,#ffdf6e 0 38%,#8a9099 38% 100%)', color:0xfff0c0, lamp:1, hard:.2, tile:37 },
   [SWORD]:  { name:'Espada ⚔️',  css:'linear-gradient(135deg,#f4f6fa 0 60%,#c9a13b 60% 72%,#8a94a8 72% 100%)', color:0xdfe6f2, item:'sword' },
   [PICK]:   { name:'Pico ⛏️',    css:'linear-gradient(135deg,#c3c8cf 0 30%,#8a5f30 30% 70%,#6b4a2f 70% 100%)', color:0xa8adb5, item:'pick' },
 };
-const INVENTORY = [GRASS,DIRT,STONE,COBBLE,SBRICK,LOG,PLANKS,BOOKS,LEAVES,SAND,SNOW,CLAY,WOOL,GLASS,BRICK,OBSIDIAN,PUMPKIN,MELON,HAY,GLOW,DOOR,SWORD,PICK,FLOWER_R,FLOWER_Y,TORCH,SLAB_STONE,SLAB_PLANKS,SLAB_COBBLE,SLAB_BRICK,SLAB_SBRICK,STAIR_STONE_E,STAIR_PLANKS_E,STAIR_COBBLE_E,STAIR_BRICK_E,STAIR_SBRICK_E,BED];
+const INVENTORY = [GRASS,DIRT,STONE,COBBLE,SBRICK,LOG,PLANKS,BOOKS,LEAVES,SAND,SNOW,CLAY,WOOL,GLASS,BRICK,OBSIDIAN,PUMPKIN,MELON,HAY,GLOW,DOOR,SWORD,PICK,FLOWER_R,FLOWER_Y,TORCH,LAMP,SLAB_STONE,SLAB_PLANKS,SLAB_COBBLE,SLAB_BRICK,SLAB_SBRICK,STAIR_STONE_E,STAIR_PLANKS_E,STAIR_COBBLE_E,STAIR_BRICK_E,STAIR_SBRICK_E,BED];
 const DEFAULT_HOTBAR = [GRASS,DIRT,STONE,PLANKS,LOG,LEAVES,GLASS,BRICK,COBBLE];
 
 /* ============ MODO / VIDA ============ */
@@ -798,6 +1006,14 @@ atlasCanvas.width = 128; atlasCanvas.height = 80;
     c.fillStyle='#9a2d2d'; c.fillRect(0,6,16,1);   // sombra del borde
     c.fillStyle='#c94f4f'; c.fillRect(0,0,16,1);
     speckle(c,0,['#a53030','#8f6332'],12); });
+  // farola: pantalla metálica con marco y cara cálida (tile 37). La cara de abajo
+  // reutiliza el tile 11 (luz de la lucerita) para el brillo hacia el piso.
+  tile(37, c => { c.fillStyle='#5a5f68'; c.fillRect(0,0,16,16);
+    c.fillStyle='#8a9099'; c.fillRect(1,1,14,2); c.fillRect(1,13,14,2);
+    c.fillStyle='#ffdf6e'; c.fillRect(2,4,12,8);
+    c.fillStyle='#fff6c0'; c.fillRect(3,5,10,2); c.fillRect(4,9,8,1);
+    c.fillStyle='#33363d'; c.fillRect(0,0,16,1); c.fillRect(0,15,16,1);
+    speckle(c,0,['#6f757e','#ffca4f'],14); });
 }
 const atlasTex = new THREE.CanvasTexture(atlasCanvas);
 atlasTex.magFilter = THREE.NearestFilter; atlasTex.minFilter = THREE.NearestFilter;
@@ -860,6 +1076,37 @@ const moonLight = new THREE.DirectionalLight(0x9db4ff, 0.0);
 moonLight.castShadow = false;
 moonLight.target.position.set(W/2, 0, W/2);
 scene.add(moonLight, moonLight.target);
+/* ===== pool fijo de luces puntuales (spec world/lighting) =====
+   8 PointLight creadas UNA sola vez, antes del primer render. Nunca se agregan ni se
+   quitan en caliente: Three compila el programa de cada material para la cantidad de
+   luces visibles, así que sólo se cambia posición/color/intensidad (apagar = 0).
+   En r160 la intensidad va en candela con decay=2 (unidades físicas): 5-24, no 1. */
+const LIGHT_POOL_SIZE = 8;
+const lightPool = [];
+for(let i=0;i<LIGHT_POOL_SIZE;i++){
+  const pl = new THREE.PointLight(0xffb060, 0, 9, 2);
+  pl.castShadow = false;
+  pl.visible = true;
+  scene.add(pl);
+  lightPool.push(pl);
+}
+let lightBudget = LIGHT_BUDGET[QUALITY_LEVEL] || 0; // presupuesto del nivel vigente
+// Farolas: LAMP_POOL_SIZE SpotLight creados UNA vez (además del pool de puntos). Cada uno
+// tiene su Object3D target en la escena; refreshLights lo ubica justo debajo de la farola
+// para que el cono ilumine hacia abajo y no el techo que tiene encima.
+const lampPool = [], lampTargets = [];
+for(let i=0;i<LAMP_POOL_SIZE;i++){
+  const sp = new THREE.SpotLight(0xfff0c0, 0, 14, LAMP_SPOT_ANGLE, LAMP_SPOT_PENUMBRA, 2);
+  sp.castShadow = false;
+  sp.visible = true;
+  const tg = new THREE.Object3D();
+  scene.add(tg);
+  sp.target = tg;
+  scene.add(sp);
+  lampPool.push(sp); lampTargets.push(tg);
+}
+let lastLightPick = -1e9, lightsDirty = true;
+const chunkLights = {}; // "cx,cz" -> [x,y,z,id, ...] de las fuentes del chunk
 const skyMat = new THREE.ShaderMaterial({
   side:THREE.BackSide, depthWrite:false, fog:false,
   uniforms:{ top:{value:new THREE.Color(0x4fa3e8)}, bot:{value:new THREE.Color(0xe8f6ff)} },
@@ -928,12 +1175,16 @@ const HEMI_GROUND_DAY=new THREE.Color(0x8a7a5a), HEMI_GROUND_NIGHT=new THREE.Col
 const HEMI_DAY=0.95, SUN_DAY=1.9, WATER_FOG=0x1a6fd0;
 // único punto de aplicación de la atmósfera: compone día/noche con "bajo el agua"
 // (sumergido manda el azul del agua; en superficie manda el ciclo). L∈[NIGHT_MIN,1].
-let airL=-1, airUnder=null;
+let airL=-1, airUnder=null, airAmbient=null;
+// Luz ambiental bajo techo: 1 = cielo abierto, ENCLOSED_DIM = encerrado. El loop la
+// suaviza con dt y applyAtmosphere/tickSky la multiplican (ver skyReachable).
+let ambientK=1, ambientTarget=1, ambientAt=-1e9, skyCell='', skyPending=true;
 function applyAtmosphere(L){
-  // Brillo del jugador (spec ui/config): sube la luz efectiva hacia el día pleno sin
-  // convertirlo en día. BRIGHTNESS=1 no cambia nada; 3.0 aclara al máximo la noche.
+  // Paleta (cielo, niebla, fondo y colores del hemi): SOLO fase. El brillo del jugador
+  // no puede convertir la noche en día (spec ui/config).
+  const d = paletteFactor(L); // 0=noche plena → 1=día pleno
+  // Intensidades: acá sí entra el brillo (HEMI_DAY/SUN_DAY * Lb * ambientK).
   const Lb = brightLevel(L);
-  const d = (Lb - NIGHT_MIN) / (1 - NIGHT_MIN); // 0=noche plena → 1=día pleno (color y sol)
   if(under){
     scene.fog.color.setHex(WATER_FOG); scene.fog.near=1; scene.fog.far=26;
     scene.background.setHex(WATER_FOG);
@@ -949,9 +1200,9 @@ function applyAtmosphere(L){
   skyMat.uniforms.bot.value.copy(SKY_BOT_NIGHT).lerp(SKY_BOT_DAY,d);
   hemi.color.copy(HEMI_SKY_NIGHT).lerp(HEMI_SKY_DAY,d);
   hemi.groundColor.copy(HEMI_GROUND_NIGHT).lerp(HEMI_GROUND_DAY,d);
-  hemi.intensity = HEMI_DAY * Lb;
+  hemi.intensity = HEMI_DAY * Lb * ambientK;
   // sol directo solo con el sol arriba: de noche (L=NIGHT_MIN) la única direccional es la luna.
-  sun.intensity = L > NIGHT_MIN ? SUN_DAY * Lb : 0;
+  sun.intensity = L > NIGHT_MIN ? SUN_DAY * Lb * ambientK : 0;
 }
 
 /* ===== calidad gráfica =====
@@ -977,6 +1228,9 @@ function applyQuality(level){
   else { scene.fog.near=34; scene.fog.far=180; }
   sun.castShadow = (level === 2) && sun.position.y>SUN_SHADOW_MIN_Y;
   sun.shadow.mapSize.set(level===0?512:2048, level===0?512:2048);
+  // Presupuesto de luces puntuales: se aplica en caliente sobre el pool fijo.
+  lightBudget = LIGHT_BUDGET[level] || 0;
+  refreshLights(true);
 }
 
 /* ===== sol y luna sobre el arco del cielo =====
@@ -1000,8 +1254,9 @@ function nightProg(v){ return Math.min(1, Math.max(0, (v-NIGHT_START)/(1-NIGHT_S
 // mueve el sol, la luna y sus luces según la fase (llamado cada frame)
 function tickSky(v){
   const bright = typeof BRIGHTNESS !== 'undefined' ? BRIGHTNESS : 1;
-  const Lb = brightLevel(light(v));            // misma luz brillante que applyAtmosphere
-  const d=(Lb - NIGHT_MIN)/(1-NIGHT_MIN); // 0=noche plena → 1=día pleno
+  const L = light(v);
+  const Lb = brightLevel(L);                   // intensidades (igual que applyAtmosphere)
+  const d = paletteFactor(L);                  // visibilidad/posición del cielo: SOLO fase
   const night=isNight(v);
   // sol: arco del día; visible con luz suficiente y oculto de noche
   skyArc(dayProg(v), false, SKY_R, SKY_TILT, sunSprite.position);
@@ -1009,14 +1264,14 @@ function tickSky(v){
   sunSprite.visible = !night && d>0.15;
   // la luz direccional sigue la misma dirección (a distancia de sombra); sin sombras ni intensidad si el sol está bajo/oculto
   skyArc(dayProg(v), false, LIGHT_R, SKY_TILT, sun.position);
-  sun.intensity = night ? 0 : SUN_DAY*Lb;
+  sun.intensity = night ? 0 : SUN_DAY*Lb*ambientK;
   sun.castShadow = !LOW && !night && sun.position.y>SUN_SHADOW_MIN_Y;
   // luna: mismo sentido que el sol (este→oeste), visible solo de noche; su luz tenue sólo ilumina de noche
   skyArc(nightProg(v), false, SKY_R, SKY_TILT, moonSprite.position);
   moonSprite.lookAt(W/2, SKY_Y0, W/2);
   moonSprite.visible = night;
   skyArc(nightProg(v), false, LIGHT_R, SKY_TILT, moonLight.position);
-  moonLight.intensity = night ? MOON_LIGHT * Math.min(2, bright) : 0;
+  moonLight.intensity = night ? MOON_LIGHT * Math.min(2, bright) * ambientK : 0;
 }
 
 const clouds = [];
@@ -1226,7 +1481,8 @@ const matTrans  = new THREE.MeshLambertMaterial({ map:atlasTex, vertexColors:tru
 const matFlower = new THREE.MeshLambertMaterial({ map:atlasTex, vertexColors:true, alphaTest:.5, side:THREE.DoubleSide });
 const matGlow   = new THREE.MeshBasicMaterial({ map:atlasTex, vertexColors:true });
 // Brillo falso antorcha: unlit como GLOW pero con alphaTest+DoubleSide como las flores
-// (fondo transparente del tile 32). Sin luz puntual: no ilumina alrededor.
+// (fondo transparente del tile 32). El mesh no recibe luz; el aporte al entorno sale
+// del pool de PointLight (spec world/lighting).
 const matTorch  = new THREE.MeshBasicMaterial({ map:atlasTex, vertexColors:true, alphaTest:.5, side:THREE.DoubleSide });
 const FACES = [
   { d:[1,0,0],  shade:.8,  t:'side',   v:[[1,0,1],[1,0,0],[1,1,0],[1,1,1]] },
@@ -1307,14 +1563,36 @@ function emitGlobalCell(x,y,z,b,T,F,G,TM,S){
         F.ix.push(F.v,F.v+1,F.v+2, F.v,F.v+2,F.v+3); F.v+=4;
       }
     } else if(b===TORCH){
-      // Antorcha: mismo cross-quad que las flores pero al builder propio (mesh unlit).
+      // Antorcha orientable: la cruz sale del soporte (piso/techo/pared) y no se
+      // guarda en el mundo. Mismo tile 32, alphaTest y DoubleSide; el orden de los
+      // vértices (0/1 palo, 2/3 llama) es el que espera la UV de abajo.
       const t=DEFS[b].tile, [u0,v0,u1,v1]=tileUV(t);
-      for(const q of [[[0.2,0,0.2],[0.8,0,0.8],[0.8,.8,0.8],[0.2,.8,0.2]],
-                      [[0.8,0,0.2],[0.2,0,0.8],[0.2,.8,0.8],[0.8,.8,0.2]]]){
-        for(let i=0;i<4;i++){ TM.p.push(x+q[i][0],y+q[i][1],z+q[i][2]); TM.n.push(0,1,0);
+      const sup=torchSupportKind({
+        below:isSolid(get(x,y-1,z)), above:isSolid(get(x,y+1,z)),
+        px:isSolid(get(x+1,y,z)), nx:isSolid(get(x-1,y,z)),
+        pz:isSolid(get(x,y,z+1)), nz:isSolid(get(x,y,z-1)),
+      });
+      const qs=torchQuads(sup.kind, sup.dir);
+      for(let q=0;q<2;q++){
+        for(let i=0;i<4;i++){ const p=qs[q*4+i];
+          TM.p.push(x+p[0],y+p[1],z+p[2]); TM.n.push(0,1,0);
           TM.uv.push(i===0||i===3?u0:u1, i<2?v0:v1); TM.c.push(1,1,1); }
         TM.ix.push(TM.v,TM.v+1,TM.v+2, TM.v,TM.v+2,TM.v+3); TM.v+=4;
       }
+    } else if(b===LAMP){
+      // Farola colgante: varilla (y=1.0 a .88), pantalla que se ensancha (.88 → .72)
+      // y cara inferior cálida en .72. Va al builder unlit TM (matTorch).
+      TM.quad(x,y,z,[[.47,.88,.47],[.53,.88,.53],[.53,1,.53],[.47,1,.47]],[0,1,0],12,.8,false);
+      TM.quad(x,y,z,[[.53,.88,.47],[.47,.88,.53],[.47,1,.53],[.53,1,.47]],[0,1,0],12,.8,false);
+      const T37=DEFS[b].tile;
+      const SH=[
+        [[.9,.72,.9],[.9,.72,.1],[.65,.88,.35],[.65,.88,.65]],   // +X
+        [[.1,.72,.1],[.1,.72,.9],[.35,.88,.65],[.35,.88,.35]],   // -X
+        [[.1,.72,.9],[.9,.72,.9],[.65,.88,.65],[.35,.88,.65]],   // +Z
+        [[.9,.72,.1],[.1,.72,.1],[.35,.88,.35],[.65,.88,.35]],   // -Z
+      ];
+      for(const q of SH) TM.quad(x,y,z,q,[0,1,0],T37,.95,false);
+      TM.quad(x,y,z,[[.1,.72,.1],[.9,.72,.1],[.9,.72,.9],[.1,.72,.9]],[0,-1,0],11,1,false);
     } else if(b===GLOW){
       for(let f=0;f<6;f++){ const Fc=FACES[f], nb=get(x+Fc.d[0],y+Fc.d[1],z+Fc.d[2]);
         if(nb===GLOW||isOpaque(nb)) continue;
@@ -1426,8 +1704,13 @@ function buildGlobalsForChunk(cx,cz){
   }
   const T=new GeoBuilder(), F=new GeoBuilder(), G=new GeoBuilder(), TM=new GeoBuilder(), S=new GeoBuilder();
   const x0=cx*CH, z0=cz*CH;
-  for(let y=0;y<H;y++) for(let z=z0;z<z0+CH;z++) for(let x=x0;x<x0+CH;x++)
-    emitGlobalCell(x,y,z,world[widx(x,y,z)],T,F,G,TM,S);
+  const lights=[];
+  for(let y=0;y<H;y++) for(let z=z0;z<z0+CH;z++) for(let x=x0;x<x0+CH;x++){
+    const b=world[widx(x,y,z)];
+    emitGlobalCell(x,y,z,b,T,F,G,TM,S);
+    if(isLightEmitter(b)) lights.push(x,y,z,b); // índice de fuentes del chunk (spec world/lighting)
+  }
+  chunkLights[key]=lights;
   const t=T.build(matTrans,{shadow:false});
   if(t){ t.renderOrder=2; transMeshes[key]=t; scene.add(t); }
   const f=F.build(matFlower,{shadow:false}); if(f){ flowerMeshes[key]=f; scene.add(f); }
@@ -1455,6 +1738,103 @@ function refreshAt(x,z){
   const keys=affectedChunks(x,z);
   for(const k of keys){ const [cx,cz]=k.split(',').map(Number); buildChunk(cx,cz); buildGlobalsForChunk(cx,cz); }
   buildDoorsForChunks(keys);
+  lightsDirty = true; // el índice pudo cambiar (edit local o pedit): recalcular en el tick
+  skyPending = true;  // una edición puede tapar/destapar el cielo: recalcular (con throttle)
+}
+// Elige las fuentes más cercanas al ojo y las asigna al pool fijo. Corre cada
+// LIGHT_PICK_MS (o al instante si `force`/`lightsDirty`): chunks en radio 2, descarte
+// por LIGHT_MAX_DIST y selección acotada de los K más cercanos (K = presupuesto).
+// Sombra de la fuente más cercana: registra tipo+slot y solo toca `castShadow` cuando
+// cambia el caster (evita recompilar shaders en cada tick). kind: 0=ninguna, 1=punto, 2=spot.
+let shadowCasterKey = '';
+function setShadowCaster(kind, light){
+  const key = (kind && light) ? kind+':'+light.uuid : '';
+  if(key === shadowCasterKey) return;
+  shadowCasterKey = key;
+  for(const l of lightPool) l.castShadow = false;
+  for(const l of lampPool) l.castShadow = false;
+  if(!key) return;
+  light.castShadow = true;
+  const size = kind === 2 ? 512 : 256;
+  light.shadow.mapSize.set(size, size);
+  light.shadow.camera.near = .1;
+  light.shadow.camera.far = light.distance;
+  light.shadow.camera.updateProjectionMatrix();
+  light.shadow.bias = kind === 2 ? -0.0005 : -0.002;
+}
+function refreshLights(force){
+  const now=performance.now();
+  if(!force && !lightsDirty && now-lastLightPick < LIGHT_PICK_MS) return;
+  lastLightPick=now; lightsDirty=false;
+  const K=lightBudget|0;
+  for(let i=0;i<lightPool.length;i++) lightPool[i].intensity=0;
+  for(let i=0;i<lampPool.length;i++) lampPool[i].intensity=0;
+  if(K<=0){ setShadowCaster(0, null); return; }
+  const e=eyePos();
+  const opaqueAt=(x,y,z)=>isOpaque(get(x,y,z));
+  const pcx=(e.x/CH)|0, pcz=(e.z/CH)|0;
+  const max2=LIGHT_MAX_DIST*LIGHT_MAX_DIST;
+  const best=[]; // { d2, x, y, z, id } ordenado por cercanía (inserción acotada)
+  for(let dcx=-2;dcx<=2;dcx++) for(let dcz=-2;dcz<=2;dcz++){
+    const cells=chunkLights[(pcx+dcx)+','+(pcz+dcz)];
+    if(!cells) continue;
+    for(let n=0;n<cells.length;n+=4){
+      const x=cells[n], y=cells[n+1], z=cells[n+2];
+      const spec=LIGHT_SPEC[cells[n+3]];
+      if(!spec) continue;
+      const dx=x+.5-e.x, dy=y+.5-e.y, dz=z+.5-e.z;
+      const d2=dx*dx+dy*dy+dz*dz;
+      if(d2>max2) continue;
+      if(best.length>=K && d2>=best[K-1].d2) continue;
+      // Oclusión por línea de vista: una fuente que no "ve" al ojo no aporta luz. Sin
+      // esto, una antorcha al otro lado de la pared iluminaba el encierro en cualquier
+      // calidad (la sombra solo existía para la fuente más cercana en calidad 2). El
+      // ancla aproximada de la spec alcanza para trazar el segmento.
+      if(blockedLOS(opaqueAt, x+spec.anchor[0], y+spec.anchor[1], z+spec.anchor[2], e.x, e.y, e.z)) continue;
+      let at=best.length<K?best.length:K-1;
+      while(at>0 && best[at-1].d2>d2) at--;
+      best.splice(at,0,{ d2, x, y, z, id:cells[n+3] });
+      if(best.length>K) best.pop();
+    }
+  }
+  // Reparto: la farola usa primero un spot direccional; si se acaban los slots (o no es
+  // farola), va al pool de puntos. El presupuesto total (spots + puntos) no cambia.
+  const slots=lightSlots(best.map(b=>b.id), K, lampPool.length);
+  for(let i=0;i<slots.length;i++){
+    const b=best[i], s=slots[i], spec=LIGHT_SPEC[b.id];
+    let ax,ay,az;
+    if(b.id===LT_TORCH){
+      const sup=torchSupportKind({
+        below:isSolid(get(b.x,b.y-1,b.z)), above:isSolid(get(b.x,b.y+1,b.z)),
+        px:isSolid(get(b.x+1,b.y,b.z)), nx:isSolid(get(b.x-1,b.y,b.z)),
+        pz:isSolid(get(b.x,b.y,b.z+1)), nz:isSolid(get(b.x,b.y,b.z-1)),
+      });
+      const a=lightAnchor(sup.kind, sup.dir);
+      ax=a[0]; ay=a[1]; az=a[2];
+    } else { [ax,ay,az]=spec.anchor; }
+    const fade=lightFade(Math.sqrt(b.d2), LIGHT_MAX_DIST, LIGHT_FADE_BAND);
+    if(s.spot){
+      const sp=lampPool[s.slot], tg=lampTargets[s.slot];
+      sp.position.set(b.x+ax,b.y+ay,b.z+az);
+      tg.position.set(b.x+.5,b.y-.5,b.z+.5); // el cono apunta directo hacia abajo
+      sp.color.setHex(spec.color);
+      sp.distance=spec.distance;
+      sp.decay=spec.decay;
+      sp.angle=LAMP_SPOT_ANGLE;
+      sp.penumbra=LAMP_SPOT_PENUMBRA;
+      sp.intensity=spec.intensity*fade;
+    } else {
+      const pl=lightPool[s.slot];
+      pl.position.set(b.x+ax,b.y+ay,b.z+az);
+      pl.color.setHex(spec.color);
+      pl.distance=spec.distance;
+      pl.decay=spec.decay;
+      pl.intensity=spec.intensity*fade;
+    }
+  }
+  // Sombra: solo la fuente más cercana (slots[0]) y solo en calidad 2.
+  const sh=shadowCaster(slots, QUALITY_LEVEL);
+  setShadowCaster(sh?(sh.spot?2:1):0, sh?(sh.spot?lampPool[sh.slot]:lightPool[sh.slot]):null);
 }
 /* ============ PUERTAS (bisagra animada) ============ */
 // Las puertas no van al mesh de chunks: son paneles finos con pivote que
@@ -2003,7 +2383,7 @@ function raycast(maxD){
     else { z+=sz; t=dist.z; dist.z+=tD.z; nx=0;ny=0;nz=-sz; }
     if(t>max) return null;
     const b=get(x,y,z), dd=DEFS[b];
-    if(dd&&(dd.cube||dd.flower||dd.glow||dd.door)) return {x,y,z,nx,ny,nz,b,dist:t};
+    if(dd&&(dd.cube||dd.flower||dd.glow||dd.door||dd.lamp)) return {x,y,z,nx,ny,nz,b,dist:t};
   }
   return null;
 }
@@ -2791,6 +3171,36 @@ function breakTime(blockId, heldItem){
   return (d?.hard ?? 1) * HAND_MULT;
 }
 function resetBreak(){ breakKey=''; breakProg=0; crackMesh.visible=false; }
+// Cascada de soporte local (spec blocks/placement): al romper un bloque sólido,
+// las antorchas/farolas de las 6 celdas vecinas que quedaron sin ninguna cara sólida
+// se rompen en la MISMA edición. Una sola pasada (no recursiva), un rebuild por chunk
+// afectado y jamás desde el handler `pedit` (cada cliente manda sus propias edits).
+function breakOrphanSupports(x,y,z){
+  const orphans=[];
+  const sup=(nx,ny,nz)=> isSolid(get(nx,ny-1,nz)) || isSolid(get(nx,ny+1,nz)) ||
+    isSolid(get(nx+1,ny,nz)) || isSolid(get(nx-1,ny,nz)) ||
+    isSolid(get(nx,ny,nz+1)) || isSolid(get(nx,ny,nz-1));
+  for(const [dx,dy,dz] of [[0,1,0],[0,-1,0],[1,0,0],[-1,0,0],[0,0,1],[0,0,-1]]){
+    const nx=x+dx, ny=y+dy, nz=z+dz, b=get(nx,ny,nz);
+    if(b!==TORCH && b!==LAMP) continue;
+    if(!sup(nx,ny,nz)) orphans.push([nx,ny,nz,b]);
+  }
+  if(!orphans.length) return;
+  const keys=new Set();
+  for(const [nx,ny,nz,b] of orphans){
+    burst(nx,ny,nz,blockColor(b));
+    const v=waterRefill(nx,ny,nz);
+    rawSet(nx,ny,nz,v);
+    if(!mp) edits.push([widx(nx,ny,nz),v]);
+    else netSend({ t:'edit', x:nx, y:ny, z:nz, v });
+    for(const k of affectedChunks(nx,nz)) keys.add(k);
+  }
+  if(!mp) saveSoon();
+  // Lote: un rebuild por chunk afectado, no un refreshAt por vecino.
+  for(const k of keys){ const [cx,cz]=k.split(',').map(Number); buildChunk(cx,cz); buildGlobalsForChunk(cx,cz); }
+  buildDoorsForChunks([...keys]);
+  lightsDirty = true;
+}
 function doBreak(pre){
   const h=pre||raycast(); if(!h) return;
   const d=DEFS[h.b];
@@ -2822,6 +3232,8 @@ function doBreak(pre){
     rawSet(h.x,h.y,h.z,v);
     if(!mp){ edits.push([widx(h.x,h.y,h.z),v]); saveSoon(); }
     else netSend({ t:'edit', x:h.x, y:h.y, z:h.z, v });
+    // Solo local: si el bloque roto era sólido, cae lo que quedó colgando sin soporte.
+    if(isSolid(h.b)) breakOrphanSupports(h.x,h.y,h.z);
   }
   sfxBreak(); refreshAt(h.x,h.z); resetBreak();
 }
@@ -2872,11 +3284,22 @@ function doPlace(){
     editBlock(x,y,z,(id-dd.stairDir)+dir); sfxPlace(); return;
   }
   if(cur!==AIR&&cur!==WATER&&!DEFS[cur].flower) return;
-  if(dd.flower){
-    if(id===TORCH){
-      if(!isSolid(get(x,y-1,z))){ toast('🔥 La antorcha necesita un bloque sólido debajo'); return; }
+  if(id===TORCH || id===LAMP){
+    // La farola exige una celda libre (no reemplaza agua ni flores).
+    if(id===LAMP && cur!==AIR){ toast('💡 La farola necesita una celda libre'); return; }
+    // Soporte por cara (spec blocks/torch): el bloque clickeado (destino - normal)
+    // tiene que ser sólido. Una sola condición cubre piso, pared y techo.
+    if(!isSolid(get(h.x,h.y,h.z))){
+      toast(id===LAMP ? '💡 La farola cuelga de un bloque sólido' : '🔥 La antorcha necesita un bloque sólido');
+      return;
     }
-    else if(get(x,y-1,z)!==GRASS){ toast('🌸 Las flores van sobre pasto'); return; }
+    // La farola solo se cuelga de una cara inferior (normal hacia abajo).
+    if(id===LAMP && h.ny !== -1){
+      toast('💡 La farola cuelga del techo: apuntá a la cara de abajo');
+      return;
+    }
+  } else if(dd.flower){
+    if(get(x,y-1,z)!==GRASS){ toast('🌸 Las flores van sobre pasto'); return; }
   } else {
     if(ocupadoPor(x,y,z)){ toast('⛔ Ahí estás vos'); return; }
   }
@@ -3415,9 +3838,12 @@ document.getElementById('sensSlider').oninput=e=>{
   try{ localStorage.setItem('mc-mouse-sens', MOUSE_SENSITIVITY); }catch(e){}
 };
 document.getElementById('brightSlider').oninput=e=>{
-  BRIGHTNESS = parseFloat(e.target.value);
+  BRIGHTNESS = clampBrightness(e.target.value);
   document.getElementById('brightVal').textContent = BRIGHTNESS.toFixed(1) + '×';
   try{ localStorage.setItem('mc-brightness', BRIGHTNESS); }catch(e){}
+  // Reaplicar en caliente: el loop solo recompone la atmósfera si cambió la fase (o el
+  // agua), así que sin esto el slider no se vería hasta el próximo amanecer/atardecer.
+  airL = -1; applyAtmosphere(light(dayV)); tickSky(dayV);
 };
 document.getElementById('qualitySelect').onchange=e=>{
   QUALITY_LEVEL = parseInt(e.target.value);
@@ -3507,7 +3933,9 @@ setCamMode(camModeOf(savedCam), false);
 // Configuración (spec ui/config): sensibilidad, brillo y calidad se persisten
 // en localStorage y se aplican en caliente desde el panel de pausa.
 try{ const s=localStorage.getItem('mc-mouse-sens'); if(s) MOUSE_SENSITIVITY=parseFloat(s); }catch(e){}
-try{ const b=localStorage.getItem('mc-brightness'); if(b) BRIGHTNESS=parseFloat(b); }catch(e){}
+// El brillo guardado se clampea a [1,3]: un localStorage de otra máquina/servidor no
+// puede dejar la noche clara (valores viejos > 3 o basura → rango del slider).
+try{ const b=localStorage.getItem('mc-brightness'); if(b!==null) BRIGHTNESS=clampBrightness(b); }catch(e){}
 try{ const q=localStorage.getItem('mc-quality'); if(q!==null) QUALITY_LEVEL=parseInt(q); }catch(e){}
 document.getElementById('sensSlider').value = MOUSE_SENSITIVITY/0.0042;
 document.getElementById('sensVal').textContent = (MOUSE_SENSITIVITY/0.0042).toFixed(1) + '×';
@@ -3642,13 +4070,30 @@ function loop(now){
     else { hl.visible=hlEdge.visible=false; cross.classList.remove('active'); }
   } else { hl.visible=hlEdge.visible=false; if(!mouseDown[0]) crackMesh.visible=false; }
   tickSword(dt, now); tickPick(dt, now); tickCooldown(); tickDoors(dt); tickWater();
+  // Ambiental bajo techo: el HemisphereLight no proyecta sombra, así que encerrarse no
+  // oscurecía. El BFS de accesibilidad al cielo corre solo al cambiar la celda de la
+  // cabeza (y como máximo cada ~0.3 s); después ambientK se suaviza por dt hacia
+  // ENCLOSED_DIM (encerrado) o 1 (cielo abierto).
+  { const hx=Math.floor(player.pos.x), hy=Math.floor(player.pos.y)+1, hz=Math.floor(player.pos.z);
+    const skyKey=hx+','+hy+','+hz;
+    if(skyKey!==skyCell) skyPending=true;
+    if(skyPending&&now-ambientAt>=300){
+      skyPending=false; skyCell=skyKey; ambientAt=now;
+      // Opaco o puerta cerrada tapan el cielo; el vidrio y las losas no.
+      const blocksSky=(bx,by,bz)=>{ const b=get(bx,by,bz);
+        return isOpaque(b)||(isDoor(b)&&!doorOpen(b)); };
+      ambientTarget=skyReachable(blocksSky,hx,hy,hz,H-1,SKY_REACH_RADIUS)?1:ENCLOSED_DIM;
+    } }
+  ambientK += (ambientTarget-ambientK)*Math.min(1,dt*6);
   tickCactus();
+  refreshLights(false); // reasigna el pool cada 250 ms (o al instante si hubo edits)
   // ciclo día/noche: avanzar la fase local, mover sol/luna y aplicar la atmósfera si cambió
   dayV=cycleAdvance(dayV,dt,cycleMs);
   if(hasTod) dayV=cycleCorrect(dayV,todNow(now,cycleMs),dt);
   tickSky(dayV);
   { const L=light(dayV);
-    if(under!==airUnder || Math.abs(L-airL)>0.002){ airL=L; airUnder=under; applyAtmosphere(L); } }
+    if(under!==airUnder || Math.abs(L-airL)>0.002 || Math.abs(ambientK-airAmbient)>0.02){
+      airL=L; airUnder=under; airAmbient=ambientK; applyAtmosphere(L); } }
   tickParts(dt); tickDmgNums(dt);
   renderer.render(scene,camera);
 }
