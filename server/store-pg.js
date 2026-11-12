@@ -17,6 +17,20 @@ function mapUser(row) {
   };
 }
 
+// Proyección pública: nunca expone `password_hash` (listados, admin, CLI).
+function mapPublicUser(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    username: row.username,
+    role: row.role,
+    skin: row.skin,
+    active: row.active,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 function mapSession(row) {
   if (!row) return null;
   return {
@@ -83,8 +97,10 @@ function createPgStore({ db, now = () => new Date() } = {}) {
     },
 
     async listUsers() {
-      const r = await db.query('SELECT * FROM users ORDER BY lower(username)');
-      return r.rows.map(mapUser);
+      const r = await db.query(
+        'SELECT id, username, role, skin, active, created_at, updated_at FROM users ORDER BY lower(username)',
+      );
+      return r.rows.map(mapPublicUser);
     },
 
     async createUser(data) {

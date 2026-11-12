@@ -46,7 +46,9 @@ function parse(argv) {
   const username = args[1];
   let role = 'user';
   let url = process.env.DATABASE_URL;
-  for (let i = 2; i < args.length; i++) {
+  // Las flags pueden ir en cualquier posición después del comando (p. ej.
+  // `list --url <url>` debe funcionar igual que `--url <url> list`).
+  for (let i = 1; i < args.length; i++) {
     if (args[i] === '--role' && args[i + 1]) { role = args[++i]; }
     else if (args[i] === '--url' && args[i + 1]) { url = args[++i]; }
   }
