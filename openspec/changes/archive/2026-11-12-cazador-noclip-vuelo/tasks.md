@@ -22,7 +22,7 @@
 ## 4. Verificación integral
 
 - [x] 4.1 Correr la suite completa `cd server && npm test` y verificar que todos los archivos pasan, incluidos los pinneados `static.mjs` y `protocol.mjs` sin cambios.
-- [ ] 4.2 Levantar `docker compose up --build -d` (server + bot), esperar a que `http://localhost:3000` responda y verificar en el navegador: el robot vuela, atraviesa una pared/construcción cerrada, mata a un jugador refugiado en una cueva y en una torre, y conserva estados, `sigueme`/`espera`, invulnerabilidad y keepalive. Avisar al usuario qué mirar y esperar su aprobación explícita antes de commitear.
+- [x] 4.2 Levantar `docker compose up --build -d` (server + bot), esperar a que `http://localhost:3000` responda y verificar en el navegador: el robot vuela, atraviesa una pared/construcción cerrada, mata a un jugador refugiado en una cueva y en una torre, y conserva estados, `sigueme`/`espera`, invulnerabilidad y keepalive. Avisar al usuario qué mirar y esperar su aprobación explícita antes de commitear.
 
 ## Workflow follow-up
 
