@@ -1,20 +1,15 @@
-// Test end-to-end del protocolo de zombis (server-auth): levanta el server de verdad
-// de noche (ZOMBIE_FORCE_NIGHT=1) y verifica welcome.zom, difusión `zs`, el golpe
-// `zhit`→`zhitok`, la ventana de muerte (~2 s) y que sin noche no aparece nada.
+// Test end-to-end del protocolo de zombis (server-auth): levanta createApp EN
+// PROCESO de noche (ZOMBIE_FORCE_NIGHT=1), autentica por cookie y verifica
+// welcome.zom, difusión `zs`, el golpe `zhit`→`zhitok`, la ventana de muerte (~2 s)
+// y que sin noche no aparece nada.
 // Uso: node test/zombie-protocol.mjs   (sale con código != 0 si algo falla)
-import { spawn } from 'child_process';
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import WebSocket from 'ws';
+import { startApp, connect, sleep as wait } from './support/app-fixture.mjs';
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const serverDir = path.join(dir, '..');
-const PORT = 3220;
-const WORLD = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'mc-zworld-')), 'world.json');
-const PORT2 = 3221;
-const WORLD2 = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'mc-zworld-')), 'world.json');
 const TIMEOUT = 8000;
 
 let fails = 0;
@@ -22,7 +17,6 @@ const ok = (cond, msg) => {
   console.log((cond ? '✅ ' : '❌ ') + msg);
   if (!cond) fails++;
 };
-const wait = (ms) => new Promise(r => setTimeout(r, ms));
 // Espera hasta que `pred()` sea true (o se acabe el tiempo). Devuelve el veredicto.
 async function waitUntil(pred, ms = TIMEOUT) {
   const t0 = Date.now();
@@ -35,27 +29,17 @@ async function waitUntil(pred, ms = TIMEOUT) {
   return false;
 }
 
-let srv, srv2;
-function shutdown(code) {
-  try { srv && srv.kill(); } catch (e) {}
-  try { srv2 && srv2.kill(); } catch (e) {}
-  if (fails || code) { console.log(`\n💥 ${fails} chequeo(s) fallaron`); process.exit(1); }
-  console.log('\n🎉 protocolo de zombis OK');
-  process.exit(0);
-}
-setTimeout(() => { console.log('❌ timeout global'); shutdown(1); }, 90000).unref();
-
-async function hello(name, port = PORT) {
-  const ws = new WebSocket(`ws://localhost:${port}`);
+let app, app2;
+async function hello(appRef, name) {
+  const cookie = await appRef.login(name, 'password-123');
+  const r = await connect(appRef.wsUrl(), { headers: { Cookie: cookie } });
+  if (r.status !== 101) throw new Error('upgrade rechazado ' + r.status);
+  const ws = r.ws;
   const seen = [];
-  await new Promise((res, rej) => {
-    ws.on('open', res); ws.on('error', rej);
-    setTimeout(() => rej(new Error('sin conexión')), TIMEOUT);
-  });
   ws.on('message', (raw) => {
-    try { seen.push(Object.assign(JSON.parse(raw), { _t: Date.now() })); } catch (e) {}
+    try { seen.push(Object.assign(JSON.parse(raw.toString()), { _t: Date.now() })); } catch (e) {}
   });
-  ws.send(JSON.stringify({ t: 'hello', name, mode: 'player', key: '' }));
+  ws.send(JSON.stringify({ t: 'hello', name, mode: 'player' }));
   const t0 = Date.now();
   while (Date.now() - t0 < TIMEOUT) {
     const w = seen.find(m => m.t === 'welcome');
@@ -83,32 +67,22 @@ function zState(c, id) {
   const s = zsLatest(c);
   return s ? (s.z.find(q => q.i === id) || null) : null;
 }
-async function serverReady(port) {
-  const t0 = Date.now();
-  while (Date.now() - t0 < 15000) {
-    try {
-      const probe = new WebSocket(`ws://localhost:${port}`);
-      await new Promise((res, rej) => { probe.on('open', res); probe.on('error', rej); });
-      probe.close(); return true;
-    } catch (e) { await wait(200); }
-  }
-  return false;
-}
 
-// ---- server 1: noche forzada, intervalos cortos por env ----
-srv = spawn(process.execPath, ['server.js'], {
-  cwd: serverDir,
-  env: {
-    ...process.env, PORT: String(PORT), ADMIN_KEY: 'test-key', WORLD_FILE: WORLD,
-    ZOMBIE_FORCE_NIGHT: '1', ZOMBIE_TICK_MS: '50', ZOMBIE_SNAP_MS: '100', TOD_INTERVAL_MS: '150',
-  },
+// ---- app 1: noche forzada, intervalos cortos por env ----
+app = await startApp({
+  users: [
+    { username: 'Ana', password: 'password-123' },
+    { username: 'Beto', password: 'password-123' },
+    { username: 'Ciro', password: 'password-123' },
+    { username: 'Dia', password: 'password-123' },
+  ],
+  env: { ZOMBIE_FORCE_NIGHT: '1', ZOMBIE_TICK_MS: '50', ZOMBIE_SNAP_MS: '100', TOD_INTERVAL_MS: '150' },
 });
-srv.stderr.on('data', d => process.stdout.write('[SRV-ERR] ' + d));
-if (!(await serverReady(PORT))) { console.log('❌ el server no levantó'); shutdown(1); }
+ok(true, 'server nocturno de prueba levanta');
 
 try {
   // 8.1 welcome.zom es un array y llegan `zs` con la misma horda para dos clientes
-  const a = await hello('Ana');
+  const a = await hello(app, 'Ana');
   ok(Array.isArray(a.m.zom), 'welcome.zom es un array (nunca undefined)');
 
   const gotA = await waitUntil(() => { const s = zsLatest(a); return s && s.z.length > 0; });
@@ -117,7 +91,7 @@ try {
   ok(zsA && zsA.z.every(z => Array.isArray(z.p) && z.p.length === 3 && z.i !== undefined),
     'cada zombi del zs trae id + posición');
 
-  const b = await hello('Beto');
+  const b = await hello(app, 'Beto');
   const gotB = await waitUntil(() => { const s = zsLatest(b); return s && s.z.length > 0; });
   ok(gotB, 'el segundo cliente también recibe zs con zombis');
 
@@ -271,7 +245,7 @@ try {
 
     // un cliente C que entra después ve el held/seq de A en welcome.players
     const nJoin = b.seen.length;
-    const c = await hello('Ciro');
+    const c = await hello(app, 'Ciro');
     const aInC = (c.m.players || []).find(p => p.id === a.m.id);
     ok(!!aInC && aInC.held === 101 && aInC.seq === 2,
       `el recién llegado ve held/seq de A en welcome.players (held=${aInC && aInC.held} seq=${aInC && aInC.seq})`);
@@ -291,6 +265,7 @@ try {
 
   // 8.7 world.json sigue siendo exactamente { seed, edits } (sin campos de zombis)
   {
+    const WORLD = app.app.worldFile;
     const t0 = Date.now();
     while (Date.now() - t0 < 20000 && !fs.existsSync(WORLD)) await wait(200);
     let w = null;
@@ -303,40 +278,39 @@ try {
   {
     const pkg = JSON.parse(fs.readFileSync(path.join(serverDir, 'package.json'), 'utf8'));
     const s = pkg.scripts.test;
-    const required = ['static', 'avatar', 'migrate', 'terrain', 'water', 'protocol', 'worldgen', 'zombie', 'zombie-client', 'zombie-protocol', 'avatar-held', 'client-robot', 'skins', 'camera', 'cactus', 'bot-cazador', 'lookguard', 'admin-hash', 'enter-chat', 'hora-argentina', 'config', 'bed-sleep', 'lighting', 'stats'];
+    const required = ['static', 'avatar', 'migrate', 'terrain', 'water', 'worldgen', 'zombie', 'zombie-client', 'zombie-protocol', 'avatar-held', 'client-robot', 'skins', 'camera', 'cactus', 'bot-cazador', 'lookguard', 'auth', 'rate-limit', 'http-auth', 'register', 'ws-auth', 'admin-retirement', 'auth-db', 'enter-chat', 'protocol', 'hora-argentina', 'config', 'bed-sleep', 'lighting', 'stats'];
     const missing = required.filter(n => !new RegExp(`test/${n}\\.mjs`).test(s));
-    ok(missing.length === 0, `npm test corre los 24 archivos (faltan: ${missing.join(', ') || 'ninguno'})`);
+    ok(missing.length === 0, `npm test corre los ${required.length} archivos (faltan: ${missing.join(', ') || 'ninguno'})`);
   }
 
   for (const c of [a, b]) { try { c.ws.close(); } catch (e) {} }
 } catch (e) {
   console.log('❌ excepción: ' + e.message);
   fails++;
+} finally {
+  await app.close();
 }
 
-// ---- server 2: SIN noche forzada → no debe spawnear ni difundir zombis ----
+// ---- app 2: SIN noche forzada → no debe spawnear ni difundir zombis ----
 // (phaseNow() está anclado al boot: al arrancar el reloj vale 0 = día pleno)
-srv2 = spawn(process.execPath, ['server.js'], {
-  cwd: serverDir,
-  env: {
-    ...process.env, PORT: String(PORT2), ADMIN_KEY: 'test-key', WORLD_FILE: WORLD2,
-    ZOMBIE_TICK_MS: '50', ZOMBIE_SNAP_MS: '100', TOD_INTERVAL_MS: '150',
-  },
+app2 = await startApp({
+  users: [{ username: 'Dia', password: 'password-123' }],
+  env: { ZOMBIE_TICK_MS: '50', ZOMBIE_SNAP_MS: '100', TOD_INTERVAL_MS: '150' },
 });
-srv2.stderr.on('data', d => process.stdout.write('[SRV2-ERR] ' + d));
 try {
-  if (!(await serverReady(PORT2))) { console.log('❌ el server de día no levantó'); fails++; }
-  else {
-    const c2 = await hello('Dia', PORT2);
-    ok(Array.isArray(c2.m.zom) && c2.m.zom.length === 0, 'sin noche: welcome.zom vacío (array)');
-    await wait(1500); // varios ticks y snapshots
-    ok(!c2.seen.some(m => m.t === 'zs' && Array.isArray(m.z) && m.z.length > 0),
-      'sin noche: no se difunde ningún zs con zombis (el spawn depende de isNight)');
-    try { c2.ws.close(); } catch (e) {}
-  }
+  const c2 = await hello(app2, 'Dia');
+  ok(Array.isArray(c2.m.zom) && c2.m.zom.length === 0, 'sin noche: welcome.zom vacío (array)');
+  await wait(1500); // varios ticks y snapshots
+  ok(!c2.seen.some(m => m.t === 'zs' && Array.isArray(m.z) && m.z.length > 0),
+    'sin noche: no se difunde ningún zs con zombis (el spawn depende de isNight)');
+  try { c2.ws.close(); } catch (e) {}
 } catch (e) {
   console.log('❌ excepción (server de día): ' + e.message);
   fails++;
+} finally {
+  await app2.close();
 }
 
-shutdown(0);
+if (fails) { console.log(`\n💥 ${fails} chequeo(s) fallaron`); process.exit(1); }
+console.log('\n🎉 protocolo de zombis OK');
+process.exit(0);

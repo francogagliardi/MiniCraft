@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="es" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<meta name="color-scheme" content="dark light">
+<title>Minicraft — Lobby</title>
+<script>
+/* Tema antes del CSS: sin flash. Sin preferencia guardada arranca en oscuro (identidad del juego). */
+(function () {
+  var saved = null;
+  try { saved = localStorage.getItem('mc-theme'); } catch (e) {}
+  document.documentElement.setAttribute('data-theme', saved === 'light' ? 'light' : 'dark');
+})();
+</script>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg:#0b1410; --bg-2:#12211a; --panel:#14231b; --panel-2:#0f1b15;
+    --line:#2b3d30; --line-strong:#3d5442;
+    --text:#e9f2e6; --dim:#9db2a2;
+    --accent:#7ec850; --accent-strong:#9bdb6d; --accent-ink:#0d1c08; --accent-deep:#3d6f24;
+    --grass:#7ec850; --dirt:#8a5a35;
+    --danger:#ff9d90; --field:#0d1812;
+    --shadow-hard: rgba(0,0,0,.55); --glow: rgba(126,200,80,.20); --grid: rgba(126,200,80,.055);
+    --focus:#8fc4ff;
+  }
+  html[data-theme="light"] {
+    color-scheme: light;
+    --bg:#e9efe0; --bg-2:#f7faf1; --panel:#fbfdf6; --panel-2:#eef4e6;
+    --line:#cbd8c0; --line-strong:#a9bd9c;
+    --text:#18251a; --dim:#5c6f5d;
+    --accent:#3f8f2e; --accent-strong:#2f7022; --accent-ink:#f6fbf2; --accent-deep:#2a5f1d;
+    --grass:#4f9c3a; --dirt:#95613a;
+    --danger:#a5271c; --field:#ffffff;
+    --shadow-hard: rgba(40,64,38,.22); --glow: rgba(63,143,46,.18); --grid: rgba(50,90,45,.07);
+    --focus:#1d63c8;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; color: var(--text);
+    font-family: "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+    background:
+      radial-gradient(1000px 560px at 10% -10%, var(--glow), transparent 70%),
+      radial-gradient(800px 480px at 108% 104%, var(--glow), transparent 65%),
+      repeating-linear-gradient(0deg, transparent 0 31px, var(--grid) 31px 32px),
+      repeating-linear-gradient(90deg, transparent 0 31px, var(--grid) 31px 32px),
+      linear-gradient(160deg, var(--bg-2), var(--bg) 62%);
+    background-attachment: fixed;
+    padding: 24px 20px 44px;
+  }
+  header {
+    max-width: 960px; margin: 0 auto 24px; display: flex; align-items: center;
+    justify-content: space-between; gap: 14px; flex-wrap: wrap;
+  }
+  .logo {
+    display: flex; align-items: center; gap: 12px; font-size: 19px; font-weight: 800;
+    letter-spacing: .16em; font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  }
+  .logo-mark {
+    width: 22px; height: 22px; flex: none; border-radius: 3px;
+    background: linear-gradient(180deg, var(--grass) 0 50%, var(--dirt) 50% 100%);
+    box-shadow: inset -3px 0 0 rgba(0, 0, 0, .2), 0 3px 0 var(--accent-deep);
+  }
+  .head-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .who { color: var(--dim); font-size: 14px; }
+  .who b { color: var(--text); font-size: 16px; }
+  main { max-width: 960px; margin: 0 auto; display: grid; gap: 22px; }
+  .panel {
+    position: relative; background: linear-gradient(180deg, var(--panel), var(--panel-2));
+    border: 1px solid var(--line); border-radius: 6px; padding: 22px;
+    box-shadow: 6px 6px 0 var(--shadow-hard), 0 26px 60px -36px rgba(0, 0, 0, .8);
+  }
+  .panel::before {
+    content: ''; position: absolute; inset: 6px 6px auto; height: 1px;
+    background: linear-gradient(90deg, transparent, var(--line-strong), transparent);
+  }
+  h2 { margin: 0 0 6px; font-size: 18px; font-weight: 800; letter-spacing: -.01em; }
+  .note { color: var(--dim); font-size: 13.5px; line-height: 1.55; margin: 0 0 16px; max-width: 72ch; }
+  .skins { display: grid; grid-template-columns: repeat(auto-fit, minmax(104px, 1fr)); gap: 10px; }
+  .skin {
+    position: relative; min-height: 56px; padding: 8px 10px; font: inherit; font-size: 14px;
+    font-weight: 600; color: var(--text); background: var(--field);
+    border: 1px solid var(--line); border-radius: 5px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    transition: transform .16s, border-color .16s, background .16s, box-shadow .16s;
+  }
+  .skin:hover {
+    transform: translateY(-2px); border-color: var(--accent); background: var(--panel);
+    box-shadow: 0 8px 18px -12px var(--glow);
+  }
+  .skin:active { transform: translateY(0); }
+  .skin[aria-checked="true"] {
+    border-color: var(--accent); background: var(--panel);
+    box-shadow: inset 0 0 0 1px var(--accent), 0 8px 18px -14px var(--glow);
+  }
+  .skin[aria-checked="true"]::after {
+    content: ''; width: 7px; height: 7px; flex: none; border-radius: 2px;
+    background: var(--accent); box-shadow: 0 0 0 2px var(--glow);
+  }
+  .save { min-height: 20px; margin-top: 12px; font-size: 13px; color: var(--dim); }
+  .save.err { color: var(--danger); }
+  .worlds { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 14px; }
+  .world {
+    display: block; min-height: 132px; padding: 18px; border-radius: 6px;
+    border: 1px solid var(--line); background: var(--field); color: var(--text);
+    text-decoration: none;
+    transition: transform .16s, border-color .16s, background .16s, box-shadow .16s;
+  }
+  a.world:hover {
+    transform: translateY(-3px); border-color: var(--accent); background: var(--panel);
+    box-shadow: 0 14px 28px -18px var(--glow), 0 4px 0 -1px var(--accent-deep);
+  }
+  a.world:active { transform: translateY(-1px); box-shadow: none; }
+  .world strong { display: block; font-size: 17px; font-weight: 800; margin-bottom: 6px; }
+  .world small { color: var(--dim); font-size: 13px; line-height: 1.5; }
+  .world .world-go {
+    display: inline-block; margin-top: 12px; font-size: 13px; font-weight: 700;
+    color: var(--accent-strong);
+  }
+  .world.disabled { opacity: .62; cursor: not-allowed; }
+  .badge {
+    display: inline-block; margin-top: 10px; font-size: 12px; font-weight: 700;
+    padding: 4px 9px; border-radius: 3px; color: var(--dim);
+    border: 1px dashed var(--line-strong);
+  }
+  .ghost {
+    min-height: 44px; padding: 10px 16px; border-radius: 5px; border: 1px solid var(--line);
+    background: var(--field); color: var(--text); font: inherit; font-size: 14px; font-weight: 600;
+    cursor: pointer; transition: transform .16s, border-color .16s, background .16s, color .16s;
+  }
+  .ghost:hover { transform: translateY(-2px); border-color: var(--accent); color: var(--accent-strong); background: var(--panel); }
+  .ghost:active { transform: translateY(0); }
+  .theme-toggle {
+    width: 46px; height: 46px; display: grid; place-items: center;
+    border: 1px solid var(--line); border-radius: 5px; background: var(--field); color: var(--text);
+    cursor: pointer; box-shadow: 4px 4px 0 var(--shadow-hard);
+    transition: transform .16s, border-color .16s, color .16s, box-shadow .16s;
+  }
+  .theme-toggle:hover { transform: translateY(-2px); border-color: var(--accent); color: var(--accent-strong); }
+  .theme-toggle:active { transform: translateY(1px); box-shadow: 2px 2px 0 var(--shadow-hard); }
+  .theme-toggle svg { width: 20px; height: 20px; display: block; }
+  .theme-toggle .i-sun { display: none; }
+  html[data-theme="light"] .theme-toggle .i-sun { display: block; }
+  html[data-theme="light"] .theme-toggle .i-moon { display: none; }
+  a { color: var(--accent-strong); }
+  :focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+  @media (max-width: 560px) {
+    body { padding: 16px 14px 32px; }
+    header { margin-bottom: 18px; }
+    .head-actions { width: 100%; justify-content: space-between; }
+    .panel { padding: 18px 16px; box-shadow: 4px 4px 0 var(--shadow-hard); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo"><span class="logo-mark"></span>MINICRAFT</div>
+  <div class="head-actions">
+    <button class="theme-toggle" id="themeToggle" type="button" aria-label="Tema claro" aria-pressed="false" title="Cambiar entre tema claro y oscuro">
+      <svg class="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a7 7 0 1 0 10.5 10.5Z"/></svg>
+      <svg class="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.6v2.2M12 19.2v2.2M2.6 12h2.2M19.2 12h2.2M5.4 5.4l1.6 1.6M17 17l1.6 1.6M18.6 5.4 17 7M7 17l-1.6 1.6"/></svg>
+    </button>
+    <div class="who" id="who">Cargando perfil…</div>
+    <button class="ghost" id="logoutBtn" type="button">Cerrar sesión</button>
+  </div>
+</header>
+<main>
+  <section class="panel" aria-labelledby="skinTitle">
+    <h2 id="skinTitle">Tu aspecto</h2>
+    <p class="note">El aspecto define cómo te ven los demás. Su tamaño cambia la altura de ojos, la caja de colisión y los alcances.
+      En primera persona no ves tu propio modelo. La velocidad, el salto, la vida y el daño son iguales para todos los aspectos.</p>
+    <div class="skins" id="skinPicker" role="radiogroup" aria-label="Aspecto del jugador">
+      <button class="skin" type="button" role="radio" aria-checked="false" data-skin="human">Humano</button>
+      <button class="skin" type="button" role="radio" aria-checked="false" data-skin="fat">Gordo</button>
+      <button class="skin" type="button" role="radio" aria-checked="false" data-skin="giant">Gigante</button>
+      <button class="skin" type="button" role="radio" aria-checked="false" data-skin="small">Pequeño</button>
+      <button class="skin" type="button" role="radio" aria-checked="false" data-skin="zombie">Zombi</button>
+      <button class="skin" type="button" role="radio" aria-checked="false" data-skin="mujer">Mujer</button>
+      <button class="skin" type="button" role="radio" aria-checked="false" data-skin="moreno">Piel oscura</button>
+      <button class="skin" type="button" role="radio" aria-checked="false" data-skin="gojo">Gojo</button>
+    </div>
+    <div class="save" id="saveState" role="status" aria-live="polite"></div>
+  </section>
+
+  <section class="panel" aria-labelledby="worldTitle">
+    <h2 id="worldTitle">Elegí un mundo</h2>
+    <p class="note">Tu nombre de jugador es tu usuario y no se puede cambiar desde el juego.</p>
+    <div class="worlds">
+      <a class="world" id="legacyCard" href="/game">
+        <strong>Jugar Legacy</strong>
+        <small>El mundo de siempre, con tus amigos y tus construcciones.</small>
+        <span class="world-go">Entrar al mundo</span>
+      </a>
+      <div class="world disabled" id="infinityCard" aria-disabled="true">
+        <strong>Mundo Infinito</strong>
+        <small>Un mundo sin bordes, generado mientras explorás.</small>
+        <span class="badge">Próximamente</span>
+      </div>
+    </div>
+  </section>
+</main>
+<script>
+(function () {
+  // Tema claro/oscuro (spec ui/lobby): persistente; el formulario y el selector no se alteran.
+  const themeBtn = document.getElementById('themeToggle');
+  function applyTheme(theme) {
+    document.documentElement.setAttribute('data-theme', theme);
+    themeBtn.setAttribute('aria-pressed', theme === 'light' ? 'true' : 'false');
+  }
+  applyTheme(document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark');
+  themeBtn.addEventListener('click', () => {
+    const current = document.documentElement.getAttribute('data-theme');
+    const next = current === 'light' ? 'dark' : 'light';
+    applyTheme(next);
+    try { localStorage.setItem('mc-theme', next); } catch (e) {}
+  });
+
+  const who = document.getElementById('who');
+  const picker = document.getElementById('skinPicker');
+  const saveState = document.getElementById('saveState');
+  const logout = document.getElementById('logoutBtn');
+  const cards = Array.from(picker.querySelectorAll('[data-skin]'));
+  let current = 'human';
+
+  function mark(skin) {
+    for (const c of cards) c.setAttribute('aria-checked', c.dataset.skin === skin ? 'true' : 'false');
+  }
+  function note(text, isErr) {
+    saveState.textContent = text;
+    saveState.classList.toggle('err', !!isErr);
+  }
+
+  async function load() {
+    try {
+      const res = await fetch('/api/me', { credentials: 'same-origin', cache: 'no-store' });
+      if (res.status === 401) { location.replace('/login'); return; }
+      if (!res.ok) { who.textContent = 'No se pudo cargar el perfil'; note('Probá recargar la página.', true); return; }
+      const data = await res.json();
+      const user = data.user;
+      who.innerHTML = '';
+      const b = document.createElement('b'); b.textContent = user.username; who.append('Hola, ', b, user.role === 'admin' ? ' · administrador' : '');
+      current = user.skin || 'human';
+      mark(current);
+    } catch (e) {
+      who.textContent = 'No se pudo cargar el perfil';
+      note('Revisá tu conexión y recargá la página.', true);
+    }
+  }
+
+  picker.addEventListener('click', async (ev) => {
+    const btn = ev.target.closest('[data-skin]');
+    if (!btn) return;
+    const next = btn.dataset.skin;
+    if (next === current) return;
+    const prev = current;
+    current = next;
+    mark(next);
+    note('Guardando…');
+    try {
+      const res = await fetch('/api/me', {
+        method: 'PATCH', credentials: 'same-origin', cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ skin: next }),
+      });
+      if (res.status === 401) { location.replace('/login'); return; }
+      if (!res.ok) throw new Error('save');
+      const data = await res.json();
+      current = data.user.skin;
+      mark(current);
+      note('Aspecto guardado.');
+    } catch (e) {
+      current = prev;
+      mark(prev);
+      note('No se pudo guardar el aspecto. Probá de nuevo.', true);
+    }
+  });
+
+  logout.addEventListener('click', async () => {
+    logout.disabled = true;
+    try {
+      await fetch('/api/logout', {
+        method: 'POST', credentials: 'same-origin', cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' }, body: '{}',
+      });
+    } catch (e) { /* igual vamos al login */ }
+    location.replace('/login');
+  });
+
+  load();
+})();
+</script>
+</body>
+</html>

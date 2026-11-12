@@ -9,7 +9,8 @@ FROM node:20-alpine
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY server/*.js ./
-COPY index.html ./
+COPY server/migrations ./migrations
+COPY index.html login.html register.html lobby.html ./
 RUN mkdir -p /data
 
 ENV PORT=3000 \
@@ -18,7 +19,7 @@ ENV PORT=3000 \
 
 EXPOSE 3000
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD sh -c 'wget -qO- http://127.0.0.1:${PORT:-3000}/ > /dev/null 2>&1 || exit 1'
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD sh -c 'wget -qO- http://127.0.0.1:${PORT:-3000}/healthz > /dev/null 2>&1 || exit 1'
 
 CMD ["node", "server.js"]

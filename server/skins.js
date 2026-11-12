@@ -29,4 +29,17 @@ function swordReach(skin) {
   return 4.6 * sizeFactor(skin);
 }
 
-module.exports = { BASE_H, SKIN_SIZE, sizeFactor, swordReach };
+// Catálogo de aspectos de JUGADOR (spec ui/skins): exactamente ocho, sin `robot`
+// (reservado al bot). El server es la autoridad de validación del perfil.
+const PLAYER_SKINS = ['human', 'fat', 'giant', 'small', 'zombie', 'mujer', 'moreno', 'gojo'];
+
+function isPlayerSkin(skin) {
+  return typeof skin === 'string' && PLAYER_SKINS.includes(skin);
+}
+
+// Resuelve cualquier valor inválido al aspecto por defecto.
+function resolvePlayerSkin(skin) {
+  return isPlayerSkin(skin) ? skin : 'human';
+}
+
+module.exports = { BASE_H, SKIN_SIZE, PLAYER_SKINS, sizeFactor, swordReach, isPlayerSkin, resolvePlayerSkin };

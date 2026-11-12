@@ -789,7 +789,7 @@ T('paletteFactor: la paleta depende de la fase, no del brillo', () => {
 
 // 11. guarda de regresión del servidor: v <= 64, sin validar soporte
 {
-  const srv = fs.readFileSync(path.join(root, 'server', 'server.js'), 'utf8');
+  const srv = fs.readFileSync(path.join(root, 'server', 'app.js'), 'utf8');
   ok(/\bv\s*<\s*0\s*\|\|\s*v\s*>\s*64/.test(srv), 'el servidor acepta ids 0..64 y rechaza v > 64');
   ok(!/isSolid|solidAt|torchSupportKind|isLightEmitter/.test(srv),
     'el servidor no valida soporte ni iluminación (sin cambios de protocolo)');

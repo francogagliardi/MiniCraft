@@ -200,8 +200,11 @@ function createHunter(cfg = {}) {
     const fromId = m.fromId;
     if (fromId === undefined || fromId === null || fromId === self.id) return;
     const who = players.get(fromId);
-    // AUTORIDAD POR ID DEL SERVER: el nombre es suplantable ⇒ jamás autorizar por nombre
-    if (!who || who.mode !== 'admin') return;
+    // AUTORIDAD POR ID DEL SERVER: el nombre es suplantable. El rol admin llega
+    // como flag aditivo del frame (`admin:true`) o por el roster (server viejo).
+    const authorized = m.admin === true || (!!who && who.mode === 'admin');
+    if (!authorized) return;
+    const whoName = who ? who.name : 'admin';
     if (text === 'espera') {
       anchor = [self.pos[0], self.pos[1], self.pos[2]];
       adminTargetId = null;
@@ -212,7 +215,7 @@ function createHunter(cfg = {}) {
       adminTargetId = fromId;
       anchor = null;
       setMode('SIGUEME');
-      sendChat(`🐾 Modo SIGUEME: te sigo, ${who.name}.`);
+      sendChat(`🐾 Modo SIGUEME: te sigo, ${whoName}.`);
       log('orden: sigueme a admin id ' + fromId);
     }
   }

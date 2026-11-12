@@ -10,7 +10,7 @@ import { fileURLToPath } from 'url';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
-const srv = fs.readFileSync(path.join(root, 'server', 'server.js'), 'utf8');
+const srv = fs.readFileSync(path.join(root, 'server', 'app.js'), 'utf8');
 let fails = 0;
 const ok = (cond, msg) => {
   console.log((cond ? '✅ ' : '❌ ') + msg);

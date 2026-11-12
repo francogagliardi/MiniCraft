@@ -21,4 +21,6 @@ COPY index.html ./
 ENV SERVER_URL=ws://minicraft:3000 \
     BOT_NAME=OPSX-bot
 
+# BOT_TOKEN es obligatorio en runtime (server y bot comparten el mismo valor):
+#   BOT_TOKEN=... docker compose up --build -d
 CMD ["node", "bot/index.js"]

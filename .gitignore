@@ -7,6 +7,11 @@ server/world.json
 world.json
 data/
 
+# secretos locales (ADMIN_PASSWORD, BOT_TOKEN, DATABASE_URL, POSTGRES_PASSWORD)
+.env
+.env.*
+!.env.example
+
 # sistema
 .DS_Store
 Thumbs.db

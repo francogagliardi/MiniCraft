@@ -10,7 +10,7 @@ import { fileURLToPath } from 'url';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
-const server = fs.readFileSync(path.join(root, 'server', 'server.js'), 'utf8');
+const server = fs.readFileSync(path.join(root, 'server', 'app.js'), 'utf8');
 let fails = 0;
 const ok = (cond, msg) => {
   console.log((cond ? '✅ ' : '❌ ') + msg);
@@ -195,7 +195,7 @@ T('cálculo de RTT', () => {
   ok(at >= 0, "server.js tiene la rama m.t === 'ping'");
   const meGuard = server.indexOf('if (!me) return;');
   ok(meGuard >= 0 && at > meGuard, 'la rama ping está después de la guarda de sesión (if (!me) return)');
-  const branch = at >= 0 ? (server.slice(at).match(/^[\s\S]*?\n    \}/) || [''])[0] : '';
+  const branch = at >= 0 ? (server.slice(at).match(/^[\s\S]*?\n\s{4,8}\}/) || [''])[0] : '';
   ok(/send\(ws, \{ t: 'pong', ts \}\)/.test(branch), 'responde pong al emisor con el mismo ts');
   ok(!/broadcast/.test(branch), 'la rama ping no difunde a otros jugadores');
   ok(/Number\.isFinite/.test(branch), 'un ts no finito no dispara respuesta');

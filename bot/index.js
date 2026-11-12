@@ -38,6 +38,8 @@ function createBotClient(cfg = {}) {
   // deploy y `robot` por defecto. Sin whitelist propia: un valor desconocido lo dibuja el cliente
   // como humano (el server sólo lo sanea y lo difunde).
   const skin = cfg.skin || process.env.BOT_SKIN || DEFAULT_SKIN;
+  // Credencial de servicio: el server exige `Authorization: Bearer <BOT_TOKEN>`.
+  const token = cfg.token !== undefined ? cfg.token : (process.env.BOT_TOKEN || '');
   const htmlPath = cfg.htmlPath || path.join(__dirname, '..', 'index.html');
   const WS = cfg.WebSocket || WebSocket;
   const now = cfg.now || Date.now;
@@ -119,7 +121,10 @@ function createBotClient(cfg = {}) {
 
   function connect() {
     if (stopped) return;
-    try { ws = new WS(url); } catch (e) { log('no pude abrir el socket:', e && e.message); scheduleReconnect(); return; }
+    try {
+      // Sin token el server rechaza el upgrade; el bot no entra anónimo.
+      ws = token ? new WS(url, { headers: { Authorization: `Bearer ${token}` } }) : new WS(url);
+    } catch (e) { log('no pude abrir el socket:', e && e.message); scheduleReconnect(); return; }
     ws.on('open', () => {
       backoffMs = bBase; // conexión sana: resetea el backoff
       log('conectado a ' + url);
@@ -148,10 +153,16 @@ function createBotClient(cfg = {}) {
     getBot: () => bot,
     getWorld: () => world,
     getFrames: null,
+    getToken: () => token,
   };
 }
 
 if (require.main === module) {
+  if (!process.env.BOT_TOKEN) {
+    console.error('❌ falta BOT_TOKEN: el bot necesita la credencial de servicio para conectarse.');
+    console.error('   Definí BOT_TOKEN (el mismo valor que usa el server) y volvé a intentar.');
+    process.exit(1);
+  }
   const client = createBotClient({});
   const bye = () => { try { client.stop(); } catch (e) {} process.exit(0); };
   process.on('SIGINT', bye);

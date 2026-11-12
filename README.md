@@ -8,10 +8,12 @@ chiquito en Node.js con WebSocket.
 
 ## ✨ Qué tiene
 
-- 🌍 Mundo voxel 160×160 con colinas, lagos, playas, árboles y flores
+- 🌍 Mundo voxel 208×208 con colinas, lagos, playas, árboles y flores
+- 👤 **Cuentas y lobby**: registro público, login con sesión persistida, lobby
+  con selector de aspecto y elección de mundo (Legacy; Infinito “Próximamente”)
 - 🌱 **Modo jugador**: pica con progreso y grietas, sin volar, con vida,
   daño por caída, muerte con animación y respawn
-- 🛠 **Modo admin**: vuela, pica instantáneo, inmune al daño (con clave)
+- 🛠 **Modo admin**: vuela, pica instantáneo, inmune al daño (rol admin de la cuenta)
 - ⚔️ Espada con cooldown, animación y anillo de recarga + PvP
 - 🐷🐑 Chanchitos y ovejitas acariciables (con corazones)
 - 🎒 Inventario creativo (20 bloques) + hotbar de 9
@@ -22,16 +24,28 @@ chiquito en Node.js con WebSocket.
 
 ```
 MiniCraft/
-├── index.html            ← todo el juego (cliente)
+├── index.html            ← todo el juego (cliente, se sirve en /game)
+├── login.html            ← formulario de login
+├── register.html         ← registro público
+├── lobby.html            ← username, skins y elección de mundo
 ├── Dockerfile            ← imagen del server para Easypanel / VPS
 ├── Dockerfile.bot        ← imagen del bot cazador (servicio aparte)
-├── docker-compose.yml    ← server + bot con persistencia
+├── docker-compose.yml    ← db + server + bot con persistencia
 ├── .dockerignore
 ├── bot/
 │   ├── cazador.js        ← lógica pura del bot (presa, golpes, modos)
 │   └── index.js          ← cableado: WebSocket, reconexión y CLI
 ├── server/
-│   ├── server.js         ← HTTP + WebSocket multijugador
+│   ├── server.js         ← bootstrap: env → DB → migraciones → app
+│   ├── app.js            ← HTTP estático + API + WebSocket + mundo
+│   ├── auth.js           ← scrypt, tokens, cookies y validaciones
+│   ├── http-auth.js      ← rutas /api/* y páginas de login/registro/lobby
+│   ├── ws-auth.js        ← gate del upgrade (cookie o BOT_TOKEN)
+│   ├── db.js             ← Pool PostgreSQL + transacciones
+│   ├── migrate.js        ← runner de migraciones SQL
+│   ├── migrations/       ← esquema versionado (001-auth.sql)
+│   ├── store-pg.js       ← users/sessions sobre PostgreSQL
+│   ├── user-tool.mjs     ← crear/cambiar contraseña/listar/activar cuentas
 │   ├── package.json
 │   └── README.md         ← deploy clásico en VPS
 └── README.md             ← este archivo
@@ -39,30 +53,39 @@ MiniCraft/
 
 ## 🚀 Correr local
 
-**Solo (sin server):** doble click a `index.html` → JUGAR.
+**Solo (sin server):** doble click a `index.html` → ENTRAR AL MUNDO (modo
+solitario sin cuentas).
 
-**Multijugador local:**
+**Multijugador local con Docker:**
+
+```bash
+# La primera vez, definí una contraseña de admin y un token de bot:
+ADMIN_PASSWORD=admin-local-12345 BOT_TOKEN=dev-bot-token-1234567890 docker compose up --build -d
+```
+
+Abrí http://localhost:3000, creá una cuenta en `/register` o entrá con
+`admin` / `admin-local-12345`. El juego vive en `/game` y el lobby en
+`/lobby`; sin sesión todo redirige a `/login`.
+
+**Sin Docker** (Postgres local o remoto):
 
 ```bash
 cd server
 npm install
-node server.js
+DATABASE_URL=postgres://usuario:clave@localhost:5432/minicraft \
+ADMIN_PASSWORD=admin-local-12345 node server.js
 ```
 
-Abrí http://localhost:3000 en tu navegador **y** en una ventana de
-incógnito, con nombres distintos.
-
-**Modo admin:** no hay clave por defecto. En desarrollo local podés setear
-`ADMIN_KEY=<tu-clave>` (queda **en claro** en el entorno: solo dev). En
-**producción** usá `ADMIN_KEY_HASH` (ver [Clave admin](#-clave-admin-hash-pbkdf2)):
-el server no acepta ninguna clave publicada acá, y sin configuración el modo
-admin queda **deshabilitado**.
+Al arrancar, el server aplica las migraciones y crea el admin si no existe.
+El registro público queda abierto salvo `REGISTRATION_ENABLED=0`.
 
 ## 🎭 Aspectos (skins)
 
-En el menú inicial elegís cómo te ven **los demás** y qué tan grande es tu
-cuerpo en el mundo. La elección se guarda en `localStorage` (`mc-skin`) y viaja
-en el `hello`; el server sólo la difunde.
+Elegís cómo te ven **los demás** y qué tan grande es tu cuerpo en el **lobby**
+(`/lobby`). La elección se guarda en tu perfil con `PATCH /api/me` y se aplica
+al entrar a `/game`; `localStorage` (`mc-skin`) queda solo como caché
+cosmética y nunca pisa el perfil del server. El nombre de jugador es tu
+username y no se puede editar desde el juego.
 
 | id | Etiqueta | Altura | Notas |
 |---|---|---|---|
@@ -74,7 +97,7 @@ en el `hello`; el server sólo la difunde.
 | `mujer` | Mujer | 1.97 | Variante visual de 1.97: torso angosto, pecho marcado, falda, melena y mechones; paleta fija |
 | `moreno` | Piel oscura | 1.97 | Variante visual de 1.97 con el rig de `human`: piel oscura, pelo corto y barba sutil |
 | `gojo` | Gojo | 1.97 | Variante visual de 1.97: uniforme oscuro, pelo blanco en puntas y venda negra (sin ojos) |
-| `robot` | Robot | 1.90 | Nominal; reservado para el bot, no aparece en el menú |
+| `robot` | Robot | 1.90 | Nominal; reservado para el bot, no aparece en el lobby |
 
 La altura real del rig humano es **1.97** (cabellera incluida): la etiqueta con el
 nombre, la barra de vida, los corazones del saludo y el daño flotante se derivan
@@ -92,25 +115,34 @@ gravedad, el daño de caída y la vida no cambian** con el aspecto. La cámara `
 ## 🐳 Docker
 
 ```bash
-# build + run (puerto 3000, mundo persistido en volumen)
-docker compose up --build -d
+# build + run (db + server + bot; mundo en volumen)
+ADMIN_PASSWORD=admin-local-12345 BOT_TOKEN=dev-bot-token-1234567890 docker compose up --build -d
+# solo server (+ db)
+ADMIN_PASSWORD=admin-local-12345 docker compose up --build -d minicraft
 # ver logs
 docker compose logs -f
 # parar
 docker compose down
 ```
 
-Variables: `ADMIN_KEY_HASH` (producción, ver abajo), `ADMIN_KEY` (solo dev local), `PORT`.
+`docker compose up --build -d` levanta **tres** servicios: `db` (PostgreSQL 16,
+volumen `minicraft-db`, sin puertos públicos), `minicraft` (el server, espera el
+healthcheck de la DB) y `minicraft-bot` (el bot cazador, un cliente aparte).
+Para inspeccionar la base: `docker compose exec db psql -U minicraft`.
 
-`docker compose up --build -d` levanta **dos** servicios: `minicraft` (el server) y
-`minicraft-bot` (el bot cazador, un cliente aparte). Para correr solo el server:
-`docker compose up --build -d minicraft`.
+Variables principales (todas con default seguro en compose, salvo las
+credenciales): `DATABASE_URL`, `ADMIN_USERNAME`, `ADMIN_PASSWORD`,
+`BOT_TOKEN`, `COOKIE_SECURE`, `TRUST_PROXY`, `REGISTRATION_ENABLED`, `PORT`.
+Sin `BOT_TOKEN` el bot sale con error claro; el server sigue funcionando para
+usuarios. En **dev por HTTP** dejá `COOKIE_SECURE=0`; en producción HTTPS,
+`COOKIE_SECURE=1`.
 
 ## 🤖 Bot cazador (24/7)
 
-Un **robot humanoide** (`skin:'robot'`) entra como un jugador normal (modo `player`,
-**no** usa clave de admin) a perseguir y fulminar jugadores. Es un **huésped de solo
-lectura**: nunca rompe ni pone bloques (cero `edit`).
+Un **robot humanoide** (`skin:'robot'`) entra como un cliente de **servicio**,
+autenticado con `BOT_TOKEN` (sin cookie, modo `player`, **nunca** admin), a
+perseguir y fulminar jugadores. Es un **huésped de solo lectura**: nunca rompe
+ni pone bloques (cero `edit`).
 
 - **A quién caza:** a cualquier jugador **no-admin** vivo. **Nunca** ataca admins.
 - **Cómo se mueve:** **vuela y atraviesa bloques** (no-clip, siempre activo, sin
@@ -122,8 +154,8 @@ lectura**: nunca rompe ni pone bloques (cero `edit`).
   respeta la ventana de invulnerabilidad de 0.6 s del cliente: la víctima **ve dos
   golpes rápidos** y muere en ~0.65 s. Es **invulnerable** (reporta siempre 10/0).
 - **Sin presas:** vuelve al punto de aparición y se queda quieto ahí (sigue latiendo).
-- **Comandos de chat (solo admin):** el bot autoriza por el **id del server**, nunca
-  por nombre (un impostor con el nombre del admin no lo comanda).
+- **Comandos de chat (solo admin):** el bot autoriza por el **flag `admin:true` del
+  server** o por el rol admin de su roster, nunca por nombre (un impostor no lo comanda).
 
 | Comando | Efecto |
 |---|---|
@@ -136,8 +168,8 @@ ser exactamente el comando. El bot anuncia por chat los cambios de modo y las ki
 **Local:**
 
 ```bash
-node bot/index.js                       # SERVER_URL por defecto ws://minicraft:3000
-SERVER_URL=ws://localhost:3000 BOT_NAME=OPSX-bot node bot/index.js
+# BOT_TOKEN es obligatorio (el mismo valor que usa el server)
+BOT_TOKEN=dev-bot-token-1234567890 SERVER_URL=ws://localhost:3000 node bot/index.js
 ```
 
 **Variables de entorno (bot):**
@@ -145,6 +177,7 @@ SERVER_URL=ws://localhost:3000 BOT_NAME=OPSX-bot node bot/index.js
 | Var | Default | Qué hace |
 |---|---|---|
 | `SERVER_URL` | `ws://minicraft:3000` | WebSocket del server (interno en compose; en Easypanel `wss://tu-dominio`) |
+| `BOT_TOKEN` | *(obligatorio)* | Credencial de servicio; debe coincidir con la del server |
 | `BOT_NAME` | `OPSX-bot` | Nombre con el que entra al mundo |
 | `BOT_SKIN` | `robot` | Aspecto con el que se presenta: `robot`, `human`, `fat`, `giant`, `small` o `zombie` (un valor desconocido se dibuja como humano) |
 
@@ -164,15 +197,24 @@ reconecta solo con backoff, así que sobrevive a los redeploys del server.
    **New → App → From GitHub → MiniCraft**.
 2. En **Build**, elegí **Dockerfile** (usa el de la raíz).
 3. En **Environment**, agregá:
-   - `ADMIN_KEY_HASH` = el hash PBKDF2 de tu clave admin (ver
-     [Clave admin](#-clave-admin-hash-pbkdf2))
-   - (opcional) `PORT` = `3000`
-   - **NO** agregues `ADMIN_KEY` en claro: cualquiera con acceso al host
-     (root, `docker inspect`, panel de Easypanel) la leería.
+   - `DATABASE_URL` = la cadena de tu PostgreSQL (interno de Easypanel o externo)
+   - `ADMIN_PASSWORD` = contraseña del admin inicial (**solo el primer deploy**;
+     después puede removerse: un reinicio no rota nada)
+   - `BOT_TOKEN` = token de servicio del bot (mismo valor en la app del bot)
+   - `COOKIE_SECURE=1` y `TRUST_PROXY=1` (Easypanel sirve HTTPS detrás de proxy)
+   - `REGISTRATION_ENABLED=1` (o `0` para cerrar el registro público)
+   - **NO** agregues `ADMIN_KEY`/`ADMIN_KEY_HASH`: ya no se usan. Si quedaron,
+     el server las ignora y avisa una vez en el log.
 4. En **Domains/Ports**, exponé el puerto **`3000`**.
 5. En **Volumes**, montá un volumen en **`/data`**
-   (ahí vive `world.json`, así no perdés el mundo en cada deploy).
-6. Deploy ▶️ — tus amigos entran a `http://TU_IP:3000`.
+   (ahí vive `world.json`; la identidad vive en PostgreSQL, no en el volumen).
+6. Deploy ▶️ — tus amigos entran a `https://TU_DOMINIO`, crean su cuenta en
+   `/register` (si el toggle está abierto) y eligen mundo en `/lobby`.
+
+**Cerrar el registro en producción:** cambiá `REGISTRATION_ENABLED=0` en el
+servicio `minicraft` y redeployá/reiniciá. No requiere migración: `/register`
+pasa a mostrar “Registro cerrado” y `POST /api/register` responde `403`. Las
+cuentas existentes y el login no se ven afectados.
 
 ### 🔄 Deploy automático (push a main → se actualiza solo)
 
@@ -231,41 +273,47 @@ reconecta solo con backoff, así que sobrevive a los redeploys del server.
 | Var | Default | Qué hace |
 |---|---|---|
 | `PORT` | `3000` | Puerto HTTP + WebSocket |
-| `ADMIN_KEY_HASH` | *(vacío)* | **Producción.** Hash PBKDF2 de la clave admin (`pbkdf2_sha256$...`). Si está, se usa **solo** eso y se ignora `ADMIN_KEY` en claro. |
-| `ADMIN_KEY` | *(vacío)* | Solo **dev local**: clave admin EN CLARO (legible por quien acceda al host). Fallback de desarrollo/tests. |
-| `MINICRAFT_DIR` | `..` (local) / `/app` (docker) | De dónde servir `index.html` |
+| `DATABASE_URL` | *(obligatoria)* | PostgreSQL de usuarios y sesiones |
+| `ADMIN_USERNAME` | `admin` | Cuenta admin que crea el bootstrap; queda reservada en el registro |
+| `ADMIN_PASSWORD` | *(vacío)* | Contraseña del admin **solo en el primer arranque**. Si falta o tiene <8, no se crea admin (avisa sin exponer nada). Nunca se loguea |
+| `BOT_TOKEN` | *(vacío)* | Credencial de servicio del bot (`Authorization: Bearer`). Sin ella el bot no entra |
+| `COOKIE_SECURE` | `0` (`1` si `NODE_ENV=production`) | Agrega `Secure` a la cookie de sesión. **1** en HTTPS |
+| `TRUST_PROXY` | `0` | Usa el primer `X-Forwarded-For` para el rate limit. Solo detrás de un proxy propio |
+| `REGISTRATION_ENABLED` | `1` | `1`/`true` abierto; `0`/`false` cerrado; otro valor → cerrado + warning |
+| `MIGRATIONS_AUTO` | `1` | `0` salta el runner (ops que migran aparte) |
+| `MINICRAFT_DIR` | `..` (local) / `/app` (docker) | De dónde servir el cliente y las páginas |
 | `WORLD_FILE` | `server/world.json` (local) / `/data/world.json` (docker) | Dónde persistir el mundo |
 
-### 🔐 Clave admin (PBKDF2)
+### 👑 Admin, cuentas y CLI
 
-En **producción la clave no se guarda**: el entorno guarda un **hash
-PBKDF2-SHA256** (`ADMIN_KEY_HASH`) y el server deriva el hash de lo que recibe
-para compararlo. Leer la config del host (`docker inspect`, `/proc/<pid>/environ`,
-panel de Easypanel) **no entrega una credencial usable**: mandar el hash como
-clave **no entra** (el server hashea lo que recibe) y, con salt + 210000
-iteraciones, crackearlo offline tampoco es barato.
+**Bootstrap:** en el primer arranque, si no existe `ADMIN_USERNAME` y
+`ADMIN_PASSWORD` es válida (≥8), se crea la cuenta con `role='admin'`,
+`skin='human'`, activa y contraseña `scrypt`. Si la cuenta ya existe **no se
+sobrescribe**: cambiar `ADMIN_PASSWORD` no rota nada. Para rotarla, usá la CLI.
 
-Generá el hash con la herramienta local (nunca imprime la clave):
+**Registro público:** `/register` crea cuentas `role='user'` con skin
+`human`, contraseña de 8–128 y username de 3–16 (`^[A-Za-z0-9_-]+$`), único
+sin distinguir mayúsculas. Los nombres `admin`, `system`, `server`, `bot`,
+`null`, `undefined` y el `ADMIN_USERNAME` están reservados. El registro
+**nunca** puede crear un admin.
+
+**CLI** (misma validación y mismo hash que el login; la contraseña se lee por
+stdin, nunca por argv):
 
 ```bash
-node server/hash-key.mjs "tu-clave-admin-nueva"     # o sin argumento: la pide por stdin (sin eco)
-# imprime:  ADMIN_KEY_HASH=pbkdf2_sha256$210000$<saltB64>$<hashB64>
+DATABASE_URL=... node server/user-tool.mjs create ana --role user
+DATABASE_URL=... node server/user-tool.mjs passwd ana     # revoca sus sesiones
+DATABASE_URL=... node server/user-tool.mjs list
+DATABASE_URL=... node server/user-tool.mjs disable ana    # active=false + revoca
+DATABASE_URL=... node server/user-tool.mjs enable ana
 ```
 
-Pegá esa línea en **Easypanel → Environment** y **borrá** cualquier `ADMIN_KEY`
-en claro (la precedencia hace ganar al hash, pero la clave en claro sigue siendo
-legible en el host hasta que se borre: el server lo advierte al arrancar).
-
-- **Precedencia:** si hay `ADMIN_KEY_HASH`, se usa **solo** el hash.
-- **Fail closed:** sin hash y sin `ADMIN_KEY` no vacía, el modo admin queda
-  **deshabilitado** (una variable vacía **no** abre el admin; antes sí).
-- **El camino en claro existe solo como fallback de código** (dev local y los
-  tests de protocolo, que corren con `ADMIN_KEY: 'test-key'`); en **producción se
-  cierra por configuración**: se borra `ADMIN_KEY` y se deja **solo**
-  `ADMIN_KEY_HASH`, con lo que no queda ninguna clave en claro en el host.
-
-> **Rotá la clave si estuvo expuesta.** El hash no des-expone nada: si la clave
-> vieja estuvo en claro en el host, hay que **cambiarla** (paso operativo, no de código).
+**Migración desde el deploy viejo:** creá la base, seteá
+`DATABASE_URL`/`ADMIN_PASSWORD`/`BOT_TOKEN`, deployá (las migraciones corren
+solas) y **borrá `ADMIN_KEY` y `ADMIN_KEY_HASH`** del entorno. Si quedan, el
+server las ignora y registra un único aviso, sin imprimir sus valores. Las
+cuentas se crean con `/register` o con la CLI. **Rollback:** volver a la imagen
+anterior deja la base intacta, pero esa versión no usa cuentas.
 
 ## 🧪 Tests
 
@@ -274,18 +322,25 @@ cd server && npm test
 ```
 
 - **Estáticos** (`test/static.mjs`): sintaxis cliente/servidor, tiles del
-  atlas, winding de caras, inventario y hotbar.
-- **Protocolo** (`test/protocol.mjs`): levanta el server de verdad y
-  verifica welcome, movimiento, bloques, daño PvP, muerte, chat y admin key.
-- **Admin / hash** (`test/admin-hash.mjs`): verificación PBKDF2, formato
-  autodescriptivo, anti pass-the-hash, precedencia hash-vs-claro, fail-closed,
-  limitador del KDF (token bucket + concurrencia) y el e2e WS del cableado
-  (incluido el flood del KDF y el no-bloqueo del event loop).
-- **Bot cazador** (`test/bot-cazador.mjs`): levanta el server de verdad y cablea el
-  bot con clientes falsos — mata a un no-admin con **dos toques separados** (el
-  cliente falso emula la ventana de 0.6 s, así un burst no pasa), ignora admins,
-  `sigueme`/`espera`, seguridad por id (impostor con el nombre del admin),
-  invulnerabilidad, **vuelo/no-clip y velocidad 28.8**, reconexión, cero `edit` y
-  `skin:'robot'`.
+  atlas, winding de caras, inventario, hotbar, páginas de auth y rutas.
+- **Auth unitaria** (`auth.mjs`, `rate-limit.mjs`, `http-auth.mjs`,
+  `register.mjs`, `ws-auth.mjs`, `admin-retirement.mjs`): `scrypt`,
+  cookies, validaciones, rate limit, login/perfil/logout, registro público,
+  gate del WebSocket, identidad impuesta y retiro de `ADMIN_KEY*`.
+- **Integración DB** (`auth-db.mjs`): migraciones idempotentes, unicidad
+  case-insensitive, hash de sesión, registro transaccional y carrera de
+  usernames, bootstrap del admin y revocación. Corre solo si
+  `TEST_DATABASE_URL` está definida; en CI `REQUIRE_DB_TESTS=1` la exige.
+- **Protocolo** (`test/protocol.mjs`): levanta `createApp` + `MemoryStore`
+  en proceso, autentica por `POST /api/login` y verifica welcome, movimiento,
+  bloques, daño PvP, muerte, chat, sueño y zombis.
+- **Bot cazador** (`test/bot-cazador.mjs`): cablea el bot con `BOT_TOKEN` y
+  clientes falsos — mata a un no-admin con **dos toques separados** (el cliente
+  falso emula la ventana de 0.6 s), ignora admins, `sigueme`/`espera`,
+  seguridad por id/flag admin, invulnerabilidad, vuelo/no-clip, reconexión,
+  cero `edit` y `skin:'robot'`.
+
+`npm test` local corre **sin Docker**: los unitarios usan `MemoryStore` y la
+integración de DB se omite con aviso. En CI corre con PostgreSQL 16 y la exige.
 
 El workflow **CI** los corre en cada push/PR a `main`.

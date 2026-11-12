@@ -1,18 +1,15 @@
-// Test end-to-end del protocolo multijugador: levanta el server de verdad
-// y verifica welcome, movimiento, bloques, daño PvP, muerte, chat, admin key
+// Test end-to-end del protocolo multijugador: levanta createApp EN PROCESO con
+// MemoryStore, autentica por POST /api/login y usa la cookie en el upgrade.
+// Verifica welcome, movimiento, bloques, daño PvP, muerte, chat, sueño, zombis
 // y el ping/pong de aplicación (aditivo, eco solo al emisor).
-// Uso: node test/protocol.mjs   (sale con código != 0 si algo falla)
-import { spawn } from 'child_process';
+// Uso: node test/protocol.mjs
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import WebSocket from 'ws';
+import { startApp, connect, sleep as wait } from './support/app-fixture.mjs';
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const serverDir = path.join(dir, '..');
-const PORT = 3210;
-const WORLD = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'mc-world-')), 'world.json');
 const TIMEOUT = 8000;
 
 let fails = 0;
@@ -20,42 +17,7 @@ const ok = (cond, msg) => {
   console.log((cond ? '✅ ' : '❌ ') + msg);
   if (!cond) fails++;
 };
-const wait = (ms) => new Promise(r => setTimeout(r, ms));
 
-const srv = spawn(process.execPath, ['server.js'], {
-  cwd: serverDir,
-  env: { ...process.env, PORT: String(PORT), ADMIN_KEY: 'test-key', WORLD_FILE: WORLD },
-});
-srv.stderr.on('data', d => process.stdout.write('[SRV-ERR] ' + d));
-let serverReady = false;
-
-function shutdown(code) {
-  try { srv.kill(); } catch (e) {}
-  if (fails || code) { console.log(`\n💥 ${fails} chequeo(s) fallaron`); process.exit(1); }
-  console.log('\n🎉 protocolo OK');
-  process.exit(0);
-}
-setTimeout(() => { console.log('❌ timeout global'); shutdown(1); }, 45000).unref();
-
-async function hello(name, mode, key = '', port = PORT, extra = null) {
-  const ws = new WebSocket(`ws://localhost:${port}`);
-  const seen = [];
-  await new Promise((res, rej) => {
-    ws.on('open', res); ws.on('error', rej);
-    setTimeout(() => rej(new Error('sin conexión')), TIMEOUT);
-  });
-  ws.on('message', (raw) => {
-    try { seen.push(JSON.parse(raw)); } catch (e) {}
-  });
-  ws.send(JSON.stringify({ t: 'hello', name, mode, key, ...(extra || {}) }));
-  const t0 = Date.now();
-  while (Date.now() - t0 < TIMEOUT) {
-    const w = seen.find(m => m.t === 'welcome');
-    if (w) return { ws, m: w, seen };
-    await wait(50);
-  }
-  throw new Error('sin welcome para ' + name);
-}
 async function nextOf(seen, from, type) {
   const t0 = Date.now();
   while (Date.now() - t0 < TIMEOUT) {
@@ -74,41 +36,63 @@ async function waitFor(seen, pred, from = 0) {
   }
   return null;
 }
-
-// esperar a que el server escuche
-{
+async function waitWelcome(seen) {
   const t0 = Date.now();
-  while (Date.now() - t0 < 15000) {
-    try {
-      const probe = new WebSocket(`ws://localhost:${PORT}`);
-      await new Promise((res, rej) => { probe.on('open', res); probe.on('error', rej); });
-      probe.close(); serverReady = true; break;
-    } catch (e) { await wait(200); }
+  while (Date.now() - t0 < TIMEOUT) {
+    const w = seen.find(m => m.t === 'welcome');
+    if (w) return w;
+    await wait(50);
   }
+  throw new Error('sin welcome');
 }
-if (!serverReady) { console.log('❌ el server no levantó'); shutdown(1); }
 
+async function userSession(app, username, password, helloExtra = {}) {
+  const cookie = await app.login(username, password);
+  const r = await connect(app.wsUrl(), { headers: { Cookie: cookie } });
+  if (r.status !== 101) throw new Error('upgrade rechazado ' + r.status);
+  const seen = [];
+  r.ws.on('message', (raw) => { try { seen.push(JSON.parse(raw.toString())); } catch (e) {} });
+  r.ws.send(JSON.stringify({ t: 'hello', name: username, mode: 'player', ...helloExtra }));
+  const m = await waitWelcome(seen);
+  return { ws: r.ws, m, seen };
+}
+
+async function botSession(app, name, skin, helloExtra = {}) {
+  const r = await connect(app.wsUrl(), { headers: { Authorization: 'Bearer test-bot-token' } });
+  if (r.status !== 101) throw new Error('upgrade bot rechazado ' + r.status);
+  const seen = [];
+  r.ws.on('message', (raw) => { try { seen.push(JSON.parse(raw.toString())); } catch (e) {} });
+  r.ws.send(JSON.stringify({ t: 'hello', name, skin, bot: true, ...helloExtra }));
+  const m = await waitWelcome(seen);
+  return { ws: r.ws, m, seen };
+}
+
+const USERS = [
+  { username: 'Jefe', password: 'admin-12345', role: 'admin' },
+  { username: 'Atac', password: 'password-123' },
+  { username: 'Vict', password: 'password-123' },
+  { username: 'Testigo', password: 'password-123' },
+  { username: 'BotZzz', password: 'password-123' },
+  { username: 'Diurno', password: 'password-123' },
+];
+
+const FIX = await startApp({ users: USERS });
 try {
-  // 1. admin sin clave → denegado; con clave → ok
-  const evil = await hello('Evil', 'admin', '');
-  ok(evil.m.admin === false && evil.m.adminDenied === true, 'admin sin clave → denegado');
-  evil.ws.close();
-  const boss = await hello('Jefe', 'admin', 'test-key');
-  ok(boss.m.admin === true && boss.m.mode === undefined, 'admin con clave → aceptado');
+  // 1. admin por rol de sesión (sin clave)
+  const boss = await userSession(FIX, 'Jefe', 'admin-12345');
+  ok(boss.m.admin === true && boss.m.mode === undefined, 'admin por rol de sesión → aceptado');
   ok(typeof boss.m.seed === 'number' && Array.isArray(boss.m.edits), 'welcome trae seed + edits');
-  // ciclo-dia-noche: welcome expone la hora del ciclo (tod) y su duración (cyc)
   ok(typeof boss.m.tod === 'number' && boss.m.tod >= 0 && boss.m.tod < 1, 'welcome trae tod en [0,1)');
   {
-    // cyc = DAY_MS + NIGHT_MS declarado por el server (tuneable)
-    const srvSrc = fs.readFileSync(path.join(serverDir, 'server.js'), 'utf8');
+    const srvSrc = fs.readFileSync(path.join(serverDir, 'app.js'), 'utf8');
     const dm = srvSrc.match(/const DAY_MS = (\d+), NIGHT_MS = (\d+), CYCLE_MS = DAY_MS \+ NIGHT_MS/);
     const expCyc = dm ? +dm[1] + +dm[2] : null;
     ok(!!dm && boss.m.cyc === expCyc, `welcome trae cyc = DAY_MS+NIGHT_MS (${expCyc})`);
   }
 
   // 2. jugador y lista de jugadores
-  const a = await hello('Atac', 'player');
-  const b = await hello('Vict', 'player');
+  const a = await userSession(FIX, 'Atac', 'password-123');
+  const b = await userSession(FIX, 'Vict', 'password-123');
   ok(b.m.players.length >= 1 && b.m.players.some(p => p.name === 'Atac'), 'lista de jugadores en welcome');
 
   // 3. movimiento + hp + dead
@@ -127,7 +111,6 @@ try {
   a.ws.send(JSON.stringify({ t: 'edit', x: 1, y: 1, z: 1, v: 11 }));
   await wait(400);
   ok(!b.seen.some(m => m.t === 'pedit' && m.v === 11), 'bedrock por red bloqueado');
-  // puerta (23↔24) y bloques nuevos (25, 26) viajan por la red como cualquier bloque
   a.ws.send(JSON.stringify({ t: 'edit', x: 81, y: 15, z: 80, v: 23 }));
   const pd1 = await nextOf(b.seen, b.seen.length, 'pedit');
   ok(pd1.v === 23, 'relay de puerta cerrada (23)');
@@ -137,22 +120,19 @@ try {
   a.ws.send(JSON.stringify({ t: 'edit', x: 82, y: 15, z: 80, v: 26 }));
   const pd3 = await nextOf(b.seen, b.seen.length, 'pedit');
   ok(pd3.v === 26, 'relay de bloque nuevo (26)');
-  // puerta doble (bisagra espejada 27↔28) también viaja por la red
   a.ws.send(JSON.stringify({ t: 'edit', x: 83, y: 15, z: 80, v: 27 }));
   const pd4 = await nextOf(b.seen, b.seen.length, 'pedit');
   ok(pd4.v === 27, 'relay de puerta doble (27)');
-  // puerta orientada en Z (29↔30) también viaja por la red
   a.ws.send(JSON.stringify({ t: 'edit', x: 84, y: 15, z: 80, v: 29 }));
   const pd5 = await nextOf(b.seen, b.seen.length, 'pedit');
   ok(pd5.v === 29, 'relay de puerta en Z (29)');
-  // escaleras 39-58: las 20 variantes viajan por la red como cualquier bloque
   for (let v = 39; v <= 58; v++) {
     a.ws.send(JSON.stringify({ t: 'edit', x: 80 + (v - 39), y: 16, z: 81, v }));
     const pe2 = await nextOf(b.seen, b.seen.length, 'pedit');
     ok(pe2.v === v, `relay de escalera (${v})`);
   }
 
-  // 4b. mundo 208: borde nuevo aceptado, fuera de bordes rechazado, stride 208
+  // 4b. mundo 208
   a.ws.send(JSON.stringify({ t: 'edit', x: 207, y: 15, z: 207, v: 9 }));
   const peEdge = await nextOf(b.seen, b.seen.length, 'pedit');
   ok(peEdge.x === 207 && peEdge.z === 207, 'edit en borde 207 aceptado y replicado');
@@ -162,14 +142,13 @@ try {
   a.ws.send(JSON.stringify({ t: 'edit', x: 80, y: 40, z: 80, v: 9 }));
   await wait(400);
   ok(!b.seen.some(m => m.t === 'pedit' && m.y === 40), 'edit y=40 rechazado');
-  const wit = await hello('Testigo', 'player');
+  const wit = await userSession(FIX, 'Testigo', 'password-123');
   const edgeIdx = (15 * 208 + 207) * 208 + 207;
   ok(wit.m.edits.some(e => Array.isArray(e) && e[0] === edgeIdx && e[1] === 9),
     `índice persistido con stride 208 (${edgeIdx})`);
   wit.ws.close();
 
-  // 5. daño PvP: víctima recibe phit + atacante recibe hitok
-  // (los índices se capturan ANTES de mandar el hit: phit puede llegar primero)
+  // 5. daño PvP
   const nA = a.seen.length, nB2 = b.seen.length;
   a.ws.send(JSON.stringify({ t: 'hit', id: b.m.id, dmg: 1, dx: 1, dz: 0 }));
   const hitok = await nextOf(a.seen, nA, 'hitok');
@@ -182,7 +161,7 @@ try {
   const ch = await nextOf(b.seen, b.seen.length, 'chat');
   ok(ch.from === 'Atac' && ch.text === 'hola', 'chat');
 
-  // 6b. latencia de aplicación (spec net/latency): el server ecoda el ts SOLO al emisor
+  // 6b. latencia de aplicación
   {
     const nA2 = a.seen.length, nB3 = b.seen.length;
     a.ws.send(JSON.stringify({ t: 'ping', ts: 12345 }));
@@ -191,53 +170,32 @@ try {
     await wait(300);
     ok(!b.seen.slice(nB3).some(m => m.t === 'pong' || m.t === 'ping'),
       'los demás jugadores no reciben ni el ping ni su pong');
-
-    // un ping sin ts no responde y la sesión sigue viva
     const nNoTs = a.seen.length;
     a.ws.send(JSON.stringify({ t: 'ping' }));
     await wait(300);
     ok(!a.seen.slice(nNoTs).some(m => m.t === 'pong'), 'un ping sin ts no responde');
-
-    // un tipo desconocido no cierra la conexión
     a.ws.send(JSON.stringify({ t: 'tipo-inexistente', x: 1 }));
     await wait(300);
     ok(a.ws.readyState === 1, 'un tipo de mensaje desconocido no cierra la conexión');
-
-    // la sesión sigue viva: un mv posterior llega a la víctima
     const nVivo = b.seen.length;
     a.ws.send(JSON.stringify({ t: 'mv', p: [81, 20, 88], yaw: 1, pitch: 0, hp: 10, dead: 0 }));
     const pmVivo = await nextOf(b.seen, nVivo, 'pm');
-    ok(pmVivo.id === a.m.id && pmVivo.p[0] === 81,
-      'después de un ts inválido la sesión sigue viva (mv → pm)');
+    ok(pmVivo.id === a.m.id && pmVivo.p[0] === 81, 'después de un ts inválido la sesión sigue viva (mv → pm)');
   }
 
-  // 7. sin fantasmas: sesión sin `mv` expira con `leave`, sesión viva con `mv` no
-  // (segundo server con intervalos acortados por env: HB 200ms / idle 800ms)
+  // 7. sin fantasmas (segunda app con intervalos cortos)
   {
-    const PORT2 = 3211;
-    const WORLD2 = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'mc-world-')), 'world.json');
-    const srv2 = spawn(process.execPath, ['server.js'], {
-      cwd: serverDir,
-      env: { ...process.env, PORT: String(PORT2), ADMIN_KEY: 'test-key', WORLD_FILE: WORLD2, HB_INTERVAL_MS: '200', IDLE_TIMEOUT_MS: '800', TOD_INTERVAL_MS: '150' },
+    const app2 = await startApp({
+      users: [
+        { username: 'Obs2', password: 'password-123' },
+        { username: 'Fantasma', password: 'password-123' },
+        { username: 'Vivo', password: 'password-123' },
+      ],
+      env: { HB_INTERVAL_MS: '200', IDLE_TIMEOUT_MS: '800', TOD_INTERVAL_MS: '150' },
     });
-    srv2.stderr.on('data', d => process.stdout.write('[SRV2-ERR] ' + d));
-    let keepObs = null, keepVivo = null;
     try {
-      {
-        const t0 = Date.now();
-        let ready2 = false;
-        while (Date.now() - t0 < 15000) {
-          try {
-            const probe = new WebSocket(`ws://localhost:${PORT2}`);
-            await new Promise((res, rej) => { probe.on('open', res); probe.on('error', rej); });
-            probe.close(); ready2 = true; break;
-          } catch (e) { await wait(200); }
-        }
-        ok(ready2, 'server con intervalos cortos levanta');
-      }
-      const hello2 = (name) => hello(name, 'player', '', PORT2);
-      const obs2 = await hello2('Obs2');
-      // ciclo-dia-noche: el server difunde `tod` periódicamente (TOD_INTERVAL_MS corto por env)
+      ok(true, 'server con intervalos cortos levanta');
+      const obs2 = await userSession(app2, 'Obs2', 'password-123');
       {
         const t0 = Date.now();
         let tod = null;
@@ -246,53 +204,49 @@ try {
           if (tod) break;
           await wait(50);
         }
-        ok(!!tod && typeof tod.v === 'number' && tod.v >= 0 && tod.v < 1,
-          'difusión periódica de tod (v en [0,1))');
+        ok(!!tod && typeof tod.v === 'number' && tod.v >= 0 && tod.v < 1, 'difusión periódica de tod (v en [0,1))');
       }
-      const ghost2 = await hello2('Fantasma');
-      const vivo = await hello2('Vivo');
+      const ghost2 = await userSession(app2, 'Fantasma', 'password-123');
+      const vivo = await userSession(app2, 'Vivo', 'password-123');
       const nObs = obs2.seen.length;
-      // observador y viva mandan `mv` periódico → no deben expirar
       const mv = (c) => { try { c.ws.send(JSON.stringify({ t: 'mv', p: [90, 20, 90], yaw: 0, pitch: 0 })); } catch (e) {} };
-      keepObs = setInterval(() => mv(obs2), 150);
-      keepVivo = setInterval(() => mv(vivo), 150);
-      // el fantasma no manda nada → debe expirar con `leave` una sola vez
-      {
-        const t0 = Date.now();
-        let leaves = [];
-        while (Date.now() - t0 < TIMEOUT) {
-          leaves = obs2.seen.slice(nObs).filter(m => m.t === 'leave' && m.id === ghost2.m.id);
-          if (leaves.length >= 1) break;
-          await wait(100);
+      const keepObs = setInterval(() => mv(obs2), 150);
+      const keepVivo = setInterval(() => mv(vivo), 150);
+      try {
+        {
+          const t0 = Date.now();
+          let leaves = [];
+          while (Date.now() - t0 < TIMEOUT) {
+            leaves = obs2.seen.slice(nObs).filter(m => m.t === 'leave' && m.id === ghost2.m.id);
+            if (leaves.length >= 1) break;
+            await wait(100);
+          }
+          ok(leaves.length === 1, 'conexión muerta sin `mv` expira con un solo `leave`');
         }
-        ok(leaves.length === 1, 'conexión muerta sin `mv` expira con un solo `leave`');
-      }
-      // la viva sigue: su `mv` llega al observador y no recibe `leave`
-      const nObs2 = obs2.seen.length;
-      vivo.ws.send(JSON.stringify({ t: 'mv', p: [91, 20, 91], yaw: 0, pitch: 0 }));
-      {
-        const t1 = Date.now();
-        let pmVivo = null;
-        while (Date.now() - t1 < TIMEOUT) {
-          pmVivo = obs2.seen.slice(nObs2).find(m => m.t === 'pm' && m.id === vivo.m.id);
-          if (pmVivo) break;
-          await wait(50);
+        const nObs2 = obs2.seen.length;
+        vivo.ws.send(JSON.stringify({ t: 'mv', p: [91, 20, 91], yaw: 0, pitch: 0 }));
+        {
+          const t1 = Date.now();
+          let pmVivo = null;
+          while (Date.now() - t1 < TIMEOUT) {
+            pmVivo = obs2.seen.slice(nObs2).find(m => m.t === 'pm' && m.id === vivo.m.id);
+            if (pmVivo) break;
+            await wait(50);
+          }
+          ok(!!pmVivo, 'conexión viva que manda `mv` sigue activa (relay ok)');
         }
-        ok(!!pmVivo, 'conexión viva que manda `mv` sigue activa (relay ok)');
+        ok(!obs2.seen.slice(nObs).some(m => m.t === 'leave' && m.id === vivo.m.id), 'conexión viva no expira');
+      } finally {
+        clearInterval(keepObs);
+        clearInterval(keepVivo);
       }
-      ok(!obs2.seen.slice(nObs).some(m => m.t === 'leave' && m.id === vivo.m.id),
-        'conexión viva no expira');
       for (const c of [obs2, ghost2, vivo]) try { c.ws.close(); } catch (e) {}
-    } finally {
-      if (keepObs) clearInterval(keepObs);
-      if (keepVivo) clearInterval(keepVivo);
-      try { srv2.kill(); } catch (e) {}
-    }
+    } finally { await app2.close(); }
   }
 
-  // 8. el reloj del ciclo NO se persiste: world.json queda como { seed, edits }
-  // (el server guarda cada 15 s; el resto de la suite ya corrió, así que esperamos poco)
+  // 8. el reloj del ciclo NO se persiste
   {
+    const WORLD = FIX.app.worldFile;
     const t0 = Date.now();
     while (Date.now() - t0 < 17000 && !fs.existsSync(WORLD)) await wait(200);
     let w = null;
@@ -302,60 +256,45 @@ try {
       'world.json sin campos de ciclo/reloj (' + (w ? Object.keys(w).join(',') : 'sin archivo') + ')');
   }
 
-  // 9. sueño: welcome, rechazo diurno y flag bot
+  // 9. sueño: welcome, rechazo diurno y bot de servicio
   {
-    const zzz = await hello('BotZzz', 'player', '', PORT, { bot: true });
-    ok(Array.isArray(zzz.m.sleeping) && typeof zzz.m.sleepNeed === 'number',
-      'welcome trae sleeping + sleepNeed');
-    // el bot (y el admin) no suman: need = reales vivos de la lista, sin contarlo a él
+    const zzz = await botSession(FIX, 'BotZzz', 'robot');
+    ok(Array.isArray(zzz.m.sleeping) && typeof zzz.m.sleepNeed === 'number', 'welcome trae sleeping + sleepNeed');
     const expected = zzz.m.players.filter(p => p.mode === 'player' && !p.dead).length;
     ok(zzz.m.sleepNeed === expected, `el bot no suma al quórum (need=${zzz.m.sleepNeed}, reales=${expected})`);
-    const diurno = await hello('Diurno', 'player', '', PORT);
+    const diurno = await userSession(FIX, 'Diurno', 'password-123');
     const nD = diurno.seen.length;
     diurno.ws.send(JSON.stringify({ t: 'sleep', x: 10, y: 10, z: 10 }));
     const denied = await waitFor(diurno.seen, m => m.t === 'sleep' && m.id === diurno.m.id, nD);
-    ok(!!denied && denied.denied === 'day' && denied.on === false,
-      'de día el server rechaza el sueño (denied:day)');
+    ok(!!denied && denied.denied === 'day' && denied.on === false, 'de día el server rechaza el sueño (denied:day)');
     zzz.ws.close(); diurno.ws.close();
   }
 
-  // 10. salto al amanecer: server aparte con noche forzada y tick alto
+  // 10. salto al amanecer (tercera app: noche forzada y tick alto)
   {
-    const PORT3 = 3212;
-    const WORLD3 = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'mc-world-')), 'world.json');
-    const srv3 = spawn(process.execPath, ['server.js'], {
-      cwd: serverDir,
-      env: { ...process.env, PORT: String(PORT3), ADMIN_KEY: 'test-key', WORLD_FILE: WORLD3,
-        ZOMBIE_FORCE_NIGHT: '1', ZOMBIE_TICK_MS: '60000', ZOMBIE_SNAP_MS: '60000', TOD_INTERVAL_MS: '60000' },
+    const app3 = await startApp({
+      users: [
+        { username: 'Somnia', password: 'password-123' },
+        { username: 'Rem', password: 'password-123' },
+      ],
+      env: {
+        ZOMBIE_FORCE_NIGHT: '1', ZOMBIE_TICK_MS: '60000', ZOMBIE_SNAP_MS: '60000', TOD_INTERVAL_MS: '60000',
+      },
     });
-    srv3.stderr.on('data', d => process.stdout.write('[SRV3-ERR] ' + d));
     try {
-      {
-        const t0 = Date.now();
-        let ready3 = false;
-        while (Date.now() - t0 < 15000) {
-          try {
-            const probe = new WebSocket(`ws://localhost:${PORT3}`);
-            await new Promise((res, rej) => { probe.on('open', res); probe.on('error', rej); });
-            probe.close(); ready3 = true; break;
-          } catch (e) { await wait(200); }
-        }
-        ok(ready3, 'server nocturno de prueba levanta');
-      }
-      const h1 = await hello('Somnia', 'player', '', PORT3);
-      const h2 = await hello('Rem', 'player', '', PORT3);
-      const bot3 = await hello('BotNoche', 'player', '', PORT3, { bot: true });
+      ok(true, 'server nocturno de prueba levanta');
+      const h1 = await userSession(app3, 'Somnia', 'password-123');
+      const h2 = await userSession(app3, 'Rem', 'password-123');
+      const bot3 = await botSession(app3, 'BotNoche', 'robot');
       ok(h2.m.sleepNeed === 2, `need excluye al bot (${h2.m.sleepNeed})`);
       const n1 = h1.seen.length;
       h1.ws.send(JSON.stringify({ t: 'sleep', x: 10, y: 10, z: 10 }));
       const on1 = await waitFor(h1.seen, m => m.t === 'sleep' && m.id === h1.m.id && m.on === true, n1);
       ok(!!on1 && on1.count === 1 && on1.need === 2, 'primer durmiente 1/2');
-      // le rompen la cama: se despierta
       const n1b = h1.seen.length;
       h2.ws.send(JSON.stringify({ t: 'edit', x: 10, y: 10, z: 10, v: 0 }));
       const woke = await waitFor(h1.seen, m => m.t === 'sleep' && m.id === h1.m.id && m.on === false, n1b);
       ok(!!woke, 'romper la cama despierta al durmiente');
-      // ahora duermen los dos → amanecer
       const n2 = h2.seen.length;
       h1.ws.send(JSON.stringify({ t: 'sleep', x: 11, y: 10, z: 10 }));
       await waitFor(h1.seen, m => m.t === 'sleep' && m.id === h1.m.id && m.on === true, 0);
@@ -368,12 +307,16 @@ try {
       ok(!!chatDawn, 'aviso de amanecer por chat');
       ok(bot3.m.sleepNeed === 2, `el bot no bloquea el salto (need=${bot3.m.sleepNeed})`);
       for (const c of [h1, h2, bot3]) try { c.ws.close(); } catch (e) {}
-    } finally { try { srv3.kill(); } catch (e) {} }
+    } finally { await app3.close(); }
   }
 
-  for (const c of [boss, a, b]) c.ws.close();
+  for (const c of [boss, a, b]) try { c.ws.close(); } catch (e) {}
 } catch (e) {
-  console.log('❌ excepción: ' + e.message);
+  console.log('❌ excepción: ' + (e && e.stack || e));
   fails++;
+} finally {
+  await FIX.close();
 }
-shutdown(0);
+
+if (fails) { console.log(`\n💥 ${fails} chequeo(s) fallaron`); process.exit(1); }
+console.log('\n🎉 protocolo OK');

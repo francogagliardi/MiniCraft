@@ -7,14 +7,11 @@
 // 'America/Argentina/Buenos_Aires'` (UTC−3 todo el año, sin DST).
 //
 // Uso: node test/hora-argentina.mjs   (sale con código != 0 si algo falla)
-import { spawn } from 'child_process';
 import fs from 'fs';
-import net from 'net';
-import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
-import WebSocket from 'ws';
+import { startApp, connect } from './support/app-fixture.mjs';
 
 const require = createRequire(import.meta.url);
 const dir = path.dirname(fileURLToPath(import.meta.url));
@@ -49,53 +46,23 @@ function loadHoraAr(src) {
 // La zona debe ser la de Argentina. `resolvedOptions()` devuelve el alias canónico
 // `America/Buenos_Aires`, no el id de entrada: se toleran ambos nombres.
 const ZONA_AR = ['America/Buenos_Aires', 'America/Argentina/Buenos_Aires'];
-const srvSrc = fs.readFileSync(path.join(serverDir, 'server.js'), 'utf8');
+const srvSrc = fs.readFileSync(path.join(serverDir, 'app.js'), 'utf8');
 
 // ---- bot: módulo PURO, sin red (createHunter con `log` capturado) ----
 const HUNTER = require(path.join(root, 'bot', 'cazador.js'));
 const botSrc = fs.readFileSync(path.join(root, 'bot', 'cazador.js'), 'utf8');
 const GROUND = 30; // y de un mundo plano de test
 
-// ---- server real: spawn + captura de stdout (patrón admin-hash.mjs) ----
-// Puerto libre REAL (nada de hardcodear).
-function freePort() {
-  return new Promise((resolve, reject) => {
-    const s = net.createServer();
-    s.on('error', reject);
-    s.listen(0, '127.0.0.1', () => {
-      const port = s.address().port;
-      s.close(() => resolve(port));
-    });
-  });
-}
-// Levanta server.js con un mundo temporal (nunca el world.json real) y sin admin.
+// ---- server real: createApp EN PROCESO con log capturado ----
+const lines = [];
+const appLines = [];
 function startServer(env) {
-  const world = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'mc-hora-world-')), 'world.json');
-  const base = { ...process.env };
-  delete base.ADMIN_KEY;
-  delete base.ADMIN_KEY_HASH;
-  const proc = spawn(process.execPath, ['server.js'], {
-    cwd: serverDir,
-    env: { ...base, WORLD_FILE: world, ADMIN_KEY: '', ADMIN_KEY_HASH: '', ...env },
+  return startApp({
+    users: [{ username: 'TZProbe', password: 'password-123' }],
+    env,
+    log: (...a) => { const s = a.join(' '); lines.push(s); appLines.push(s); },
+    warn: (...a) => { lines.push(a.join(' ')); appLines.push(a.join(' ')); },
   });
-  let stdout = '', stderr = '';
-  proc.stdout.on('data', d => { stdout += d; });
-  proc.stderr.on('data', d => { stderr += d; });
-  return { proc, world, out: () => stdout, err: () => stderr };
-}
-async function waitReady(port, ms = 15000) {
-  const t0 = Date.now();
-  while (Date.now() - t0 < ms) {
-    try {
-      await new Promise((res, rej) => {
-        const ws = new WebSocket(`ws://127.0.0.1:${port}`);
-        ws.on('open', () => { ws.close(); res(); });
-        ws.on('error', rej);
-      });
-      return true;
-    } catch (e) { await wait(150); }
-  }
-  return false;
 }
 
 try {
@@ -118,28 +85,21 @@ try {
     }
   }
 
-  // ==================== 1.1 comportamiento: unión/salida en el stdout REAL ====================
+  // ==================== 1.1 comportamiento: unión/salida en el log REAL ====================
   {
-    const port = await freePort();
-    const s = startServer({ PORT: String(port) });
+    const s = await startServer({});
     try {
-      if (!(await waitReady(port))) ok(false, 'el server levanta para el test de stdout');
-      else {
-        const ws = new WebSocket(`ws://127.0.0.1:${port}`);
-        await new Promise((res, rej) => {
-          ws.on('open', res);
-          ws.on('error', rej);
-        });
-        ws.send(JSON.stringify({ t: 'hello', name: 'TZProbe', mode: 'player', skin: 'human' }));
-        const join = await until(() => s.out().match(/^\[(\d{2}:\d{2})\] (➕ TZProbe \(player\) — \d+ conectados)$/m));
-        ok(!!join, 'unión: la línea de stdout lleva `[HH:MM] ` con el texto original intacto detrás');
-        if (join) ok(/^\d{2}:\d{2}$/.test(join[1]), `unión: el prefijo es una hora HH:MM (${join[1]})`);
-        try { ws.close(); } catch (e) {}
-        const leave = await until(() => s.out().match(/^\[(\d{2}:\d{2})\] (➖ TZProbe — \d+ conectados)$/m));
-        ok(!!leave, 'salida: la línea de stdout lleva `[HH:MM] ` con el texto original intacto detrás');
-        if (leave) ok(/^\d{2}:\d{2}$/.test(leave[1]), `salida: el prefijo es una hora HH:MM (${leave[1]})`);
-      }
-    } finally { try { s.proc.kill(); } catch (e) {} }
+      const cookie = await s.login('TZProbe', 'password-123');
+      const c = await connect(s.wsUrl(), { headers: { Cookie: cookie } });
+      c.ws.send(JSON.stringify({ t: 'hello', name: 'TZProbe', mode: 'player', skin: 'human' }));
+      const join = await until(() => lines.find(l => /^\[(\d{2}:\d{2})\] (➕ TZProbe \(player\) — \d+ conectados)$/.test(l)));
+      const joinM = join && join.match(/^\[(\d{2}:\d{2})\] (➕ TZProbe \(player\) — \d+ conectados)$/);
+      ok(!!join, 'unión: la línea de log lleva `[HH:MM] ` con el texto original intacto detrás');
+      if (joinM) ok(/^\d{2}:\d{2}$/.test(joinM[1]), `unión: el prefijo es una hora HH:MM (${joinM[1]})`);
+      try { c.ws.close(); } catch (e) {}
+      const leave = await until(() => lines.find(l => /^\[(\d{2}:\d{2})\] (➖ TZProbe — \d+ conectados)$/.test(l)));
+      ok(!!leave, 'salida: la línea de log lleva `[HH:MM] ` con el texto original intacto detrás');
+    } finally { await s.close(); }
   }
 
   // ==================== 2.1 helper horaAr en bot/cazador.js (mismo contrato) ====================

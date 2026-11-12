@@ -21,13 +21,12 @@
 // mundo (x/z y vertical) y (u) ESPERA congela también la altura.
 //
 // Uso: node test/bot-cazador.mjs   (sale con código != 0 si algo falla)
-import { spawn } from 'child_process';
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
 import WebSocket from 'ws';
+import { startApp, connect } from './support/app-fixture.mjs';
 
 const require = createRequire(import.meta.url);
 const dir = path.dirname(fileURLToPath(import.meta.url));
@@ -36,13 +35,17 @@ const root = path.join(serverDir, '..');
 const { createBotClient, createHunter, parseWorld } = require(path.join(root, 'bot', 'index.js'));
 const { SPEED, FLY_Y_OFFSET, FLY_Y_DEADBAND } = require(path.join(root, 'bot', 'cazador.js'));
 
-const PORT = 3240;
-const WORLD = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'mc-botworld-')), 'world.json');
 const TIMEOUT = 8000;
 const SWORD = 100;
 const GROUND = 30;           // y del mundo plano de test
 const BOT_NAME = 'OPSX-bot';
-const ADMIN_KEY = 'test-key';
+const BOT_TOKEN = 'bot-secret-1234567890';
+const ACCOUNTS = {
+  Boss: { password: 'admin-12345', role: 'admin' },
+  Witness: { password: 'admin-12345', role: 'admin' },
+  Victima: { password: 'password-123' },
+  Impostor: { password: 'password-123' },
+};
 const hypot = (dx, dz) => Math.sqrt(dx * dx + dz * dz);
 
 let fails = 0;
@@ -92,7 +95,8 @@ function startBot(opts = {}) {
   const frames = [];
   const spawnAt = opts.spawn || [100.5, 100.5];
   const client = createBotClient({
-    url: `ws://localhost:${PORT}`,
+    url: APP.wsUrl(),
+    token: BOT_TOKEN,
     name: BOT_NAME,
     worldBuilder: opts.worldBuilder || (() => flatWorld(spawnAt[0], spawnAt[1])),
     backoffBaseMs: 80, backoffCapMs: 400, backoffFactor: 2, rng: () => 0,
@@ -121,13 +125,17 @@ const botReady = (h) => until(() => h.client.getId() !== null, TIMEOUT);
 
 // ---- cliente falso (víctima / admin / impostor) ----
 async function fakePlayer(name, opts = {}) {
+  const acct = ACCOUNTS[name];
+  if (!acct) throw new Error('cuenta de test inexistente: ' + name);
   const p = {
-    name, admin: !!opts.admin, key: opts.key || (opts.admin ? ADMIN_KEY : ''),
+    name, admin: acct.role === 'admin',
     hp: 10, dead: 0, godT: 0, phitApplied: [], phitIgnored: 0,
     pos: (opts.pos || [128.5, 20, 136.5]).slice(), seen: [], id: null, botId: null, seq: 0,
   };
-  p.ws = new WebSocket(`ws://localhost:${PORT}`);
-  await new Promise((res, rej) => { p.ws.on('open', res); p.ws.on('error', rej); setTimeout(() => rej(new Error('sin conexión ' + name)), TIMEOUT); });
+  const cookie = await APP.login(name, acct.password);
+  const c = await connect(APP.wsUrl(), { headers: { Cookie: cookie } });
+  if (c.status !== 101) throw new Error('upgrade rechazado ' + c.status);
+  p.ws = c.ws;
   p.ws.on('message', (raw) => {
     let m; try { m = JSON.parse(raw.toString()); } catch (e) { return; }
     p.seen.push(Object.assign({}, m, { _t: Date.now() }));
@@ -136,7 +144,7 @@ async function fakePlayer(name, opts = {}) {
     // La víctima del bot SÍ tiene la ventana de 0.6 s (como el cliente real).
     if (m.t === 'phit' && p.botId !== null && m.fromId === p.botId) applyDamage(p, m.dmg);
   });
-  p.ws.send(JSON.stringify({ t: 'hello', name, mode: p.admin ? 'admin' : 'player', key: p.key, skin: 'human' }));
+  p.ws.send(JSON.stringify({ t: 'hello', name, mode: p.admin ? 'admin' : 'player', skin: 'human' }));
   const w = await until(() => p.seen.find(m => m.t === 'welcome'));
   if (!w) throw new Error('sin welcome para ' + name);
   p.id = w.id; p.welcome = w;
@@ -159,36 +167,21 @@ function sendMv(p) {
 function mvLoop(p, ms = 80) { p.mvTimer = setInterval(() => sendMv(p), ms); sendMv(p); }
 function closePlayer(p) { if (!p) return; try { clearInterval(p.mvTimer); } catch (e) {} try { p.ws.close(); } catch (e) {} }
 
-// ---- server real ----
-let srv;
+// ---- app real (createApp en proceso + MemoryStore) ----
+let APP = null;
 function shutdown(code) {
-  try { srv && srv.kill(); } catch (e) {}
   if (fails || code) { console.log(`\n💥 ${fails} chequeo(s) fallaron`); process.exit(1); }
   console.log('\n🎉 bot cazador OK');
   process.exit(0);
 }
 setTimeout(() => { console.log('❌ timeout global'); shutdown(1); }, 150000).unref();
 
-async function serverReady(port) {
-  const t0 = Date.now();
-  while (Date.now() - t0 < 15000) {
-    try {
-      const probe = new WebSocket(`ws://localhost:${port}`);
-      await new Promise((res, rej) => { probe.on('open', res); probe.on('error', rej); });
-      probe.close(); return true;
-    } catch (e) { await wait(200); }
-  }
-  return false;
-}
-
-srv = spawn(process.execPath, ['server.js'], {
-  cwd: serverDir,
-  env: {
-    ...process.env, PORT: String(PORT), ADMIN_KEY: 'test-key', WORLD_FILE: WORLD,
-    TOD_INTERVAL_MS: '500',
-  },
+APP = await startApp({
+  users: Object.entries(ACCOUNTS).map(([username, a]) => ({ username, password: a.password, role: a.role || 'user' })),
+  botToken: BOT_TOKEN,
+  env: { TOD_INTERVAL_MS: '500' },
 });
-srv.stderr.on('data', d => process.stdout.write('[SRV-ERR] ' + d));
+ok(true, 'server en proceso levanta');
 
 try {
   // =====================================================================
@@ -236,18 +229,16 @@ try {
     ok(allMatch, 'la réplica de findSpawn coincide con el cliente para varios seeds: ' + shown.join(' '));
   }
 
-  if (!(await serverReady(PORT))) { console.log('❌ el server no levantó'); shutdown(1); }
-
   // =====================================================================
   // 1. (b) ignora a un admin pegado + (i) skin difundido + (h) cero edit
   // =====================================================================
   {
-    const adminA = await fakePlayer('Boss', { admin: true });
+    const adminA = await fakePlayer('Boss');
     const botA = startBot();
     // (i) `welcome.players` trae solo a los YA registrados: esperamos que el bot esté
     // adentro antes de que entre el testigo (si no, el snapshot puede no traerlo).
     await botReady(botA);
-    const adminB = await fakePlayer('Witness', { admin: true });
+    const adminB = await fakePlayer('Witness');
     // admin pegado al lado del bot (spawn plano en [100.5,·,100.5])
     adminA.pos = [101.5, GROUND, 100.5]; mvLoop(adminA);
     await wait(2500);
@@ -313,11 +304,11 @@ try {
   // 3. (c) sigueme / espera + turreta  y  (d) SEGURIDAD por id
   // =====================================================================
   {
-    const admin = await fakePlayer('Boss', { admin: true, pos: [128.5, GROUND, 128.5] });
+    const admin = await fakePlayer('Boss', { pos: [128.5, GROUND, 128.5] });
     const botC = startBot();
     await botReady(botC);
-    // impostor: MISMO NOMBRE que el admin pero NO admin (otro id del server)
-    const imp = await fakePlayer('Boss', { pos: [190, GROUND, 190] });
+    // impostor: cuenta común (el server impone su username, no puede usar el del admin)
+    const imp = await fakePlayer('Impostor', { pos: [190, GROUND, 190] });
     mvLoop(imp);
     mvLoop(admin);
     ok(botC.client.getMode() === 'CAZA', '(c/d) el bot arranca en CAZA');
@@ -326,11 +317,21 @@ try {
     const chatsBefore = chats(botC).length;
     imp.ws.send(JSON.stringify({ t: 'chat', text: 'sigueme' }));
     await wait(700);
-    ok(botC.client.getMode() === 'CAZA', '(d) `sigueme` de un no-admin con el nombre del admin ⇒ sigo en CAZA');
+    ok(botC.client.getMode() === 'CAZA', '(d) `sigueme` de un no-admin ⇒ sigo en CAZA');
     imp.ws.send(JSON.stringify({ t: 'chat', text: 'espera' }));
     await wait(700);
     ok(botC.client.getMode() === 'CAZA', '(d) `espera` del impostor ⇒ sigo en CAZA');
     ok(chats(botC).length === chatsBefore, '(d) el impostor NO provocó ningún anuncio de cambio de modo');
+
+    // (d) el flag `admin:true` del SERVER es autoritativo aunque el roster diga player
+    // (carrera chat/join): se prueba con la lógica pura.
+    {
+      const frames = [];
+      const h = createHunter({ send: (f) => frames.push(f), now: () => 0, log: () => {}, world: flatWorld(), spawn: [100.5, GROUND, 100.5] });
+      h.handle({ t: 'welcome', id: 1, players: [{ id: 7, name: 'FlagAdmin', mode: 'player', dead: 0, pos: [120, GROUND, 120] }] });
+      h.handle({ t: 'chat', fromId: 7, from: 'FlagAdmin', text: 'espera', admin: true });
+      ok(h.getMode() === 'ESPERA', '(d) chat con admin:true del server autoriza aunque el roster diga player');
+    }
 
     // (c) el ADMIN ordena `seguime` (variante) ⇒ sigue al admin
     admin.pos = [112.5, GROUND, 100.5]; sendMv(admin);

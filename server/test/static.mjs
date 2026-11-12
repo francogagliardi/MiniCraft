@@ -26,7 +26,7 @@ try {
 
 // 2. sintaxis del servidor
 try {
-  execFileSync(process.execPath, ['--check', path.join(root, 'server', 'server.js')], { stdio: 'pipe' });
+  execFileSync(process.execPath, ['--check', path.join(root, 'server', 'app.js')], { stdio: 'pipe' });
   ok(true, 'sintaxis servidor (node --check)');
 } catch (e) { ok(false, 'sintaxis servidor: ' + (e.stderr || e.message)); }
 
@@ -143,7 +143,7 @@ ok(HB === 9, 'hotbar de 9 slots');
 
 // 5c. servidor 208 + offset: validación, stride y spawn junto a las casas desplazadas
 {
-  const srv = fs.readFileSync(path.join(root, 'server', 'server.js'), 'utf8');
+  const srv = fs.readFileSync(path.join(root, 'server', 'app.js'), 'utf8');
   ok(/x >= 208/.test(srv) && /\(y \* 208 \+ z\) \* 208 \+ x/.test(srv), 'server valida 0..207 e indexa con stride 208');
   ok(/pos: \[128\.5, 20, 136\.5\]/.test(srv), 'spawn default junto a las casas desplazadas (+48)');
   ok(!/104\.5, 20, 104\.5/.test(srv), 'sin resto del spawn centrado anterior');
@@ -258,7 +258,7 @@ ok(html.includes('Necesitás la espada'), 'aviso al atacar sin espada');
 
   // 8d. reloj del server (estructural): ancla, constantes, difusión y welcome
   {
-    const srv = fs.readFileSync(path.join(root, 'server', 'server.js'), 'utf8');
+    const srv = fs.readFileSync(path.join(root, 'server', 'app.js'), 'utf8');
     ok(/const T0 = Date\.now\(\)/.test(srv), 'server: ancla el reloj (T0) al boot');
     const srvDur = srv.match(/const DAY_MS = (\d+), NIGHT_MS = (\d+), CYCLE_MS = DAY_MS \+ NIGHT_MS, DAWN_MS = (\d+), DUSK_MS = (\d+);/);
     ok(!!srvDur, 'server: constantes del ciclo');
@@ -586,6 +586,125 @@ ok(html.includes('Necesitás la espada'), 'aviso al atacar sin espada');
       'tickSky: sol y luna son continuos al cruzar el límite día/noche (sin saltos)');
     }
   }
+}
+
+// 9. auth-usuarios-lobby: páginas separadas, rutas y menú sin identidad editable
+{
+  const read = (f) => fs.readFileSync(path.join(root, f), 'utf8');
+  const login = read('login.html');
+  const register = read('register.html');
+  const lobby = read('lobby.html');
+  ok(login.includes('id="loginForm"') && login.includes('href="/register"'),
+    'login.html: formulario y link a /register');
+  ok(/noindex/i.test(login) && /noindex/i.test(register) && /noindex/i.test(lobby),
+    'login/register/lobby son noindex');
+  ok(register.includes('id="registerForm"') && register.includes('Registro cerrado') && register.includes('register:open:start'),
+    'register.html: formulario + bloque "Registro cerrado"');
+  ok(login.includes('autocomplete="username"') && login.includes('autocomplete="current-password"'),
+    'login.html: autocomplete username/current-password');
+  ok(register.includes('autocomplete="new-password"'), 'register.html: autocomplete new-password');
+  ok(!/id="nameInput"|id="keyInput"|id="skinPicker"|id="btnAdmin"/.test(html),
+    'index.html: sin nombre/clave/selector/admin en el menú');
+  ok(/id="btnEnter"/.test(html) && /\/api\/me/.test(html) && /location\.replace\('\/login'\)/.test(html),
+    'index.html: perfil desde /api/me y redirección a /login');
+  ok(/btnLobby/.test(html) && /btnLogout/.test(html),
+    'index.html: "Volver al lobby" y "Cerrar sesión" en la pausa');
+  ok(!/key:document\.getElementById\('keyInput'\)/.test(html), 'el hello ya no manda clave admin');
+  const lobbySkins = [...lobby.matchAll(/data-skin="([^"]+)"/g)].map(m => m[1]);
+  const skinsSrc = read('server/skins.js');
+  const pm = skinsSrc.match(/const PLAYER_SKINS = \[([^\]]+)\]/);
+  const serverSkins = pm ? eval('[' + pm[1] + ']') : [];
+  ok(JSON.stringify(lobbySkins) === JSON.stringify(serverSkins),
+    'el lobby declara los mismos 8 skins que server/skins.js (' + lobbySkins.join(',') + ')');
+  ok(lobbySkins.length === 8 && !lobbySkins.includes('robot'), 'el lobby no ofrece robot (reservado al bot)');
+  ok(/role="radio"/.test(lobby) && /aria-checked/.test(lobby), 'el selector del lobby es accesible (role=radio/aria-checked)');
+  ok(/aria-disabled="true"/.test(lobby) && /Próximamente/.test(lobby), 'Mundo Infinito deshabilitado con "Próximamente"');
+  ok(!lobby.includes('<script src=') && !login.includes('<script src=') && !register.includes('<script src='),
+    'páginas de auth autocontenidas (sin assets externos)');
+
+  const httpSrc = read('server/http-auth.js');
+  for (const route of ["'/api/login'", "'/api/register'", "'/api/logout'", "'/api/me'", "'/lobby'", "'/game'", "'/healthz'"]) {
+    ok(httpSrc.includes(route), 'router de auth cablea ' + route);
+  }
+  ok(/'Cache-Control': 'no-store'/.test(httpSrc), 'las respuestas de auth llevan Cache-Control: no-store');
+  ok(fs.existsSync(path.join(root, 'server', 'migrations', '001-auth.sql')), 'existe la migración 001-auth.sql');
+  ok(!fs.existsSync(path.join(root, 'server', 'admin-auth.js')) && !fs.existsSync(path.join(root, 'server', 'hash-key.mjs')),
+    'se eliminaron admin-auth.js y hash-key.mjs');
+  ok(!/ADMIN_KEY/.test(fs.readFileSync(path.join(root, 'server', 'server.js'), 'utf8')),
+    'server.js no usa ADMIN_KEY (solo admin-bootstrap avisa de las legacy)');
+}
+
+// 10. feedback post-prueba de auth-usuarios-lobby: tema claro/oscuro persistente, hover y
+// foco accesibles, etiquetas de aspecto en español y entrada directa a la partida.
+{
+  const read = (f) => fs.readFileSync(path.join(root, f), 'utf8');
+  const pages = { login: read('login.html'), register: read('register.html'), lobby: read('lobby.html') };
+
+  for (const [name, page] of Object.entries(pages)) {
+    // tema: el default vive en <html> y el script inline lo resuelve ANTES del CSS (sin flash)
+    ok(/<html[^>]*\sdata-theme="(?:dark|light)"/.test(page), `${name}: <html> declara data-theme`);
+    ok(page.includes('mc-theme'), `${name}: persiste la preferencia en localStorage (mc-theme)`);
+    ok(/localStorage\.getItem\(\s*['"]mc-theme['"]\s*\)/.test(page), `${name}: lee mc-theme al cargar`);
+    ok(/localStorage\.setItem\(\s*['"]mc-theme['"]/.test(page), `${name}: guarda mc-theme al alternar`);
+    ok(page.indexOf('mc-theme') >= 0 && page.indexOf('mc-theme') < page.indexOf('<style'),
+      `${name}: el tema se aplica antes del CSS (sin flash de tema)`);
+    ok(/\[data-theme="light"\]\s*\{/.test(page), `${name}: define variables del tema claro`);
+    ok(/--bg\s*:/.test(page) && /--panel\s*:/.test(page) && /--line\s*:/.test(page) &&
+      /--text\s*:/.test(page) && /--dim\s*:/.test(page) && /--accent\s*:/.test(page),
+      `${name}: variables de color para ambos temas`);
+    ok(/color-scheme\s*:\s*(?:dark|light)/.test(page), `${name}: color-scheme acorde al tema`);
+
+    // toggle accesible
+    ok(/<button[^>]*id="themeToggle"[^>]*type="button"/.test(page), `${name}: toggle de tema type=button`);
+    ok(/id="themeToggle"[^>]*aria-label="[^"]*tema[^"]*"/i.test(page), `${name}: el toggle tiene aria-label en español`);
+    ok(/id="themeToggle"[^>]*aria-pressed="(?:true|false)"/.test(page), `${name}: el toggle declara aria-pressed`);
+
+    // interacción y accesibilidad
+    ok(/:hover/.test(page) && /:active/.test(page) && /:focus-visible/.test(page),
+      `${name}: estados hover/active/focus-visible`);
+    ok(/prefers-reduced-motion/.test(page), `${name}: respeta prefers-reduced-motion`);
+  }
+
+  // hints y footers centrados (feedback: el texto de la sesión quedaba alineado a la izquierda)
+  for (const name of ['login', 'register']) {
+    ok(/\.hint\s*\{[^}]*text-align\s*:\s*center/.test(pages[name]), `${name}: hint centrado`);
+    ok(/\.foot\s*\{[^}]*text-align\s*:\s*center/.test(pages[name]), `${name}: footer centrado`);
+  }
+
+  // todas las etiquetas visibles del selector de aspecto en español, con los ids intactos
+  const SKIN_LABELS = [['human', 'Humano'], ['fat', 'Gordo'], ['giant', 'Gigante'],
+    ['small', 'Pequeño'], ['zombie', 'Zombi'], ['mujer', 'Mujer'], ['moreno', 'Piel oscura'], ['gojo', 'Gojo']];
+  for (const [id, label] of SKIN_LABELS) {
+    ok(new RegExp(`data-skin="${id}"[^>]*>\\s*${label}\\s*</button>`).test(pages.lobby),
+      `lobby: ${id} se muestra como "${label}" (id intacto)`);
+  }
+  for (const en of ['Human', 'Fat', 'Giant', 'Small', 'Zombie', 'Moreno'])
+    ok(!new RegExp(`>\\s*${en}\\s*<`).test(pages.lobby), `lobby: sin etiqueta inglesa "${en}"`);
+  ok(!/Aspecto:\s*'\s*\+\s*mySkin\b/.test(html), 'index.html: el menú no muestra el id crudo del aspecto');
+  ok(/playerSkin'\)\.textContent\s*=\s*'Aspecto: '\s*\+\s*skinSpec\(mySkin\)\.label/.test(html),
+    'index.html: muestra la etiqueta del aspecto en español (skinSpec(...).label)');
+
+  // entrada directa: /game con sesión autoarranca; el menú queda para archivo local o error
+  const start = html.indexOf('if(profile || !isHttp){');
+  const end = html.indexOf('\nif(!isHttp)', start);
+  const branch = start >= 0 && end > start ? html.slice(start, end) : '';
+  ok(branch.length > 0, 'index.html: se extrae la rama de perfil/archivo local');
+  const profIdx = branch.indexOf('if(profile){');
+  const elseIdx = branch.indexOf('}else{', profIdx);
+  const profRegion = profIdx >= 0 && elseIdx > profIdx ? branch.slice(profIdx, elseIdx) : '';
+  const localRegion = elseIdx > 0 ? branch.slice(elseIdx) : '';
+  ok(/autoStartGame\(\)/.test(profRegion),
+    'index.html: /game con sesión autoarranca (autoStartGame en la rama de perfil)');
+  ok(/function autoStartGame\(\)\{[\s\S]*?runStart\(\);/.test(html),
+    'index.html: autoStartGame lanza la partida (runStart)');
+  ok(!/enterBtn|ENTRAR AL MUNDO/.test(profRegion),
+    'index.html: con sesión no se muestra el menú intermedio ("ENTRAR AL MUNDO")');
+  ok(/enterBtn\.textContent\s*=\s*'ENTRAR AL MUNDO'/.test(localRegion) && /enterBtn\.onclick/.test(localRegion),
+    'index.html: el menú con botón queda para el modo archivo local');
+  ok(/function autoStartGame\(\)\s*\{\s*if\s*\(\s*started\s*\|\|\s*autoStartRequested\s*\)\s*return;/.test(html),
+    'index.html: el autoarranque es idempotente (no arranca dos veces)');
+  ok(/Hacé clic para capturar el mouse/.test(html),
+    'index.html: avisa cómo capturar el mouse cuando el pointer lock necesita un gesto');
 }
 
 if (fails) { console.log(`\n💥 ${fails} chequeo(s) fallaron`); process.exit(1); }

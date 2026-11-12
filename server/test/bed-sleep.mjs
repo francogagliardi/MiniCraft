@@ -7,7 +7,7 @@ import Sleep from '../sleep.js';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
-const server = fs.readFileSync(path.join(root, 'server', 'server.js'), 'utf8');
+const server = fs.readFileSync(path.join(root, 'server', 'app.js'), 'utf8');
 const bot = fs.readFileSync(path.join(root, 'bot', 'index.js'), 'utf8');
 let fails = 0;
 const ok = (cond, msg) => {
@@ -181,7 +181,7 @@ ok(/let sleepOffsetMs\s*=\s*0/.test(server), 'server declara sleepOffsetMs mutab
 ok(/function phaseNow\(\)\s*\{\s*return\s*\(\(Date\.now\(\)\s*-\s*T0\s*\+\s*sleepOffsetMs\)/.test(server),
   'phaseNow suma el offset de sueño');
 ok(/m\.t\s*===\s*'sleep'/.test(server) && /m\.t\s*===\s*'wake'/.test(server), 'server maneja sleep y wake');
-ok(/bot:\s*m\.bot\s*===\s*true/.test(server), 'server registra el flag bot del hello');
+ok(/bot:\s*identity\.bot\s*===\s*true/.test(server), 'server registra el flag bot del hello');
 ok(/sleeping:\s*\[/.test(server) && /sleepNeed/.test(server), 'welcome incluye sleeping y sleepNeed');
 ok(/dawnAdvanceMs\(/.test(server) && /skipNight\(/.test(server), 'server salta al amanecer con el módulo puro');
 ok(/sleepBed/.test(server), 'server recuerda la celda de la cama por durmiente');
@@ -189,13 +189,13 @@ ok(/sleepBed/.test(server), 'server recuerda la celda de la cama por durmiente')
 // ---------- 4. bot ----------
 ok(/t:\s*'hello'[^;]*bot:\s*true/s.test(bot), 'el bot declara bot:true en el hello');
 
-// ---------- 5. alta en la suite (24 archivos) ----------
+// ---------- 5. alta en la suite (30 archivos) ----------
 {
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'server', 'package.json'), 'utf8'));
   const s = pkg.scripts.test;
   ok(/test\/bed-sleep\.mjs/.test(s), 'npm test da de alta test/bed-sleep.mjs');
   const count = (s.match(/test\/[\w-]+\.mjs/g) || []).length;
-  ok(count === 24, `el script test enumera 24 archivos (${count})`);
+  ok(count === 30, `el script test enumera 30 archivos (${count})`);
 }
 
 if (fails) { console.log(`\n💥 ${fails} chequeo(s) fallaron`); process.exit(1); }

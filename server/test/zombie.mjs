@@ -376,13 +376,13 @@ const P = (id, x, y, z, dead = 0) => ({ id, pos: [x, y, z], dead });
 // Estáticos: el server crea la horda, la tickea con dt real y cablea los eventos a
 // los `ws`; conserva el patrón del ciclo que exige static.mjs y no persiste zombis.
 {
-  const srv = fs.readFileSync(path.join(root, 'server', 'server.js'), 'utf8');
+  const srv = fs.readFileSync(path.join(root, 'server', 'app.js'), 'utf8');
   ok(/require\(\s*'\.\/zombie\.js'\s*\)/.test(srv), 'server requiere ./zombie.js');
   ok(/\.createHorde\s*\(/.test(srv), 'server crea la horda con createHorde');
   ok(/ZOMBIE_TICK_MS/.test(srv) && /ZOMBIE_SNAP_MS/.test(srv), 'server: knobs ZOMBIE_TICK_MS / ZOMBIE_SNAP_MS');
   ok(/ZOMBIE_FORCE_NIGHT/.test(srv), 'server: atajo SOLO de test ZOMBIE_FORCE_NIGHT');
   ok(/phaseNow\(\)\s*>=\s*NIGHT_START/.test(srv), 'server conserva isNight() = phaseNow() >= NIGHT_START (static.mjs §8d)');
-  ok(/,\s*ZOMBIE_TICK_MS\s*\)/.test(srv), 'server corre el tick en un setInterval(…, ZOMBIE_TICK_MS)');
+  ok(/(?:setInterval|every)\([^)]*ZOMBIE_TICK_MS/.test(srv), 'server corre el tick en un setInterval(…, ZOMBIE_TICK_MS)');
   ok(/horde\.tick\s*\(/.test(srv), 'server llama horde.tick(...)');
   ok(/Math\.min\(\s*0\.1/.test(srv), 'server clampa dt a 0.1 s (stall)');
   ok(/t:\s*'phit'/.test(srv) && /send\(/.test(srv), 'server cablea los eventos de tick a send(ws, …)');

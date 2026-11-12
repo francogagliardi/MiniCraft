@@ -124,6 +124,10 @@
   /* visibility:hidden (además de opacity:0) para que un botón con foco dentro de un overlay
      oculto deje de ser focuseable: si no, Enter dispara su click y findSpawn() mueve al spawn. */
   .overlay.hidden { opacity:0; pointer-events:none; visibility:hidden; }
+  /* /game con sesión: mientras conecta se muestra solo el logo y "Conectando…" (sin menú
+     intermedio). Si falla, la tarjeta completa vuelve con el botón de reintentar. */
+  .overlay.connecting .card .sub, .overlay.connecting .card .nameRow,
+  .overlay.connecting .card .controls, .overlay.connecting .card .tiny { display:none; }
   /* sueño: capa oscura con contador; no bloquea el pointer lock ni el keepalive */
   #sleep { position:fixed; inset:0; z-index:45; display:flex; align-items:center; justify-content:center;
     background:radial-gradient(circle at 50% 40%, rgba(12,16,40,.55), rgba(4,6,18,.92));
@@ -158,7 +162,6 @@
   .nameRow input { flex:1; font-family:inherit; font-weight:700; font-size:15px; padding:12px 14px;
     border-radius:14px; border:2px solid #d7e1ef; outline:none; color:#223; background:#f7fafd; }
   .nameRow input:focus { border-color:#4fae4f; }
-  #skinPicker { display:flex; flex-wrap:wrap; gap:8px; justify-content:center; margin-top:12px; }
   .skinBtn { font-family:inherit; font-weight:700; font-size:13px; color:#41526b; background:#f2f6fc;
     border:2px solid #d7e1ef; border-radius:12px; padding:8px 14px; cursor:pointer; transition:all .15s; }
   .skinBtn:hover { border-color:#9cc49c; transform:translateY(-1px); }
@@ -308,25 +311,13 @@
   <div class="float-cube" style="width:30px;height:30px;left:62%;top:10%;background:#ffb3c6;animation-delay:1.7s"></div>
   <div class="card">
     <h1>MINI<span>CRAFT</span></h1>
-    <p class="sub">Elegí tu nombre y tu modo. El admin vuela y rompe al instante;<br>el jugador pica de verdad, no vuela y puede lastimarse 🌿</p>
-    <div class="nameRow">
-      <input id="nameInput" maxlength="16" placeholder="Tu nombre…">
-      <input id="keyInput" type="password" maxlength="32" placeholder="Clave admin" style="max-width:150px">
+    <p class="sub">Entrás con tu cuenta. Tu nombre y tu aspecto salen de tu perfil;<br>el admin vuela y rompe al instante; el jugador pica de verdad 🌿</p>
+    <div class="nameRow" id="profileRow">
+      <span id="playerName">Cargando perfil…</span>
+      <span id="playerSkin" class="tiny"></span>
     </div>
-    <div id="skinPicker" role="radiogroup" aria-label="Aspecto">
-      <button class="skinBtn" data-skin="human" role="radio" aria-checked="true">Humano</button>
-      <button class="skinBtn" data-skin="fat" role="radio" aria-checked="false">Gordo</button>
-      <button class="skinBtn" data-skin="giant" role="radio" aria-checked="false">Gigante</button>
-      <button class="skinBtn" data-skin="small" role="radio" aria-checked="false">Pequeño</button>
-      <button class="skinBtn" data-skin="zombie" role="radio" aria-checked="false">Zombi</button>
-      <button class="skinBtn" data-skin="mujer" role="radio" aria-checked="false">Mujer</button>
-      <button class="skinBtn" data-skin="moreno" role="radio" aria-checked="false">Piel oscura</button>
-      <button class="skinBtn" data-skin="gojo" role="radio" aria-checked="false">Gojo</button>
-    </div>
-    <div class="tiny" id="skinHint">Así te ven los demás y así de grande es tu hitbox: el tamaño cambia ojo y alcances; velocidad, salto y vida no. Jugás en primera persona.</div>
     <div id="loading">Conectando…</div>
-    <button class="btn btn-player" id="btnPlayer" style="display:none">🌱 JUGAR</button>
-    <button class="btn btn-admin" id="btnAdmin" style="display:none">🛠 ENTRAR COMO ADMIN</button>
+    <button class="btn btn-player" id="btnEnter" style="display:none">ENTRAR AL MUNDO</button>
     <div class="controls">
       <div class="only-pc"><b>W A S D</b> Moverse</div><div class="only-pc"><b>Mouse</b> Mirar</div>
       <div class="only-pc"><b>Click izq.</b> Romper / pegar</div><div class="only-pc"><b>Click der.</b> Poner bloque</div>
@@ -347,6 +338,8 @@
     <p class="sub">El mundo te espera. Hacé click para seguir. (<b>Enter</b> abre el chat)</p>
     <button class="btn btn-player" id="btnResume" style="width:auto;padding:14px 50px">Seguir jugando</button>
     <button class="btn btn-player" id="btnConfig" style="width:auto;padding:14px 50px;margin-top:10px">⚙️ Configuración</button>
+    <button class="btn btn-player" id="btnLobby" style="width:auto;padding:14px 50px;margin-top:10px">Volver al lobby</button>
+    <button class="btn btn-player" id="btnLogout" style="width:auto;padding:14px 50px;margin-top:10px">Cerrar sesión</button>
     <div class="tiny">Tu mundo se guarda solo 💾</div>
   </div>
   <div id="configPanel" class="card hidden">
@@ -886,16 +879,12 @@ let hp = 10; const MAXHP = 10;
 let dead = false, lastHurt = -99, lastRegen = 0, airPeak = 0, godT = 0, shakeT = 0;
 let deathPos = null, deathT = 0, deathShown = false;
 let myName = 'Aventurero';
-let mySkin = 'human'; // aspecto elegido en el menú (spec ui/skins): define cómo te ven los demás
-// Marca la opción elegida en el selector del menú y, si `persist`, la guarda. Sólo acepta opciones
-// de jugador: un `robot` guardado a mano arranca en `human` (el robot es del bot, no del menú).
+let mySkin = 'human'; // aspecto del perfil autenticado (spec player/identity); el lobby lo edita
+// Aplica un aspecto recibido del perfil. Sólo acepta opciones de jugador: un
+// `robot` guardado a mano cae a `human` (el robot es del bot, no del jugador).
+// `mc-skin` es solo caché cosmética; la fuente de verdad es `/api/me`.
 function setSkin(id, persist){
   mySkin = PLAYER_SKINS.includes(id) ? id : DEFAULT_SKIN;
-  document.querySelectorAll('#skinPicker .skinBtn').forEach(b=>{
-    const on = b.dataset.skin === mySkin;
-    b.classList.toggle('on', on);
-    b.setAttribute('aria-checked', on ? 'true' : 'false');
-  });
   if(persist) try{ localStorage.setItem('mc-skin', mySkin); }catch(e){}
 }
 
@@ -3770,13 +3759,16 @@ function connectMP(wantedMode){
     try{ ws=new WebSocket(`${wsp}://${location.host}`); }catch(e){ resolve({ solo:true }); return; }
     const to=setTimeout(()=>{ try{ws.close();}catch(e){} resolve({ solo:true }); },3500);
     ws.onopen=()=>{
-      ws.send(JSON.stringify({ t:'hello', name:myName, mode:wantedMode, skin:mySkin,
-        key:document.getElementById('keyInput').value }));
+      // Aditivo: el server nuevo ignora name/skin/mode y usa la sesión; un server
+      // viejo sigue entendiendo el hello. Sin `key`: no hay clave admin.
+      ws.send(JSON.stringify({ t:'hello', name:myName, mode, skin:mySkin }));
     };
     ws.onmessage=(ev)=>{
       let m; try{ m=JSON.parse(ev.data); }catch(e){ return; }
       if(m.t==='welcome'){
         clearTimeout(to); mp=true; myId=m.id; NET=ws;
+        // perfil autoritativo (defensivo): reafirma nombre y skin del server
+        if(m.user && m.user.username){ myName=m.user.username; setSkin(m.user.skin, false); }
         // ciclo día/noche: adoptar la hora y la duración del server (primera fase directa)
         if(Number.isFinite(m.cyc)) cycleMs=m.cyc;
         if(Number.isFinite(m.tod)) onTod(m.tod);
@@ -4034,11 +4026,9 @@ function load(){
 }
 
 /* ============ INICIO ============ */
-// Aspecto elegido (spec ui/skins): el selector del menú persiste en `mc-skin` y el boot restaura
-// la elección guardada descartando lo que no sea una opción de jugador (p. ej. `robot` a mano).
-document.querySelectorAll('#skinPicker .skinBtn').forEach(b=>{
-  b.onclick=e=>{ e.stopPropagation(); setSkin(b.dataset.skin, true); };
-});
+// Identidad (spec player/identity): nombre, aspecto y rol vienen de `/api/me`.
+// El cliente NO los pide ni los declara: el server los impone al autenticar el WS.
+// `mc-skin` queda solo como caché cosmética; nunca pisa el perfil.
 let savedSkin=null;
 try{ savedSkin=localStorage.getItem('mc-skin'); }catch(e){}
 setSkin(PLAYER_SKINS.includes(savedSkin)?savedSkin:DEFAULT_SKIN, false);
@@ -4065,28 +4055,61 @@ document.getElementById('showStats').checked = STATS_ON;
 perfLastText = '';
 renderPerf();
 await new Promise(r=>setTimeout(r,40));
-document.getElementById('loading').style.display='none';
-document.getElementById('btnPlayer').style.display='block';
-document.getElementById('btnAdmin').style.display='block';
-document.getElementById('nameInput').value='Aventurero'+((Math.random()*99)|0);
-if(location.protocol.indexOf('http')!==0)
+
+const isHttp = location.protocol.indexOf('http')===0;
+const loadingEl = document.getElementById('loading');
+const enterBtn = document.getElementById('btnEnter');
+let profile = null, autoStartRequested = false;
+try{
+  if(isHttp){
+    const res = await fetch('/api/me', { credentials:'same-origin', cache:'no-store' });
+    if(res.status===401){ location.replace('/login'); throw new Error('redirect'); }
+    if(!res.ok) throw new Error('status '+res.status);
+    profile = (await res.json()).user;
+  }
+}catch(e){
+  loadingEl.style.display='block';
+  loadingEl.textContent = '⚠️ No se pudo cargar tu perfil.';
+  enterBtn.style.display='block';
+  enterBtn.textContent='REINTENTAR';
+  enterBtn.onclick=()=>location.reload();
+}
+if(profile || !isHttp){
+  if(profile){
+    myName = profile.username;
+    setSkin(profile.skin, false);
+    mode = profile.role==='admin' ? 'admin' : 'player';
+    document.getElementById('playerName').textContent = myName;
+    document.getElementById('playerSkin').textContent = 'Aspecto: ' + skinSpec(mySkin).label;
+    // /game con sesión (spec ui/lobby): directo a jugar. autoStartGame muestra "Conectando…"
+    // y oculta el botón; el menú completo queda solo para el modo archivo local o un error.
+    autoStartGame();
+  }else{
+    myName = 'Aventurero';
+    document.getElementById('playerName').textContent = myName;
+    document.getElementById('playerSkin').textContent = 'Aspecto: ' + skinSpec(mySkin).label;
+    loadingEl.style.display='none';
+    enterBtn.style.display='block';
+    enterBtn.textContent='ENTRAR AL MUNDO';
+    enterBtn.onclick=()=>runStart();
+  }
+}
+if(!isHttp)
   document.getElementById('mpNote').textContent='📁 Modo solitario (abriste el archivo local). Subilo al server para multijugador. · '+CLIENT_V;
 else
   document.getElementById('mpNote').textContent='🌐 Servidor detectado: ¡van a verte otros jugadores! · '+CLIENT_V;
 document.querySelector('#pause .tiny').textContent+=' · '+CLIENT_V;
 
-async function startGame(wantedMode){
-  myName=document.getElementById('nameInput').value.trim().slice(0,16)||'Aventurero';
-  mode=wantedMode;
-  document.getElementById('loading').style.display='block';
-  document.getElementById('loading').textContent='Conectando…';
-  document.getElementById('btnPlayer').style.display='none';
-  document.getElementById('btnAdmin').style.display='none';
-  const res=await connectMP(wantedMode);
+async function startGame(){
+  loadingEl.style.display='block';
+  loadingEl.textContent='Conectando…';
+  enterBtn.style.display='none';
+  const res=await connectMP(mode);
   if(!res.solo){
     const d=res.data;
-    if(d.adminDenied){ toast('🔑 Clave admin incorrecta: entrás como jugador'); mode='player'; }
-    else mode=d.admin?'admin':'player';
+    // El perfil del server manda: `welcome.user` reafirma nombre/skin (defensivo).
+    if(d.user && d.user.username){ myName=d.user.username; setSkin(d.user.skin, false); }
+    mode=d.admin?'admin':'player';
     SEED=d.seed; newWorld();
     for(const e of (d.edits||[])){
       if(!Array.isArray(e)) continue; // edición corrupta: se salta, no se cuelga
@@ -4116,29 +4139,51 @@ async function startGame(wantedMode){
   started=true; state='play';
   menu.classList.add('hidden');
   tryLock();
+  // El pointer lock necesita un gesto del usuario en varios navegadores: si el autoarranque
+  // no lo consiguió, avisamos sin volver al menú (el click sobre el canvas lo captura).
+  if(!locked() && !TOUCH) setTimeout(()=>{
+    if(started && state==='play' && !locked()) toast('🖱️ Hacé clic para capturar el mouse');
+  }, 700);
   if(!isAdmin()) setTimeout(()=>toast('🌱 Modo jugador: mantené el click para picar'),800);
 }
-document.getElementById('btnPlayer').onclick=()=>runStart('player');
-document.getElementById('btnAdmin').onclick=()=>runStart('admin');
 // entrar nunca debe quedar colgado en "Conectando": cualquier error se muestra
-// en pantalla y los botones vuelven, en vez de un spinner infinito.
-function runStart(wantedMode){
-  const t0=Date.now();
+// en pantalla y el botón vuelve, en vez de un spinner infinito.
+function runStart(){
   const watch=setTimeout(()=>{
     if(!started){
-      const l=document.getElementById('loading');
-      l.textContent+=' ⏳ (tarda mucho: probá recargar con Ctrl+F5)';
+      loadingEl.style.display='block';
+      loadingEl.textContent='Conectando… ⏳ (tarda mucho: probá recargar con Ctrl+F5)';
     }
   },12000);
-  startGame(wantedMode).catch(err=>{
+  startGame().catch(err=>{
     clearTimeout(watch);
-    const l=document.getElementById('loading');
-    l.style.display='block';
-    l.textContent='⚠️ Error al entrar: '+((err&&err.message)||err)+' · tocá JUGAR de nuevo';
-    document.getElementById('btnPlayer').style.display='block';
-    document.getElementById('btnAdmin').style.display='block';
+    menu.classList.remove('connecting');
+    loadingEl.style.display='block';
+    loadingEl.textContent='⚠️ Error al entrar: '+((err&&err.message)||err)+' · tocá REINTENTAR';
+    enterBtn.style.display='block';
+    enterBtn.textContent='REINTENTAR';
+    enterBtn.onclick = profile
+      ? ()=>{ autoStartRequested=false; autoStartGame(); }
+      : ()=>runStart();
   });
 }
+// /game con sesión: la partida arranca sola, sin menú intermedio. Idempotente: si ya
+// arrancó (o ya se pidió), un segundo llamado no abre otra conexión.
+function autoStartGame(){
+  if(started || autoStartRequested) return;
+  autoStartRequested = true;
+  loadingEl.style.display='block';
+  loadingEl.textContent='Conectando…';
+  enterBtn.style.display='none';
+  menu.classList.add('connecting');
+  runStart();
+}
+document.getElementById('btnLobby').onclick=()=>{ location.href='/lobby'; };
+document.getElementById('btnLogout').onclick=async()=>{
+  try{ await fetch('/api/logout',{ method:'POST', credentials:'same-origin', cache:'no-store',
+    headers:{'Content-Type':'application/json'}, body:'{}' }); }catch(e){}
+  location.replace('/login');
+};
 
 /* ============ LOOP ============ */
 let last=performance.now();

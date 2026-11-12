@@ -239,40 +239,45 @@ T('alturas derivadas', () => {
   ok(/avatarDamageY\(skinSpec\(a\.skin\)\)/.test(hk), 'el daño flotante del hitok usa la altura del aspecto');
 }
 
-// 5. estáticos del menú, localStorage y hello
+// 5. estáticos del selector (ahora en el lobby), caché cosmética y hello
 {
-  const picker = (html.match(/<div id="skinPicker"[\s\S]*?<\/div>/) || [''])[0];
-  ok(picker.length > 0, 'el menú tiene #skinPicker');
+  const lobby = fs.readFileSync(path.join(root, 'lobby.html'), 'utf8');
+  const picker = (lobby.match(/<div[^>]*id="skinPicker"[\s\S]*?<\/div>/) || [''])[0];
+  ok(picker.length > 0, 'el lobby tiene #skinPicker');
   ok(/role="radiogroup"/.test(picker), 'el selector es un radiogroup accesible');
   const opts = [...picker.matchAll(/data-skin="([^"]+)"/g)].map(m => m[1]);
-  ok(opts.length === 8, `el selector ofrece ocho aspectos (${opts.length})`);
+  ok(opts.length === 8, 'el selector ofrece ocho aspectos (' + opts.length + ')');
   ok(opts.join(',') === 'human,fat,giant,small,zombie,mujer,moreno,gojo',
-    `las opciones son las ocho de jugador (${opts.join(',')})`);
+    'las opciones son las ocho de jugador (' + opts.join(',') + ')');
   ok(!opts.includes('robot'), 'robot no aparece en el selector');
   ok(/>Mujer<\/button>/.test(picker), 'el selector muestra la etiqueta Mujer');
-  ok(/>Piel oscura<\/button>/.test(picker), 'el selector muestra la etiqueta Piel oscura');
+  ok(/>Piel oscura<\/button>/.test(picker), 'el selector muestra la etiqueta Piel oscura (moreno)');
+  ok(!/>Moreno<\/button>/.test(picker), 'el selector no muestra el id "Moreno" como etiqueta');
   ok(/>Gojo<\/button>/.test(picker), 'el selector muestra la etiqueta Gojo');
+  for (const [id, label] of [['human', 'Humano'], ['fat', 'Gordo'], ['giant', 'Gigante'],
+    ['small', 'Pequeño'], ['zombie', 'Zombi']]) {
+    ok(new RegExp(`data-skin="${id}"[^>]*>\\s*${label}\\s*</button>`).test(picker),
+      `el selector muestra ${id} como "${label}"`);
+  }
   ok((picker.match(/role="radio"/g) || []).length === 8, 'los ocho botones son radios');
-  for (const id of opts) ok(/aria-checked="(?:true|false)"/.test(picker), `${id}: botón con aria-checked`);
+  for (const id of opts) ok(/aria-checked="(?:true|false)"/.test(picker), id + ': botón con aria-checked');
 
-  const hint = (html.match(/id="skinHint"[^>]*>([^<]*)</) || [])[1] || '';
-  ok(/los demás/.test(hint) && /primera persona/.test(hint),
-    `#skinHint aclara que el aspecto es cómo te ven los demás (${JSON.stringify(hint.trim())})`);
+  const hint = (lobby.match(/class="note"[^>]*>([\s\S]*?)<\/p>/) || [])[1] || '';
+  ok(/los demás/.test(hint) && /primera persona/.test(hint) && /colisión/.test(hint),
+    '#skinHint del lobby aclara que el aspecto es cómo te ven los demás, el tamaño y la primera persona');
 
   const setSkin = grabFn('setSkin');
-  ok(/classList\.toggle\('on'/.test(setSkin), 'la opción elegida se marca con .on');
-  ok(/aria-checked/.test(setSkin), 'la opción elegida actualiza aria-checked');
-  ok(/localStorage\.setItem\(\s*'mc-skin'/.test(setSkin), "la elección se persiste en localStorage('mc-skin')");
+  ok(/PLAYER_SKINS\.includes\(/.test(setSkin), 'setSkin sólo acepta opciones de jugador');
+  ok(/mc-skin/.test(setSkin), "mc-skin queda como caché cosmética opcional");
   ok(/let mySkin\s*=\s*'human'/.test(html), "mySkin arranca en 'human'");
 
-  const restore = html.slice(html.indexOf("localStorage.getItem('mc-skin')") - 260,
-    html.indexOf("localStorage.getItem('mc-skin')") + 160);
-  ok(/localStorage\.getItem\(\s*'mc-skin'/.test(html), "el boot restaura localStorage('mc-skin')");
-  ok(/PLAYER_SKINS\.includes\(/.test(html), 'la restauración acepta sólo opciones de jugador (PLAYER_SKINS)');
-  ok(/savedSkin|guardad|saved/i.test(restore), 'la restauración lee el valor guardado antes de aplicarlo');
+  ok(/localStorage\.getItem\(\s*'mc-skin'/.test(html), 'el boot lee mc-skin como caché cosmética');
+  ok(/fetch\('\/api\/me'/.test(html), 'el boot toma el perfil de /api/me');
+  ok(/setSkin\(profile\.skin/.test(html), 'el perfil pisa la caché de localStorage');
 
   const cmp = grabFn('connectMP');
-  ok(/t\s*:\s*'hello'/.test(cmp) && /skin\s*:\s*mySkin/.test(cmp), 'el hello de connectMP lleva skin: mySkin');
+  ok(/t\s*:\s*'hello'/.test(cmp) && /skin\s*:\s*mySkin/.test(cmp), 'el hello de connectMP lleva skin: mySkin (aditivo)');
+  ok(!/key\s*:/.test(cmp), 'el hello ya no manda clave admin');
 }
 
 // 6. escala de jugabilidad derivada del aspecto (10.1)
@@ -418,7 +423,7 @@ try { SRV = require(path.join(root, 'server', 'skins.js')); } catch (e) { SRV = 
   ok(/function\s+hit\s*\([^)]*playerPos\s*,\s*skin\s*\)/.test(zsrc),
     'zombie.js hit() acepta el skin como quinto parámetro opcional');
   ok(/swordReach\s*\(\s*skin\s*\)/.test(zsrc), 'zombie.js valida el alcance con swordReach(skin)');
-  const srvsrc = fs.readFileSync(path.join(root, 'server', 'server.js'), 'utf8');
+  const srvsrc = fs.readFileSync(path.join(root, 'server', 'app.js'), 'utf8');
   ok(/horde\.hit\s*\([\s\S]*?me\.pos\s*,\s*me\.skin\s*\)/.test(srvsrc),
     'server.js pasa me.skin al validar el zhit');
 }

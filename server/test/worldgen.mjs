@@ -186,7 +186,7 @@ T2('parcheo por índice (stride 208)', () => {
 
 // 2.7/2.9 el servidor carga el bloque desde index.html y escribe el mundo replicado
 {
-  const srv = fs.readFileSync(path.join(root, 'server', 'server.js'), 'utf8');
+  const srv = fs.readFileSync(path.join(root, 'server', 'app.js'), 'utf8');
   ok(/worldgen:start/.test(srv), 'server.js referencia el marcador worldgen:start (extrae el bloque)');
   ok(/function loadWorldGen\s*\(/.test(srv), 'server.js define loadWorldGen()');
   ok(/loadWorldGen\s*\(\s*STATIC\s*\)/.test(srv), 'server.js llama loadWorldGen(STATIC)');
