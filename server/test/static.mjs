@@ -594,6 +594,9 @@ ok(html.includes('Necesitás la espada'), 'aviso al atacar sin espada');
   const login = read('login.html');
   const register = read('register.html');
   const lobby = read('lobby.html');
+  for (const [name, page] of [['index.html', html], ['login.html', login], ['register.html', register], ['lobby.html', lobby]]) {
+    ok(/rel="icon"/.test(page) && /data:image\/svg\+xml/.test(page), `${name}: favicon inline`);
+  }
   ok(login.includes('id="loginForm"') && login.includes('href="/register"'),
     'login.html: formulario y link a /register');
   ok(/noindex/i.test(login) && /noindex/i.test(register) && /noindex/i.test(lobby),
