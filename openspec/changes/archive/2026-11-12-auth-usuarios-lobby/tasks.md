@@ -94,12 +94,12 @@ Ajustes pedidos por el usuario al probar el change en Docker. No cambian auth, D
 
 ## 9. Verificación integral y aprobación
 
-- [ ] 9.1 Correr `cd server && npm test` y verificar **todo verde**, incluidos `static.mjs`, `protocol.mjs` y los e2e adaptados.
-- [ ] 9.2 Levantar `docker compose up --build -d` (db + server + bot) con `REGISTRATION_ENABLED=1`, esperar healthchecks y confirmar que `http://localhost:3000` responde y el bot entra con `BOT_TOKEN`.
-- [ ] 9.3 Probar en el navegador: registro en `/register` con un username nuevo → auto-login y lobby con skin `human`; username duplicado (otra capitalización) → “Ese nombre ya está en uso”; `admin`/`server` → nombre reservado; `REGISTRATION_ENABLED=0` (reiniciando el contenedor) → `/register` muestra “Registro cerrado” y el alta responde `403`; login con el admin bootstrap; lobby con skins; “Mundo Infinito” deshabilitado; “Jugar Legacy” entra con el username y skin del perfil; sin cookie `/game` redirige a `/login`; logout cierra la partida; nombre/skin no editables; el bot no ataca al admin y obedece `sigueme`/`espera`.
-- [ ] 9.4 Avisar al usuario **qué mirar** y pasar el link local y la clave admin de esa corrida **en la misma línea** (`http://localhost:3000 · admin: <clave>`), o `admin deshabilitado` si no se configuró `ADMIN_PASSWORD`. La clave es solo dev local y no se commitea.
-- [ ] 9.5 **Esperar aprobación explícita del usuario.** No commitear, no pushear y no archivar antes de esa aprobación.
-- [ ] 9.6 Si el usuario pide cambios: corregir, volver a levantar Docker y repetir 9.1–9.5.
+- [x] 9.1 Correr `cd server && npm test` y verificar **todo verde**, incluidos `static.mjs`, `protocol.mjs` y los e2e adaptados.
+- [x] 9.2 Levantar `docker compose up --build -d` (db + server + bot) con `REGISTRATION_ENABLED=1`, esperar healthchecks y confirmar que `http://localhost:3000` responde y el bot entra con `BOT_TOKEN`.
+- [x] 9.3 Probar en el navegador: registro en `/register` con un username nuevo → auto-login y lobby con skin `human`; username duplicado (otra capitalización) → “Ese nombre ya está en uso”; `admin`/`server` → nombre reservado; `REGISTRATION_ENABLED=0` (reiniciando el contenedor) → `/register` muestra “Registro cerrado” y el alta responde `403`; login con el admin bootstrap; lobby con skins; “Mundo Infinito” deshabilitado; “Jugar Legacy” entra con el username y skin del perfil; sin cookie `/game` redirige a `/login`; logout cierra la partida; nombre/skin no editables; el bot no ataca al admin y obedece `sigueme`/`espera`.
+- [x] 9.4 Avisar al usuario **qué mirar** y pasar el link local y la clave admin de esa corrida **en la misma línea** (`http://localhost:3000 · admin: <clave>`), o `admin deshabilitado` si no se configuró `ADMIN_PASSWORD`. La clave es solo dev local y no se commitea.
+- [x] 9.5 **Esperar aprobación explícita del usuario.** No commitear, no pushear y no archivar antes de esa aprobación.
+- [x] 9.6 Si el usuario pide cambios: corregir, volver a levantar Docker y repetir 9.1–9.5.
 
 ## Workflow follow-up
 

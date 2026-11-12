@@ -1,95 +1,86 @@
 # ui/skins Specification
 
 ## Purpose
-Define la elección del aspecto del jugador en el menú inicial entre las ocho opciones de jugador (`human`, `fat`, `giant`, `small`, `zombie`, `mujer`, `moreno`, `gojo`; `robot` queda reservado al bot), su estado visible, su persistencia local y el envío del aspecto elegido al servidor al conectarse.
+Define la elección del aspecto del jugador en el lobby autenticado entre las ocho opciones de jugador (`human`, `fat`, `giant`, `small`, `zombie`, `mujer`, `moreno`, `gojo`; `robot` queda reservado al bot), su estado visible y accesible, su persistencia en el perfil mediante `PATCH /api/me` (con `localStorage` solo como caché opcional) y la compatibilidad con clientes que ignoran el selector.
 
 ## Requirements
 
-### Requirement: Selector de aspectos en el menú inicial
+### Requirement: Catálogo de aspectos de jugador en el lobby
 
-El menú inicial SHALL ofrecer un selector con exactamente ocho opciones para jugadores (`human`, `fat`, `giant`, `small`, `zombie`, `mujer`, `moreno`, `gojo`) y SHALL NOT ofrecer `robot` en ese selector. Cada opción SHALL declarar su id en `data-skin` y comportarse como un botón de radio accesible (`role="radio"` con `aria-checked`).
+El lobby SHALL ofrecer un selector con exactamente ocho opciones de jugador (`human`, `fat`, `giant`, `small`, `zombie`, `mujer`, `moreno`, `gojo`) y MUST NOT ofrecer `robot`, reservado al bot. Cada opción SHALL declarar su id en `data-skin`, comportarse como botón de radio accesible (`role="radio"`, `aria-checked`) y tener como mínimo 44 px de alto.
 
-#### Scenario: El menú muestra ocho aspectos
+#### Scenario: El lobby muestra ocho aspectos
 
-- **WHEN** el jugador abre el menú inicial
-- **THEN** ve las cinco opciones históricas (humano, gordo, gigante, pequeño y zombie) y, además, las tres nuevas, ocho en total
-
-#### Scenario: Los tres personajes nuevos son elegibles
-
-- **WHEN** el jugador recorre las opciones del selector
-- **THEN** encuentra `mujer` (etiqueta `Mujer`), `moreno` (etiqueta `Piel oscura`) y `gojo` (etiqueta `Gojo`) como opciones elegibles, con su etiqueta visible y su botón de radio accesible como el resto
-
-#### Scenario: El robot no es una opción de jugador
-
-- **WHEN** el jugador recorre las opciones del selector
-- **THEN** `robot` no aparece entre ellas
-
-### Requirement: Estado seleccionado visible y aclaración de alcance
-
-El selector SHALL mostrar de forma visible cuál es el aspecto actualmente elegido y SHALL aclarar en el menú que el aspecto define cómo lo ven los demás jugadores y que su tamaño cambia la altura de ojos, la caja de colisión y los alcances de golpe y de bloques. En primera persona (la vista por defecto) el jugador no ve su propio modelo; con la cámara en tercera persona trasera o frontal (`V` cicla 1ª → 3ª trasera → 3ª frontal → 1ª) sí puede verse a sí mismo con ese aspecto.
+- **WHEN** el jugador autenticado abre el lobby
+- **THEN** ve las ocho opciones de jugador y ninguna opción `robot`
 
 #### Scenario: La opción elegida se marca
 
-- **WHEN** el menú está abierto con el aspecto `fat` seleccionado
-- **THEN** la opción `fat` se muestra como la elegida y las demás no
+- **WHEN** el lobby muestra el skin guardado `fat`
+- **THEN** la opción `fat` aparece como seleccionada y las demás no
 
-#### Scenario: El menú aclara que lo ven los demás
+#### Scenario: Navegación accesible
 
-- **WHEN** el jugador lee el menú inicial
-- **THEN** encuentra una aclaración de que el aspecto es cómo lo ven los demás jugadores y que, en primera persona, no ve su propio modelo
+- **WHEN** el jugador recorre el selector con teclado o lector de pantalla
+- **THEN** cada opción anuncia su etiqueta y si está seleccionada
 
-#### Scenario: El menú aclara que el tamaño cambia la jugabilidad
+### Requirement: Aclaraciones del selector
 
-- **WHEN** el jugador lee la descripción de `giant` o `small`
-- **THEN** entiende que el tamaño cambia su altura de ojos, su caja de colisión y sus alcances, además de cómo lo ven
+El lobby SHALL aclarar que el aspecto define cómo ven al jugador los demás, que su tamaño cambia altura de ojos, caja de colisión y alcances, y que en primera persona no ve su propio modelo. La aclaración MUST NOT prometer que el aspecto cambia velocidad, salto, vida o daño.
 
-#### Scenario: El aspecto se puede ver en tercera persona
+#### Scenario: Aclaración de alcance visible
 
-- **WHEN** el jugador eligió un aspecto y alterna a tercera persona trasera o frontal
-- **THEN** se ve a sí mismo con ese aspecto, sin que el menú haya prometido lo contrario
+- **WHEN** el jugador lee el lobby
+- **THEN** encuentra que el aspecto es cómo lo ven los demás y que el tamaño afecta ojo, caja y alcances
 
-### Requirement: El aspecto por defecto del menú es `human`
+#### Scenario: Sin promesas falsas
 
-El menú inicial SHALL arrancar con el aspecto `human` seleccionado cuando no haya una elección guardada válida.
+- **WHEN** el jugador compara la aclaración con el comportamiento del juego
+- **THEN** la velocidad, el salto, la vida y el daño son los mismos para todos los aspectos
 
-#### Scenario: Primera visita arranca en humano
+### Requirement: Persistencia del aspecto en el perfil
 
-- **WHEN** el jugador abre el juego por primera vez, sin elección guardada
-- **THEN** el selector muestra `human` como aspecto elegido
+El sistema SHALL guardar el aspecto elegido en el perfil del usuario mediante `PATCH /api/me` y SHALL restaurarlo al abrir el lobby en cualquier dispositivo. `localStorage` MAY usarse solo como caché visual y MUST NOT ser la fuente de verdad ni pisar el perfil del server.
 
-### Requirement: Persistencia del aspecto en localStorage
+#### Scenario: La elección sobrevive a otro dispositivo
 
-El sistema SHALL guardar el aspecto elegido en `localStorage` bajo una clave propia y SHALL restaurarlo al abrir el juego, descartando valores que no pertenezcan al catálogo de jugador.
+- **WHEN** el jugador elige `giant` en un navegador y abre el lobby en otro con la misma cuenta
+- **THEN** el selector muestra `giant` porque viene del perfil
 
-#### Scenario: La elección sobrevive a recargar
+#### Scenario: Fallo al guardar
 
-- **WHEN** el jugador elige `giant` y recarga la página
-- **THEN** el menú vuelve a mostrar `giant` como aspecto elegido
+- **WHEN** `PATCH /api/me` falla por red o por sesión expirada
+- **THEN** el lobby avisa que no se guardó y no muestra el skin como confirmado
 
-#### Scenario: Un valor guardado inválido no rompe el menú
+#### Scenario: Un valor viejo de localStorage no pisa el perfil
 
-- **WHEN** `localStorage` contiene un aspecto guardado que no es una opción de jugador (por ejemplo `robot` o basura)
-- **THEN** el menú arranca en `human` sin errores
+- **WHEN** `localStorage` guarda un skin distinto al del perfil
+- **THEN** el lobby muestra y usa el skin del perfil
 
-### Requirement: El aspecto elegido viaja en el `hello`
+### Requirement: Aspecto por defecto `human`
 
-El sistema SHALL enviar el aspecto elegido como campo `skin` en el mensaje `hello` de conexión, de modo que el servidor lo difunda al resto de los jugadores.
+El sistema SHALL usar `human` cuando la cuenta no tenga un skin válido guardado o cuando el valor almacenado no pertenezca al catálogo de jugador.
 
-#### Scenario: El hello lleva el aspecto
+#### Scenario: Cuenta nueva
 
-- **WHEN** el jugador entra al juego con el aspecto `small` elegido
-- **THEN** el `hello` enviado al servidor incluye `skin` con el valor `small`
+- **WHEN** una cuenta recién creada abre el lobby
+- **THEN** el selector arranca en `human`
 
-#### Scenario: El servidor difunde el aspecto elegido
+#### Scenario: Valor inválido en la base
 
-- **WHEN** otro jugador se conecta después
-- **THEN** recibe el aspecto del jugador recién ingresado y lo dibuja con ese modelo
+- **WHEN** el perfil tiene un skin que no está en el catálogo
+- **THEN** el sistema resuelve a `human` sin errores y ofrece corregirlo en el lobby
 
-### Requirement: Un cliente que ignora el selector sigue funcionando
+### Requirement: Compatibilidad con clientes que ignoran el selector
 
-El sistema SHALL NOT romper la conexión ni el juego cuando el aspecto no se envía o el servidor devuelve un valor desconocido.
+El sistema SHALL NOT romper la partida cuando el cliente no dibuje el selector o no entienda el campo `skin`; el server SHALL asignar igualmente un aspecto válido del perfil y difundirlo.
 
-#### Scenario: Sin elección guardada igual se juega
+#### Scenario: Cliente viejo entra con cuenta válida
 
-- **WHEN** el jugador entra sin haber tocado el selector
-- **THEN** entra como `human` y el juego funciona con normalidad
+- **WHEN** un cliente sin selector de lobby se conecta con una sesión válida
+- **THEN** juega con el skin del perfil o `human` por defecto, sin errores
+
+#### Scenario: Aspecto desconocido en un cliente viejo
+
+- **WHEN** un cliente que no conoce un aspecto recibe ese valor
+- **THEN** dibuja el avatar humano por defecto y la sesión sigue funcionando
