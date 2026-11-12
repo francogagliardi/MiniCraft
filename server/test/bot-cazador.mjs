@@ -10,9 +10,15 @@
 //
 // Criterios cubiertos: (a) kill en dos toques separados, (b) ignora admins,
 // (c) sigueme/espera (+turreta), (d) SEGURIDAD por id (impostor con el nombre del
-// admin), (e) invulnerabilidad, (f) velocidad doble, (g) reconexión, (h) cero
+// admin), (e) invulnerabilidad, (f) velocidad 28.8, (g) reconexión, (h) cero
 // `edit`, (i) `skin:'robot'` difundido. Extra: la réplica de findSpawn() coincide
 // con la del cliente.
+//
+// Change cazador-noclip-vuelo (casos de lógica pura, reloj fijo y mundos
+// inyectados): (j) no-clip horizontal, (k) vuelo a una torre, (l) vuelo a una
+// cueva, (m) sin gravedad/snap al suelo, (n) constantes exportadas, (o) banda
+// muerta, (s) alineación en SIGUEME, (t) alineación al spawn, (r) límites del
+// mundo (x/z y vertical) y (u) ESPERA congela también la altura.
 //
 // Uso: node test/bot-cazador.mjs   (sale con código != 0 si algo falla)
 import { spawn } from 'child_process';
@@ -28,6 +34,7 @@ const dir = path.dirname(fileURLToPath(import.meta.url));
 const serverDir = path.join(dir, '..');
 const root = path.join(serverDir, '..');
 const { createBotClient, createHunter, parseWorld } = require(path.join(root, 'bot', 'index.js'));
+const { SPEED, FLY_Y_OFFSET, FLY_Y_DEADBAND } = require(path.join(root, 'bot', 'cazador.js'));
 
 const PORT = 3240;
 const WORLD = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'mc-botworld-')), 'world.json');
@@ -52,10 +59,32 @@ async function until(fn, ms = TIMEOUT) {
 }
 
 // ---- mundo plano inyectado (determinismo: sin terreno que trabe el pathing) ----
-const flatWorld = (sx = 100.5, sz = 100.5) => ({
-  W: 208, H: 40, topSolidY: () => GROUND, blocked: () => false, set() {},
+const flatWorld = (sx = 100.5, sz = 100.5, H = 40) => ({
+  W: 208, H, topSolidY: () => GROUND, blocked: () => false, set() {},
   findSpawn: () => [sx, GROUND, sz],
 });
+// ---- mundo SÓLIDO inyectado: `blocked` total y techo alto. Con el no-clip el
+// bot debe moverse igual; con la colisión vieja se quedaba clavado. ----
+const solidWorld = (sx = 100.5, sz = 100.5, H = 40) => ({
+  W: 208, H, topSolidY: () => GROUND + 30, blocked: () => true, set() {},
+  findSpawn: () => [sx, GROUND, sz],
+});
+
+// ---- lógica pura con reloj fijo: un welcome con UNA presa y N ticks ----
+function pureHunt(cfg) {
+  const frames = [];
+  const hunter = createHunter({
+    send: (f) => frames.push(f), now: () => 0, log: () => {},
+    world: cfg.world || flatWorld(), spawn: cfg.spawn,
+  });
+  const players = cfg.players || [{
+    id: 2, name: 'Ref', mode: 'player', hp: 10, dead: 0, pos: cfg.prey,
+  }];
+  hunter.handle({ t: 'welcome', id: 1, players });
+  for (let i = 0; i < (cfg.ticks ?? 0); i++) hunter.tick(cfg.dt ?? 0.05);
+  return { hunter, frames };
+}
+const pureHits = (frames) => frames.filter(f => f.t === 'hit');
 
 // ---- bot real con espía de frames salientes ----
 const harnesses = [];
@@ -370,26 +399,201 @@ try {
   }
 
   // =====================================================================
-  // 5. (f) velocidad doble (medida directa sobre la lógica con reloj fijo)
+  // 5. (f) velocidad 28.8 (medida directa sobre la lógica con reloj fijo)
   // =====================================================================
   {
-    const mvs = [];
-    const hunter = createHunter({
-      send: (f) => mvs.push(f), now: () => 0, log: () => {},
+    // 80 bloques de distancia: 2 s a 28.8 = 57.6 < 80 - CHASE_STOP, así no se
+    // frena en el umbral y la medición es de velocidad pura.
+    const { hunter } = pureHunt({
       world: flatWorld(100.5, 100.5), spawn: [100.5, GROUND, 100.5],
+      prey: [180.5, GROUND, 100.5], ticks: 40, dt: 0.05,
     });
-    hunter.handle({ t: 'welcome', id: 1, players: [{ id: 2, name: 'Ref', mode: 'player', hp: 10, dead: 0, pos: [180, GROUND, 100.5] }] });
-    const p0 = hunter.getPos();
-    const secs = 2.0, dt = 0.05;
-    for (let i = 0; i < Math.round(secs / dt); i++) hunter.tick(dt);
+    const p0 = [100.5, GROUND, 100.5];
     const p1 = hunter.getPos();
-    const speed = hypot(p1[0] - p0[0], p1[2] - p0[2]) / secs;
-    ok(Math.abs(speed - 9.6) < 0.1, `(f) el bot se desplaza a ≈9.6 u/s (${speed.toFixed(2)})`);
-    ok(Math.abs(speed - 2 * 4.8) < 0.1, `(f) es el DOBLE de los 4.8 del jugador de referencia (200 %)`);
+    const speed = hypot(p1[0] - p0[0], p1[2] - p0[2]) / 2.0;
+    ok(Math.abs(speed - 28.8) < 0.1, `(f) el bot se desplaza a ≈28.8 u/s (${speed.toFixed(2)})`);
+    ok(Math.abs(speed - 6 * 4.8) < 0.1, `(f) es SEIS veces los 4.8 del jugador de referencia (600 %)`);
+
+    // (f-borde) la rapidez HORIZONTAL no depende del vuelo: mismo cómputo con la
+    // presa 12 bloques más arriba (el bot sube mientras avanza).
+    const tower = pureHunt({
+      world: flatWorld(100.5, 100.5, 80), spawn: [100.5, GROUND, 100.5],
+      prey: [180.5, GROUND + 12, 100.5], ticks: 20, dt: 0.05,
+    });
+    const t1 = tower.hunter.getPos();
+    const hSpeed = hypot(t1[0] - p0[0], t1[2] - p0[2]) / 1.0;
+    ok(Math.abs(hSpeed - 28.8) < 0.1, `(f) subiendo, la rapidez horizontal sigue ≈28.8 u/s (${hSpeed.toFixed(2)})`);
+    ok(Math.abs(t1[1] - (GROUND + 12 + FLY_Y_OFFSET)) < 0.3,
+      `(f) mientras avanza también ganó altura (y=${t1[1].toFixed(2)})`);
   }
 
   // =====================================================================
-  // 6. (h) cero `edit` en TODA la sesión de TODOS los bots
+  // 6. (n) constantes exportadas del vuelo
+  // =====================================================================
+  {
+    ok(SPEED === 28.8, `(n) SPEED === 28.8 (${SPEED})`);
+    ok(Math.abs(SPEED - 6 * 4.8) < 1e-9, `(n) 28.8 = 6 × 4.8 (${SPEED / 4.8})`);
+    ok(FLY_Y_OFFSET === 0.5, `(n) FLY_Y_OFFSET === 0.5 (${FLY_Y_OFFSET})`);
+    ok(FLY_Y_DEADBAND === 0.25, `(n) FLY_Y_DEADBAND === 0.25 (${FLY_Y_DEADBAND})`);
+    ok(FLY_Y_DEADBAND < FLY_Y_OFFSET, `(n) la banda muerta es menor que el offset (${FLY_Y_DEADBAND} < ${FLY_Y_OFFSET})`);
+  }
+
+  // =====================================================================
+  // 7. (j) no-clip horizontal: atraviesa un mundo con `blocked` TOTAL
+  // =====================================================================
+  {
+    const { hunter, frames } = pureHunt({
+      world: solidWorld(100.5, 100.5), spawn: [100.5, GROUND, 100.5],
+      prey: [116.5, GROUND, 100.5], ticks: 40, dt: 0.05,
+    });
+    const p = hunter.getPos();
+    const d = hypot(p[0] - 116.5, p[2] - 100.5);
+    ok(d <= 3.8 + 1e-6, `(j) atraviesa la pared y llega a la distancia de detención (d=${d.toFixed(3)})`);
+    ok(d >= 3.8 - 1e-6, `(j) no se pasa de largo ni termina encima de la presa (d=${d.toFixed(3)})`);
+    const hits = pureHits(frames);
+    ok(hits.length >= 1, `(j) golpea a la presa del otro lado del bloque (${hits.length} hit)`);
+
+    // (j-borde) con dt máximo (0.25 s ⇒ paso 7.2 u) tampoco se pasa del umbral.
+    const near = pureHunt({
+      world: solidWorld(100.5, 100.5), spawn: [100.5, GROUND, 100.5],
+      prey: [106.5, GROUND, 100.5], ticks: 1, dt: 0.25,
+    });
+    const np = near.hunter.getPos();
+    const nd = hypot(np[0] - 106.5, np[2] - 100.5);
+    ok(Math.abs(nd - 3.8) < 1e-6, `(j) con dt máximo recorta el paso a la distancia de detención (d=${nd.toFixed(3)})`);
+  }
+
+  // =====================================================================
+  // 8. (k) torre y (l) cueva: la altura converge al objetivo + offset
+  // =====================================================================
+  {
+    const tower = pureHunt({
+      world: solidWorld(100.5, 100.5, 80), spawn: [100.5, GROUND, 100.5],
+      prey: [116.5, GROUND + 12, 100.5], ticks: 80, dt: 0.05,
+    });
+    const tp = tower.hunter.getPos();
+    const td = hypot(tp[0] - 116.5, tp[2] - 100.5);
+    ok(Math.abs(tp[1] - (GROUND + 12 + FLY_Y_OFFSET)) <= 0.3,
+      `(k) sube a la torre y queda en presa.y + offset (y=${tp[1].toFixed(2)}, esperado ${GROUND + 12 + FLY_Y_OFFSET})`);
+    ok(td <= 3.8 + 1e-6, `(k) la distancia horizontal cae a la de detención (d=${td.toFixed(3)})`);
+    ok(pureHits(tower.frames).length >= 1, `(k) golpea a la presa de la torre (${pureHits(tower.frames).length} hit)`);
+
+    const cave = pureHunt({
+      world: solidWorld(100.5, 100.5), spawn: [100.5, GROUND, 100.5],
+      prey: [116.5, GROUND - 10, 100.5], ticks: 80, dt: 0.05,
+    });
+    const cp = cave.hunter.getPos();
+    const cd = hypot(cp[0] - 116.5, cp[2] - 100.5);
+    ok(Math.abs(cp[1] - (GROUND - 10 + FLY_Y_OFFSET)) <= 0.3,
+      `(l) baja a la cueva y queda en presa.y + offset (y=${cp[1].toFixed(2)}, esperado ${GROUND - 10 + FLY_Y_OFFSET})`);
+    ok(cd <= 3.8 + 1e-6, `(l) la distancia horizontal cae a la de detención (d=${cd.toFixed(3)})`);
+    ok(pureHits(cave.frames).length >= 1, `(l) golpea a la presa de la cueva (${pureHits(cave.frames).length} hit)`);
+  }
+
+  // =====================================================================
+  // 9. (m) sin gravedad/snap y (o) banda muerta
+  // =====================================================================
+  {
+    // (m) ya alineado, 20 ticks más con `topSolidY` alto: la y NO se mueve ni
+    // cae al suelo. El `resolveGround` viejo la pegaba a `topSolidY`.
+    const { hunter } = pureHunt({
+      world: solidWorld(100.5, 100.5, 80), spawn: [100.5, GROUND + 20, 100.5],
+      prey: [116.5, GROUND, 100.5], ticks: 30, dt: 0.05,
+    });
+    const yAligned = hunter.getPos()[1];
+    ok(Math.abs(yAligned - (GROUND + FLY_Y_OFFSET)) <= 0.3,
+      `(m) converge al objetivo (y=${yAligned.toFixed(2)})`);
+    for (let i = 0; i < 20; i++) hunter.tick(0.05);
+    const yAfter = hunter.getPos()[1];
+    ok(Math.abs(yAfter - yAligned) < 1e-6,
+      `(m) 20 ticks en el aire no la bajan ni la snapean al suelo (${yAligned.toFixed(2)} → ${yAfter.toFixed(2)})`);
+    ok(yAfter > GROUND + 0.2, `(m) sigue por encima del suelo (y=${yAfter.toFixed(2)})`);
+
+    // (o) dentro de la banda muerta no corrige: |Δy| = 0.1 < 0.25.
+    const dead = pureHunt({
+      world: flatWorld(100.5, 100.5), spawn: [100.5, GROUND + 0.4, 100.5],
+      prey: [110.5, GROUND, 100.5], ticks: 5, dt: 0.05,
+    });
+    const yFlat = dead.hunter.getPos()[1];
+    ok(yFlat === GROUND + 0.4, `(o) la y no cambia dentro de la banda muerta (${yFlat})`);
+
+    // (o-borde) apenas por encima de la banda SÍ corrige hasta el objetivo.
+    const edge = pureHunt({
+      world: flatWorld(100.5, 100.5), spawn: [100.5, GROUND + FLY_Y_OFFSET + FLY_Y_DEADBAND + 0.1, 100.5],
+      prey: [110.5, GROUND, 100.5], ticks: 5, dt: 0.05,
+    });
+    const yEdge = edge.hunter.getPos()[1];
+    ok(Math.abs(yEdge - (GROUND + FLY_Y_OFFSET)) < 1e-9,
+      `(o) fuera de la banda corrige al objetivo (y=${yEdge.toFixed(3)})`);
+  }
+
+  // =====================================================================
+  // 10. (s) SIGUEME alinea con el admin y (t) el retorno al spawn también
+  // =====================================================================
+  {
+    const { hunter } = pureHunt({
+      world: solidWorld(100.5, 100.5, 80), spawn: [100.5, GROUND, 100.5],
+      players: [{ id: 2, name: 'Boss', mode: 'admin', hp: 10, dead: 0, pos: [110.5, GROUND + 8, 100.5] }],
+      ticks: 0,
+    });
+    hunter.handle({ t: 'chat', text: 'sigueme', fromId: 2 });
+    for (let i = 0; i < 60; i++) hunter.tick(0.05);
+    const sp = hunter.getPos();
+    ok(hunter.getMode() === 'SIGUEME', '(s) el bot entró en SIGUEME');
+    ok(Math.abs(sp[1] - (GROUND + 8 + FLY_Y_OFFSET)) <= 0.3,
+      `(s) en SIGUEME la y converge al admin + offset (y=${sp[1].toFixed(2)})`);
+    ok(hypot(sp[0] - 110.5, sp[2] - 100.5) <= 1.5 + 1e-6,
+      `(s) converge horizontalmente al admin (d=${hypot(sp[0] - 110.5, sp[2] - 100.5).toFixed(2)})`);
+
+    // (t) CAZA sin presas: vuelve al spawn y alinea con SU altura + offset.
+    const home = pureHunt({
+      world: solidWorld(100.5, 100.5, 80), spawn: [100.5, GROUND + 5, 100.5],
+      players: [], ticks: 30, dt: 0.05,
+    });
+    const hp = home.hunter.getPos();
+    ok(Math.abs(hp[1] - (GROUND + 5 + FLY_Y_OFFSET)) <= 0.3,
+      `(t) sin presas alinea con la altura del spawn (y=${hp[1].toFixed(2)})`);
+    ok(Math.abs(hp[0] - 100.5) < 1e-9 && Math.abs(hp[2] - 100.5) < 1e-9,
+      '(t) ya en el spawn no se desplaza en horizontal');
+  }
+
+  // =====================================================================
+  // 11. (r) límites del mundo: x/z a [1, W-2] y la y a [0, H-1]
+  // =====================================================================
+  {
+    const { hunter } = pureHunt({
+      world: flatWorld(100.5, 100.5), spawn: [100.5, GROUND, 100.5],
+      prey: [500, GROUND + 100, 100.5], ticks: 200, dt: 0.05,
+    });
+    const p = hunter.getPos();
+    ok(p[0] === 208 - 2, `(r) la x se clava en el borde [1, 206] (${p[0]})`);
+    ok(p[1] === 40 - 1, `(r) la y se clava en el borde [0, 39] (${p[1]})`);
+    ok(p[1] > GROUND, `(r) no la clava al suelo persiguiendo algo alto (y=${p[1].toFixed(2)})`);
+  }
+
+  // =====================================================================
+  // =====================================================================
+  // 12. (u) ESPERA congela las tres coordenadas, también la altura
+  // =====================================================================
+  {
+    const { hunter } = pureHunt({
+      world: flatWorld(100.5, 100.5), spawn: [100.5, GROUND + 4, 100.5],
+      players: [
+        { id: 2, name: 'Boss', mode: 'admin', hp: 10, dead: 0, pos: [100.5, GROUND, 100.5] },
+        { id: 3, name: 'Presa', mode: 'player', hp: 10, dead: 0, pos: [103.5, GROUND + 12, 100.5] },
+      ], ticks: 0,
+    });
+    hunter.handle({ t: 'chat', text: 'espera', fromId: 2 });
+    const frozen = hunter.getPos().slice();
+    for (let i = 0; i < 30; i++) hunter.tick(0.05);
+    const after = hunter.getPos();
+    ok(hunter.getMode() === 'ESPERA', '(u) el bot está en ESPERA');
+    ok(after[0] === frozen[0] && after[1] === frozen[1] && after[2] === frozen[2],
+      `(u) un objetivo 12 bloques más alto no mueve el ancla (${frozen.join(',')} → ${after.join(',')})`);
+  }
+
+  // =====================================================================
+  // 13. (h) cero `edit` en TODA la sesión de TODOS los bots
   // =====================================================================
   {
     const allBotFrames = harnesses.flatMap(h => h.frames);
@@ -399,7 +603,7 @@ try {
   }
 
   // =====================================================================
-  // 7. (BOT_SKIN) el aspecto del bot es configurable y viaja en el hello
+  // 14. (BOT_SKIN) el aspecto del bot es configurable y viaja en el hello
   //    Sin server real: WebSocket falso (mismo patrón que hora-argentina.mjs)
   //    para aislar el cableado de `bot/index.js`.
   // =====================================================================

@@ -113,11 +113,15 @@ Un **robot humanoide** (`skin:'robot'`) entra como un jugador normal (modo `play
 lectura**: nunca rompe ni pone bloques (cero `edit`).
 
 - **A quién caza:** a cualquier jugador **no-admin** vivo. **Nunca** ataca admins.
+- **Cómo se mueve:** **vuela y atraviesa bloques** (no-clip, siempre activo, sin
+  interruptor): paredes, techos, pisos, construcciones cerradas, cuevas y torres no
+  lo frenan. Ajusta su altura a la del objetivo (presa, admin o spawn) para
+  alcanzarlo aunque esté arriba o abajo, y sólo lo limita el borde del mundo. Va a
+  **28.8 u/s** (3× su velocidad anterior y 6× la caminata de 4.8 del jugador).
 - **Cómo mata:** dos toques de `dmg: 6` separados ≥0.65 s (6+6=12 > 10 de vida), así
   respeta la ventana de invulnerabilidad de 0.6 s del cliente: la víctima **ve dos
-  golpes rápidos** y muere en ~0.65 s. Va al **doble de velocidad** (9.6 u/s) y es
-  **invulnerable** (reporta siempre 10/0).
-- **Sin presas:** camina al punto de aparición y se queda quieto ahí (sigue latiendo).
+  golpes rápidos** y muere en ~0.65 s. Es **invulnerable** (reporta siempre 10/0).
+- **Sin presas:** vuelve al punto de aparición y se queda quieto ahí (sigue latiendo).
 - **Comandos de chat (solo admin):** el bot autoriza por el **id del server**, nunca
   por nombre (un impostor con el nombre del admin no lo comanda).
 
@@ -281,6 +285,7 @@ cd server && npm test
   bot con clientes falsos — mata a un no-admin con **dos toques separados** (el
   cliente falso emula la ventana de 0.6 s, así un burst no pasa), ignora admins,
   `sigueme`/`espera`, seguridad por id (impostor con el nombre del admin),
-  invulnerabilidad, velocidad doble, reconexión, cero `edit` y `skin:'robot'`.
+  invulnerabilidad, **vuelo/no-clip y velocidad 28.8**, reconexión, cero `edit` y
+  `skin:'robot'`.
 
 El workflow **CI** los corre en cada push/PR a `main`.

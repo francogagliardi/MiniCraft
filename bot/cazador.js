@@ -13,7 +13,10 @@
  *    (respeta la ventana godT de 0.6 s del cliente, index.html:1565; 6+6=12>10).
  *    Cada toque avanza `seq` UNA vez (dos golpes visibles, no un burst).
  *  - Alcance DURO ≤ 4.6 u horizontales: se ACERCA de verdad antes de golpear.
- *  - Velocidad 9.6 u/s (200 % de los 4.8 del jugador).
+ *  - Velocidad 28.8 u/s (3× los 9.6 anteriores = 600 % de los 4.8 del jugador).
+ *  - Vuela y atraviesa todo (no-clip): se mueve como un punto libre en 3D, sin
+ *    gravedad, auto-escalón ni resolución de suelo; sólo lo limita el borde del
+ *    mundo. Su altura converge a la del objetivo + FLY_Y_OFFSET (banda muerta).
  *  - Invulnerable: ignora todo `phit`, reporta siempre hp:10/dead:0, sin daño de
  *    caída; si y < -10 se teletransporta al spawn.
  *  - Máquina de estados CAZA / ESPERA / SIGUEME (ver `setMode`).
@@ -27,7 +30,9 @@
 
 // ---- constantes del combate (espejo del cliente: vida 10, velocidad 4.8) ----
 const MAX_HP = 10;
-const SPEED = 9.6;        // 200 % de los 4.8 de caminata del jugador (spec: Velocidad doble)
+const SPEED = 28.8;       // 3× los 9.6 anteriores = 600 % de los 4.8 del jugador (spec: Velocidad seis veces)
+const FLY_Y_OFFSET = 0.5; // altura objetivo = pies del objetivo + offset (no vuela semienterrado)
+const FLY_Y_DEADBAND = 0.25; // no corrige la altura dentro de esta banda (evita vibrar)
 const RANGE = 4.6;        // techo DURO de alcance horizontal de ataque
 const DMG = 6;            // techo que clampa el server (server.js) — 6 + 6 = 12 > 10
 const HIT_GAP_MS = 650;   // > ventana godT de 0.6 s del cliente (index.html:1565)
@@ -75,6 +80,7 @@ function normPlayer(p) {
  *   log(...)                  — logging opcional
  *   mvMs                      — cadencia de `mv` (default 150)
  *   world                     — { W, H, topSolidY(x,z), blocked(x,y,z) } | null
+ *                               (sólo para spawn y límites; ya no hay colisión)
  *   spawn                     — [x,y,z] del punto de aparición
  *   id                        — id propio (llega con el `welcome`)
  */
@@ -124,47 +130,44 @@ function createHunter(cfg = {}) {
   /** Yaw para mirar a un punto: adelante = (-sin yaw, -cos yaw) ⇒ atan2(-dx,-dz). */
   const yawTo = (p) => Math.atan2(-(p[0] - self.pos[0]), -(p[2] - self.pos[2]));
 
-  // -------------------------------------------------------- movimiento/física
+  // -------------------------------------------------------- movimiento/vuelo
   function clampToWorld() {
     if (!world) return;
     self.pos[0] = Math.max(1, Math.min(world.W - 2, self.pos[0]));
     self.pos[2] = Math.max(1, Math.min(world.W - 2, self.pos[2]));
+    self.pos[1] = Math.max(0, Math.min(world.H - 1, self.pos[1])); // borde vertical, no colisión
   }
   /**
-   * Intenta mover un eje (mx o mz) con colisión de terreno: el cuerpo ocupa 2
-   * bloques (pies + cabeza). Auto-step de ≤1 bloque (el robot sube escaloncitos;
-   * nunca atraviesa muros de 2+). Si no hay mundo, se mueve libre.
+   * Mueve los tres ejes SIN colisión: el bot vuela y atraviesa paredes, techos y
+   * terreno (no-clip). `world.blocked`/`topSolidY` ya no participan del paso.
    */
-  function tryMove(mx, mz) {
-    if (!world) { self.pos[0] += mx; self.pos[2] += mz; return true; }
-    const nx = self.pos[0] + mx, nz = self.pos[2] + mz;
-    const cx = Math.round(nx), cz = Math.round(nz);
-    let ny = self.pos[1];
-    const gy = world.topSolidY(cx, cz);
-    if (gy > 0) {
-      if (gy > ny + 1.01) return false; // escalón de más de 1 bloque: bloqueado
-      ny = gy;
-    }
-    const fy = Math.floor(ny);
-    if (world.blocked(cx, fy, cz) || world.blocked(cx, fy + 1, cz)) return false;
-    self.pos[0] = nx; self.pos[2] = nz; self.pos[1] = ny;
-    return true;
+  function freeMove(mx, my, mz) {
+    self.pos[0] += mx;
+    self.pos[1] += my;
+    self.pos[2] += mz;
   }
-  /** Resuelve el suelo en la celda actual (glide sobre el terreno). */
-  function resolveGround() {
-    if (!world) return;
-    const gy = world.topSolidY(Math.round(self.pos[0]), Math.round(self.pos[2]));
-    if (gy > 0) self.pos[1] = gy;
+  /**
+   * Alinea la altura hacia `ty + FLY_Y_OFFSET` con paso máximo ±SPEED*dt, sin
+   * pasarse del objetivo y sin corregir dentro de FLY_Y_DEADBAND.
+   */
+  function alignAltitude(ty, dt) {
+    if (!Number.isFinite(ty) || !(dt > 0)) return;
+    const dy = (ty + FLY_Y_OFFSET) - self.pos[1];
+    if (Math.abs(dy) <= FLY_Y_DEADBAND) return;
+    const step = SPEED * dt;
+    self.pos[1] += Math.sign(dy) * Math.min(Math.abs(dy), step);
   }
-  /** Avanza hacia (tx,tz) hasta `step`, eje por eje para deslizar contra el terreno. */
-  function moveToward(tx, tz, step) {
+  /**
+   * Avanza en horizontal hacia (tx,tz) sin acercarse más que `stop` y alinea la
+   * altura con `ty`. `step` es el avance máximo del tick (SPEED*dt): el paso
+   * vertical usa el mismo dt derivado de `step / SPEED`.
+   */
+  function moveToward(tx, ty, tz, step, stop = 0) {
     const dx = tx - self.pos[0], dz = tz - self.pos[2];
     const d = hypot(dx, dz);
-    if (d < 1e-6 || step <= 0) return;
-    const s = Math.min(step, d);
-    const ux = dx / d * s, uz = dz / d * s;
-    if (!tryMove(ux, 0)) tryMove(0, uz); // deslizar si un eje se traba
-    else tryMove(0, uz);
+    const s = Math.min(step, Math.max(0, d - stop)); // nunca se acerca más que `stop`
+    if (d > 1e-6 && s > 0) freeMove(dx / d * s, 0, dz / d * s);
+    alignAltitude(ty, step / SPEED);
   }
 
   // ---------------------------------------------------------------- ataques
@@ -285,25 +288,32 @@ function createHunter(cfg = {}) {
       const adm = players.get(adminTargetId);
       if (adm) {
         const d = hypot(adm.pos[0] - self.pos[0], adm.pos[2] - self.pos[2]);
-        if (d > FOLLOW_STOP) { self.yaw = yawTo(adm.pos); moveToward(adm.pos[0], adm.pos[2], SPEED * dt); }
-        else self.yaw = victim ? yawTo(victim.pos) : yawTo(adm.pos);
+        if (d > FOLLOW_STOP) {
+          self.yaw = yawTo(adm.pos);
+          moveToward(adm.pos[0], adm.pos[1], adm.pos[2], SPEED * dt, FOLLOW_STOP);
+        } else {
+          self.yaw = victim ? yawTo(victim.pos) : yawTo(adm.pos);
+          alignAltitude(adm.pos[1], dt); // alineado en horizontal, igual sube/baja
+        }
       }
       clampToWorld();
-      resolveGround();
       maybeAttack(victim);
     } else {
       // CAZA (default): presa no-admin viva más cercana; sin presas, al spawn y quieto.
       const victim = nearestPrey(Infinity);
       if (victim) {
         const d = hypot(victim.pos[0] - self.pos[0], victim.pos[2] - self.pos[2]);
-        if (d > CHASE_STOP) moveToward(victim.pos[0], victim.pos[2], SPEED * dt);
+        if (d > CHASE_STOP) moveToward(victim.pos[0], victim.pos[1], victim.pos[2], SPEED * dt, CHASE_STOP);
+        else alignAltitude(victim.pos[1], dt); // torre/cueva: la altura se corrige igual
         self.yaw = yawTo(victim.pos);
       } else {
         const d = hypot(spawn[0] - self.pos[0], spawn[2] - self.pos[2]);
-        if (d > SPAWN_STOP) { self.yaw = yawTo(spawn); moveToward(spawn[0], spawn[2], SPEED * dt); }
+        if (d > SPAWN_STOP) {
+          self.yaw = yawTo(spawn);
+          moveToward(spawn[0], spawn[1], spawn[2], SPEED * dt, SPAWN_STOP);
+        } else alignAltitude(spawn[1], dt);
       }
       clampToWorld();
-      resolveGround();
       maybeAttack(victim);
     }
 
@@ -418,5 +428,6 @@ function parseWorld(html) {
 
 module.exports = {
   createHunter, parseWorld, normPlayer, horaAr,
-  MAX_HP, SPEED, RANGE, DMG, HIT_GAP_MS, MV_MS, SWORD, DEFAULT_SPAWN, VOID_Y,
+  MAX_HP, SPEED, FLY_Y_OFFSET, FLY_Y_DEADBAND, RANGE, DMG, HIT_GAP_MS, MV_MS, SWORD,
+  DEFAULT_SPAWN, VOID_Y,
 };
