@@ -613,8 +613,30 @@ ok(html.includes('Necesitás la espada'), 'aviso al atacar sin espada');
     'index.html: sin nombre/clave/selector/admin en el menú');
   ok(/id="btnEnter"/.test(html) && /\/api\/me/.test(html) && /location\.replace\('\/login'\)/.test(html),
     'index.html: perfil desde /api/me y redirección a /login');
-  ok(/btnLobby/.test(html) && /btnLogout/.test(html),
-    'index.html: "Volver al lobby" y "Cerrar sesión" en la pausa');
+  // ui/game-menu: la pausa conserva "Volver al lobby" y ya no ofrece cerrar sesión;
+  // la muerte gana su salida al lobby y el logout vive solo en lobby.html.
+  const pauseMarkup = html.slice(html.indexOf('id="pause"'), html.indexOf('<div id="configPanel"'));
+  ok(/id="btnLobby"/.test(pauseMarkup) && /Volver al lobby/.test(pauseMarkup),
+    'index.html: la pausa conserva "Volver al lobby"');
+  ok(!/btnLogout/.test(html) && !/Cerrar sesión/.test(html),
+    'index.html: la pausa ya no ofrece "Cerrar sesión" (ni el botón ni su etiqueta)');
+  const deathMarkup = html.slice(html.indexOf('id="death"'), html.indexOf('<script', html.indexOf('id="death"')));
+  ok(/<button[^>]*\bid="btnDeathLobby"[^>]*>\s*Volver al lobby\s*<\/button>/.test(deathMarkup),
+    'index.html: la muerte ofrece el botón "Volver al lobby"');
+  ok(deathMarkup.indexOf('btnRespawn') >= 0 && deathMarkup.indexOf('btnRespawn') < deathMarkup.indexOf('btnDeathLobby'),
+    'index.html: "Volver al lobby" aparece después de "Reaparecer" en la muerte');
+  const goLobby = html.match(/function goLobby\s*\(\s*\)\s*\{[^}]*location\.href\s*=\s*['"]\/lobby['"][^}]*\}/);
+  const usesGoLobby = (id) => new RegExp(`getElementById\\(['"]${id}['"]\\)\\.onclick\\s*=\\s*goLobby`).test(html);
+  ok(goLobby && usesGoLobby('btnLobby') && usesGoLobby('btnDeathLobby'),
+    'index.html: pausa y muerte navegan a /lobby con el mismo goLobby()');
+  ok(!/\/api\/logout/.test(html),
+    'index.html: no queda ningún camino de logout dentro del juego');
+  ok(/\.btn:focus-visible\s*\{[^}]*outline\s*:/.test(html),
+    'index.html: los botones de los overlays tienen foco visible por teclado');
+  ok(/@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]{0,300}?\.btn/.test(html),
+    'index.html: los botones respetan prefers-reduced-motion');
+  ok(lobby.includes('id="logoutBtn"') && /fetch\(\s*['"]\/api\/logout['"]/.test(lobby),
+    'lobby.html: conserva su botón de cerrar sesión y su POST /api/logout');
   ok(!/key:document\.getElementById\('keyInput'\)/.test(html), 'el hello ya no manda clave admin');
   const lobbySkins = [...lobby.matchAll(/data-skin="([^"]+)"/g)].map(m => m[1]);
   const skinsSrc = read('server/skins.js');

@@ -158,6 +158,11 @@
     box-shadow:0 10px 24px rgba(47,158,50,.45), inset 0 2px 0 rgba(255,255,255,.4); }
   .btn-admin { background:linear-gradient(135deg,#7b8cff,#4a56c9);
     box-shadow:0 10px 24px rgba(74,86,201,.45), inset 0 2px 0 rgba(255,255,255,.4); }
+  .btn:focus-visible { outline:3px solid #4fae4f; outline-offset:2px; }
+  @media (prefers-reduced-motion: reduce) {
+    .btn { transition:none; }
+    .btn:hover { transform:none; }
+  }
   .nameRow { display:flex; gap:8px; margin-bottom:4px; }
   .nameRow input { flex:1; font-family:inherit; font-weight:700; font-size:15px; padding:12px 14px;
     border-radius:14px; border:2px solid #d7e1ef; outline:none; color:#223; background:#f7fafd; }
@@ -339,7 +344,6 @@
     <button class="btn btn-player" id="btnResume" style="width:auto;padding:14px 50px">Seguir jugando</button>
     <button class="btn btn-player" id="btnConfig" style="width:auto;padding:14px 50px;margin-top:10px">⚙️ Configuración</button>
     <button class="btn btn-player" id="btnLobby" style="width:auto;padding:14px 50px;margin-top:10px">Volver al lobby</button>
-    <button class="btn btn-player" id="btnLogout" style="width:auto;padding:14px 50px;margin-top:10px">Cerrar sesión</button>
     <div class="tiny">Tu mundo se guarda solo 💾</div>
   </div>
   <div id="configPanel" class="card hidden">
@@ -372,6 +376,7 @@
     <h1 style="font-size:44px">Moriste 💀</h1>
     <p class="sub" id="deathMsg">Te caíste muy fuerte.</p>
     <button class="btn btn-player" id="btnRespawn" style="width:auto;padding:14px 50px">✨ Reaparecer</button>
+    <button class="btn btn-player" id="btnDeathLobby" style="width:auto;padding:14px 50px;margin-top:10px">Volver al lobby</button>
   </div>
 </div>
 
@@ -4210,12 +4215,11 @@ function autoStartGame(){
   menu.classList.add('connecting');
   runStart();
 }
-document.getElementById('btnLobby').onclick=()=>{ location.href='/lobby'; };
-document.getElementById('btnLogout').onclick=async()=>{
-  try{ await fetch('/api/logout',{ method:'POST', credentials:'same-origin', cache:'no-store',
-    headers:{'Content-Type':'application/json'}, body:'{}' }); }catch(e){}
-  location.replace('/login');
-};
+// La pausa y la muerte comparten la salida al lobby: navegar y nada más (la sesión
+// sigue viva; el cierre de sesión vive solo en /lobby).
+function goLobby(){ location.href='/lobby'; }
+document.getElementById('btnLobby').onclick=goLobby;
+document.getElementById('btnDeathLobby').onclick=goLobby;
 
 /* ============ LOOP ============ */
 let last=performance.now();
