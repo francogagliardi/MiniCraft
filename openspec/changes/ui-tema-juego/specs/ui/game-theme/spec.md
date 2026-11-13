@@ -56,11 +56,15 @@ Un cambio de tema SHALL aplicarse a toda la UI del juego en el mismo evento, sin
 
 ### Requirement: Reglas de superficie y contraste sobre el mundo 3D
 
-Los overlays modales (pausa, configuración, muerte, inventario y menú inicial) SHALL usar un panel sólido o semiopaco con borde y sombra, y el HUD SHALL usar un scrim translúcido oscuro con texto claro en ambos temas. Todo texto normal SHALL alcanzar un contraste mínimo de 4.5:1 y todo texto grande, borde o indicador de estado SHALL alcanzar 3:1 sobre su superficie efectiva, en el peor caso de cielo diurno y de noche.
+Los overlays modales SHALL usar un panel sólido o semiopaco con borde y sombra. El HUD SHALL seguir el tema activo con scrim semitransparente, texto y borde de contraste (oscuro con texto claro en oscuro; claro con texto oscuro en claro). Todo texto normal SHALL alcanzar 4.5:1 y todo texto grande, borde o indicador de estado 3:1 sobre su superficie efectiva, en el peor caso de cielo, agua, nieve y noche.
 
 #### Scenario: Texto legible sobre cielo y agua
 - **WHEN** el HUD se muestra sobre el cielo más claro, sobre agua o de noche
 - **THEN** el texto, los números y los iconos se leen sin depender del brillo del fondo
+
+#### Scenario: El HUD claro también se aclara al jugar
+- **WHEN** el jugador elige el tema claro y está jugando con el HUD visible
+- **THEN** topbar, pills, FPS/ping, chat, hotbar, slots y toasts usan superficies claras con texto oscuro, y no quedan superficies oscuras heredadas del tema oscuro
 
 #### Scenario: El estado no depende solo del color
 - **WHEN** el jugador mira la hotbar, la vida, el indicador de FPS o un toast
@@ -92,7 +96,7 @@ Los controles HTML del juego SHALL mostrar foco visible con `:focus-visible`, SH
 
 ### Requirement: Presupuesto de rendimiento de la UI
 
-El CSS de la UI del juego SHALL evitar `backdrop-filter` u otros efectos costosos en superficies del HUD siempre visibles, incluidas la topbar, las pills, los hints, el chat, los toasts y los indicadores. El blur SHALL reservarse para paneles modales que se muestran con el juego pausado, y el sistema SHALL NOT aplicar filtros CSS al canvas ni cambiar la calidad gráfica existente.
+El CSS de la UI del juego SHALL evitar `backdrop-filter` u otros efectos costosos en superficies del HUD siempre visibles, incluidas la topbar, las pills, el chat, los toasts y los indicadores. El blur SHALL reservarse para paneles modales que se muestran con el juego pausado, y el sistema SHALL NOT aplicar filtros CSS al canvas ni cambiar la calidad gráfica existente. La guía de controles SHALL NOT ser una superficie permanente del HUD.
 
 #### Scenario: HUD sin blur permanente
 - **WHEN** el jugador juega con el HUD visible

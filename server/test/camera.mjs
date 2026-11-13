@@ -310,7 +310,10 @@ T('clampCam', () => {
   ok(/1ª|primera/.test(readme) && /3ª|tercera/.test(readme), 'README menciona cámara en 1ª y 3ª persona');
   ok(/frontal/i.test(readme), 'README documenta la 3ª persona frontal');
   ok(/vanidad|no coincide/i.test(readme), 'README aclara que el frontal es de vanidad / el crosshair no coincide');
-  const hint = (html.match(/id="hint"[^>]*>([\s\S]*?)<\/div>/) || [])[1] || '';
+  // La guía de controles vive en la pausa y su texto lo genera applyModeUI(); el
+  // markup de #hint está vacío a propósito (ya no es una superficie del HUD).
+  const modeUI = (html.match(/function applyModeUI\(\)\{[\s\S]*?\n\}/) || [''])[0];
+  const hint = (modeUI.match(/'[^']*<b>V<\/b>[^']*'/g) || []).join(' ');
   ok(/<b>V<\/b>/.test(hint), '#hint del menú menciona la tecla V');
   ok(/frontal/i.test(hint), '#hint menciona la 3ª frontal');
 }

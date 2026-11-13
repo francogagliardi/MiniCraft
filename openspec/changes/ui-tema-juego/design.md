@@ -45,8 +45,8 @@ body.game { /* tipografía, color-scheme base, radios y espaciado */ }
 
 - El CSS es inline y solo se sirve en `/game`, así que no puede filtrarse a login/lobby. El marcador `body.game` deja explícita la intención y permite que cualquier regla nueva se ancle ahí (`body.game .card`, `body.game #hotbar`), evitando colisiones futuras si algún día se comparte CSS.
 - No se toca `<canvas id="game">`: ninguna regla nueva aplica `filter`, `transform` ni `opacity` al canvas. El tema solo repinta la capa HTML.
-- Nombres de token por familia, no por superficie: `--mc-bg`, `--mc-bg-2`, `--mc-panel`, `--mc-panel-solid`, `--mc-line`, `--mc-line-strong`, `--mc-line-control`, `--mc-text`, `--mc-dim`, `--mc-accent`, `--mc-accent-strong`, `--mc-accent-ink`, `--mc-accent-deep`, `--mc-danger`, `--mc-focus`, `--mc-hover`, `--mc-hud-scrim`, `--mc-hud-text`, `--mc-hud-dim`, `--mc-hud-line`, `--mc-shadow`, `--mc-shadow-strong`, `--mc-radius-sm|md|lg|xl`, `--mc-space-1..6`. Los tests buscan las familias, no cada valor.
-- Valores base (tomados de login/lobby): oscuro `--mc-bg:#0b1410`, `--mc-panel:#14231b`, `--mc-text:#e9f2e6`, `--mc-dim:#9db2a2`, `--mc-accent:#7ec850`, `--mc-focus:#8fc4ff`; claro `--mc-bg:#e9efe0`, `--mc-panel:#fbfdf6`, `--mc-text:#18251a`, `--mc-dim:#5c6f5d`, `--mc-accent:#3f8f2e`, `--mc-focus:#1d63c8`. Se conserva el verde de botón `#4fae4f` como `--mc-accent` de acción para no cambiar la identidad del juego.
+- Nombres de token por familia, no por superficie: `--mc-bg`, `--mc-bg-2`, `--mc-panel`, `--mc-panel-solid`, `--mc-line`, `--mc-line-strong`, `--mc-line-control`, `--mc-text`, `--mc-dim`, `--mc-accent`, `--mc-accent-strong`, `--mc-accent-ink`, `--mc-accent-deep`, `--mc-danger`, `--mc-focus`, `--mc-hover`, `--mc-hud-scrim`, `--mc-hud-raised`, `--mc-hud-slot`, `--mc-hud-text`, `--mc-hud-dim`, `--mc-hud-line`, `--mc-shadow`, `--mc-shadow-strong`, `--mc-radius-sm|md|lg|xl`, `--mc-space-1..6`. Los tests buscan las familias, no cada valor.
+- Valores base (tomados de login/lobby): oscuro `--mc-bg:#0b1410`, `--mc-panel:#14231b`, `--mc-text:#e9f2e6`, `--mc-dim:#9db2a2`, `--mc-accent:#7ec850`, `--mc-focus:#8fc4ff`; claro `--mc-bg:#e9efe0`, `--mc-panel:#fbfdf6`, `--mc-text:#18251a`, `--mc-dim:#5c6f5d`, `--mc-accent:#3f8f2e`, `--mc-focus:#1d63c8`. Se conserva el verde de botón `#4fae4f` como `--mc-accent` de acción para no cambiar la identidad del juego. El HUD oscuro queda en `rgba(10,16,24,.74)`/#f2f7fc y el claro en `rgba(250,253,255,.88)`/#16251a.
 
 ### 2. Tema sin flash y sincronización
 
@@ -83,11 +83,13 @@ Fila nueva al final de `#configPanel`, antes de “Volver”:
 | `.card` (`#pauseMain`, `#configPanel`, `#death`, menú inicial) | `--mc-panel` ~96 % opaco | sí, `blur(14px)` y solo en modales | El contenido se lee sobre el mundo |
 | `#inv` backdrop | scrim | no | Igual que `.overlay` |
 | `#inv .panel` | `--mc-panel-solid` | no (ya es opaco) | Modal pausado |
-| HUD (`#perf`, `#hint`, `#plist`, `#chatlog`, `#toast`, `#health`, `#hotbar`, `.pill`, `.logo`) | `--mc-hud-scrim` translúcido | **no** | Siempre visible mientras se renderiza |
+| HUD (`#perf`, `#plist`, `#chatlog`, `#toast`, `#hotbar`, `.pill`, `.logo`) | `--mc-hud-scrim` temático translúcido | **no** | Siempre visible mientras se renderiza |
+| Vida (`#health`) | sin superficie: corazones sueltos con `text-shadow` | no | El contorno alcanza sobre cielo, agua y noche |
+| Guía de controles (`details.controls-guide` en `#pauseMain`) | tarjeta de pausa + tokens de tema | no | Ya no flota sobre el mundo |
 | `#chatbox input`, `#configPanel select`, `input`, `#inv .panel` | `--mc-field` sólido | no | Contraste y foco estables |
-| `#sleep`, `#loading` | scrim oscuro / texto | no | Ya son oscuros; se tokenizan |
+| `#sleep`, `#loading` | gradiente del tema / texto del tema | no | Acompañan claro/oscuro |
 
-Decisión central: **el HUD no sigue el fondo de página del tema; sigue al mundo**. En ambos temas usa un scrim oscuro (`rgba(10,16,24,.74)` en oscuro, `rgba(12,20,28,.78)` en claro) con texto `#f2f7fc` y borde `rgba(255,255,255,.22)`. Así el contraste no depende del cielo ni del agua, y el cambio de tema solo ajusta paneles/inputs, no la legibilidad del HUD.
+Decisión central: **el HUD sigue el tema**. En oscuro usa scrim oscuro (`rgba(10,16,24,.74)`) con texto `#f2f7fc` y borde `rgba(255,255,255,.22)`; en claro usa scrim claro semi-opaco (`rgba(250,253,255,.88)`), superficie elevada casi opaca (`rgba(255,255,255,.97)`), texto `#16251a`, atenuado `#46584a` y borde `rgba(22,37,26,.45)`. Los paneles siguen siendo semi-opacos y llevan borde/sombra, así el contraste no depende del cielo, el agua ni la noche, y el cambio de tema aclara también la UI de juego (topbar, pills, chat, hotbar, toasts, vida), no solo pausa y configuración.
 
 - Paneles: oscuro `rgba(20,35,27,.96)`; claro `rgba(251,253,246,.96)`. Texto y atenuados usan `--mc-text`/`--mc-dim`, que ya cumplen AA sobre esos paneles.
 - Overlays: oscuro `linear-gradient(160deg, rgba(8,14,11,.86), rgba(5,9,7,.92))`; claro `linear-gradient(160deg, rgba(233,239,224,.88), rgba(205,234,255,.9))` con tinte de cielo. No son 100 % opacos: dejan intuir el mundo pausado y mantienen la tarjeta legible.
@@ -96,9 +98,10 @@ Decisión central: **el HUD no sigue el fondo de página del tema; sigue al mund
 
 ### 5. Contraste y legibilidad sobre 3D
 
-- Regla medible: texto normal ≥ 4.5:1, texto grande/iconos/bordes de control ≥ 3:1 sobre la superficie efectiva. El caso más exigente es el cielo diurno `#7ec8f7`; el scrim elegido compone ≈ `#23384a` y deja el texto claro por encima de 10:1. El test estático recalcula esa composición con los valores de `--mc-hud-scrim` y `--mc-hud-text` para que un cambio future no rompa el piso de contraste.
-- Texto sobre 3D: `text-shadow: 0 1px 2px rgba(0,0,0,.65)` en HUD y títulos de overlay; se elimina `filter:drop-shadow` de `#health` (filtro sobre texto que se repinta) y se reemplaza por `text-shadow` + chip de scrim.
-- Crosshair: núcleo blanco y contorno oscuro (`box-shadow: 0 0 0 1px rgba(0,0,0,.55), 0 1px 5px rgba(0,0,0,.75)`), más un halo claro tenue para fondos oscuros. No usa `mix-blend-mode` (costoso e impredecible sobre agua).
+- Regla medible: texto normal ≥ 4.5:1, texto grande/iconos/bordes de control ≥ 3:1 sobre la superficie efectiva. El test estático recalcula la composición de `--mc-hud-scrim` sobre cielo diurno `#7ec8f7`, agua `#2b6fb8` y noche `#0b1220` en ambos temas, y exige ≥ 4.5:1 con cada `--mc-hud-text`; además valida que un scrim demasiado transparente falle el umbral (sanity del cálculo).
+- Texto sobre 3D: `text-shadow: 0 1px 2px rgba(0,0,0,.65)` en el HUD oscuro y `filter:drop-shadow` eliminado del cliente; el HUD claro usa halo claro en `#health`. La vida deja de ser un chip: `#health` conserva posición, tipografía y `pointer-events`, pero pierde `background`, `border`, `border-radius` y `padding`; el `text-shadow` (oscuro en dark, halo claro + sombra suave en light) define los corazones sobre cualquier fondo sin volver a una caja.
+- Crosshair: en oscuro, núcleo claro (`--mc-hud-text`) con contorno oscuro (`0 0 0 1px rgba(0,0,0,.55)`, `0 1px 5px rgba(0,0,0,.75)`) y halo claro tenue. En claro se invierte a trazo `#16251a` con halo blanco (`0 0 0 1px rgba(255,255,255,.92)` y difusión), visible sobre cielo, nieve y noche. No usa `mix-blend-mode`.
+- Guía de controles: sale del HUD fijo abajo a la izquierda y pasa a `#pauseMain` como `<details class="controls-guide"><summary>Guía de controles</summary><div id="hint"></div></details>`. `applyModeUI()` sigue rellenando `#hint` con el texto de admin/jugador. El `summary` tiene `min-height:44px`, `cursor:pointer` y `:focus-visible`; el bloque es `text-align:left`, sin `position:fixed`, sin ancho fijo y sin `display:none` en el media de 700 px ni en táctil, así funciona colapsado a 360 px.
 - Estados (slot seleccionado, pill activa, ítem en slot, checkbox): siempre combinan borde + relleno + texto/posición, no solo color.
 - Foco: `outline: 3px solid var(--mc-focus); outline-offset: 2px` más un anillo interior de contraste (`box-shadow: 0 0 0 1px var(--mc-panel-solid)`) para que se vea sobre paneles claros y oscuros. Aplica a `.btn`, `.slot`, `#invClose`, `.invItem`, `.pill`, `select`, `input`, checkbox y `#chatSend`.
 - `prefers-reduced-motion: reduce` desactiva `chatIn`, `float`, el pulso de `.zzz`, las transiciones de `.slot`/`.btn`/`.card` y los `translateY` de hover. No se oculta información.
@@ -112,7 +115,7 @@ Decisión central: **el HUD no sigue el fondo de página del tema; sigue al mund
 
 ### 7. Rendimiento
 
-- Se quita `backdrop-filter` de las 7 superficies permanentes del HUD (`.logo`, `.pill`, `#perf`, `#hint`, `#plist`, `#chatlog div`, `#toast`, `#hotbar`): cada una obliga a leer el canvas animado y a recomponer una capa por frame. Se reemplaza por `background: var(--mc-hud-scrim)`.
+- Se quita `backdrop-filter` de las superficies permanentes del HUD (`.logo`, `.pill`, `#perf`, `#plist`, `#chatlog div`, `#toast`, `#hotbar`): cada una obliga a leer el canvas animado y a recomponer una capa por frame. Se reemplaza por `background: var(--mc-hud-scrim)`. La guía de controles deja de ser superficie del HUD: vive en la tarjeta de pausa.
 - El blur queda solo en `.card` (área pequeña, juego pausado) con `blur(14px)`, y se declara `@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)))` con fondo casi opaco de fallback.
 - Sin `will-change` permanente, sin `filter` en canvas, sin imágenes ni fuentes nuevas (se conserva Outfit por CDN y `system-ui` como fallback).
 - Sombras: máximo dos por elemento; las sombras grandes de `.overlay` se reemplazan por gradientes. Animaciones solo `transform`/`opacity` y desactivables por reduced-motion.
@@ -126,9 +129,10 @@ En `server/test/static.mjs`, sección 13 nueva (sin archivo nuevo, sin tocar los
 2. Bloques `html[data-theme="light"]` y oscuro con las familias `--mc-*` requeridas y `color-scheme`.
 3. `body class="game"`, `#themeSelect` con `label for`, opciones `dark`/`light`, handler que setea `data-theme` y `mc-theme`.
 4. `:focus-visible`, `prefers-reduced-motion`, `@supports not (backdrop-filter` y reglas de 360 px.
-5. Ausencia de `backdrop-filter` en las reglas del HUD (`#perf`, `#hint`, `#plist`, `#chatlog`, `#toast`, `.pill`, `.logo`, `#hotbar`) y ausencia de `filter`/`backdrop-filter` en la regla `#game`.
-6. Contraste calculado: parsear `--mc-hud-scrim` y `--mc-hud-text`, componer sobre `#7ec8f7`, exigir ≥4.5:1.
+5. Ausencia de `backdrop-filter` en las reglas del HUD (`#perf`, `#plist`, `#chatlog`, `#toast`, `.pill`, `.logo`, `#hotbar`) y ausencia de `filter`/`backdrop-filter` en la regla `#game`.
+6. Contraste calculado: parsear `--mc-hud-scrim` y `--mc-hud-text` de cada tema, componer sobre cielo `#7ec8f7`, agua `#2b6fb8` y noche `#0b1220`, exigir ≥4.5:1 y verificar que un scrim débil falle (sanity). El tema claro además exige scrim claro, texto oscuro y borde oscuro translúcido.
 7. Que `#chatSend` ya no tenga color literal en `style` y que `.slot`/`.invItem`/`.card` consuman `var(--mc-`.
+8. Vida sin chip (`#health` sin `background`/`border`/`border-radius`/`padding`, con halo claro en light), crosshair invertido en light, y guía de controles dentro de `<details class="controls-guide">` en `#pauseMain` (una sola aparición de `#hint`, sin `position:fixed`, sin `display:none` en 700 px/táctil, `summary` de 44 px con foco).
 
 Queda para **revisión visual en Docker** (el canvas no se puede validar automáticamente): legibilidad real sobre agua/noche, crosshair sobre texturas claras/oscuras, apariencia de cada overlay en ambos temas, 360 px sin scroll horizontal, foco por teclado, reduced-motion percibido y ausencia de caída de FPS.
 
@@ -137,7 +141,7 @@ Queda para **revisión visual en Docker** (el canvas no se puede validar automá
 - **Costo de `backdrop-filter`:** quitarlo del HUD cambia el look “vidrio” por un scrim más plano. Es intencional: prioriza FPS y contraste; los modales conservan el vidrio.
 - **Doble fuente de verdad del tema:** login/lobby y juego leen `mc-theme` con el mismo contrato; si una página futura inventa otra clave, se rompe la sincronización. Se documenta `mc-theme` como clave única.
 - **Default oscuro:** un jugador que nunca eligió tema ve el juego oscuro por primera vez (antes era claro). Es la alineación pedida; se revierte quitando el script inline y los tokens.
-- **Contraste medido vs percibido:** el test cubre el peor caso de cielo, no agua/nieve/partículas. La revisión visual es obligatoria.
+- **Contraste medido vs percibido:** el test cubre cielo, agua y noche con composición matemática, pero no nieve, partículas ni texturas específicas la revisión visual sigue siendo obligatoria.
 - **Hotbar y pills bajo 44 px:** la excepción se documenta; agrandarlas rompería 9 slots y la topbar en 360 px. Si se exige 44 px estrictos, requiere rediseñar esos controles, fuera de alcance.
 - **`#chatSend` inline:** mover su estilo a CSS es un cambio de estructura mínimo; si otro código depende del `style` inline (no hay), se detecta en la revisión.
 - **Rendimiento del scrim de pantalla completa:** un gradiente es más barato que blur, pero sigue siendo una capa grande; se mantiene estática (sin animación) para no recomponer.

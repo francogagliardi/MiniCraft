@@ -4,6 +4,7 @@ import { execFileSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import vm from 'vm';
 import { fileURLToPath } from 'url';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -915,5 +916,311 @@ ok(html.includes('Necesitás la espada'), 'aviso al atacar sin espada');
   ok(!/reveal|plaintext|ver contraseña/i.test(admin), 'admin.html no ofrece ver contraseñas');
 }
 
-if (fails) { console.log(`\n💥 ${fails} chequeo(s) fallaron`); process.exit(1); }
+// 13. ui-tema-juego: tokens --mc-*, tema sin flash, HUD legible sobre el canvas 3D y
+// accesibilidad de las superficies del juego. Solo presentación: el render 3D, el
+// protocolo y el gameplay no se validan acá (el canvas no es inspeccionable).
+{
+  const style = (html.match(/<style>([\s\S]*?)<\/style>/) || ['', ''])[1];
+  const block = (name) => (style.match(new RegExp(`html\\[data-theme="${name}"\\]\\s*\\{([\\s\\S]*?)\\}`)) || ['', ''])[1];
+  const dark = block('dark');
+  const light = block('light');
+  const token = (src, name) => {
+    const mm = src.match(new RegExp(`--${name}\\s*:\\s*([^;]+);`));
+    return mm ? mm[1].trim() : '';
+  };
+  const parseColor = (value) => {
+    const hex = value.match(/^#([0-9a-f]{6})$/i);
+    if (hex) { const n = parseInt(hex[1], 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255, 1]; }
+    const rgba = value.match(/^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*(?:,\s*([\d.]+)\s*)?\)$/i);
+    if (!rgba) return null;
+    return [+rgba[1], +rgba[2], +rgba[3], rgba[4] === undefined ? 1 : +rgba[4]];
+  };
+  const over = (top, bottom) => {
+    const a = top[3];
+    return [0, 1, 2].map(i => top[i] * a + bottom[i] * (1 - a)).concat(1);
+  };
+  const lum = (rgb) => {
+    const f = rgb.slice(0, 3).map(v => {
+      const s = v / 255;
+      return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+    });
+    return 0.2126 * f[0] + 0.7152 * f[1] + 0.0722 * f[2];
+  };
+  const ratio = (a, b) => {
+    const [hi, lo] = lum(a) >= lum(b) ? [lum(a), lum(b)] : [lum(b), lum(a)];
+    return (hi + 0.05) / (lo + 0.05);
+  };
+  const sky = parseColor('#7ec8f7');
+
+  // A. tokens y aislamiento
+  ok(dark.length > 0 && light.length > 0,
+    'ui/game-theme: bloques de tokens html[data-theme="dark"] y html[data-theme="light"]');
+  ok(/color-scheme\s*:\s*dark/.test(dark) && /color-scheme\s*:\s*light/.test(light),
+    'ui/game-theme: color-scheme acorde a cada tema (controles nativos)');
+  for (const name of ['bg', 'bg-2', 'panel', 'panel-solid', 'line', 'line-strong', 'line-control',
+    'text', 'dim', 'accent', 'accent-strong', 'accent-ink', 'accent-deep', 'danger', 'focus', 'hover',
+    'hud-scrim', 'hud-text', 'hud-dim', 'hud-line', 'shadow', 'shadow-strong']) {
+    ok(token(dark, 'mc-' + name) !== '' && token(light, 'mc-' + name) !== '',
+      `ui/game-theme: token --mc-${name} en ambos temas`);
+  }
+  ok(/--mc-radius-(?:sm|md|lg|xl)\s*:/.test(dark) && /--mc-space-[1-6]\s*:/.test(dark),
+    'ui/game-theme: familias de radios y espaciado');
+  ok(/<body[^>]*class="game"/.test(html), 'ui/game-theme: <body class="game"> acota los tokens al juego');
+  ok(token(dark, 'mc-panel') !== token(light, 'mc-panel') && token(dark, 'mc-text') !== token(light, 'mc-text'),
+    'ui/game-theme: claro y oscuro definen superficies y texto propios');
+  const gameRule = (style.match(/(?:^|\n)\s*#game\s*\{([^}]*)\}/) || ['', ''])[1];
+  ok(gameRule.length > 0 && !/(?:^|[^-])filter\s*:/.test(gameRule) && !/backdrop-filter\s*:/.test(gameRule),
+    'ui/game-theme: la regla #game no aplica filter/backdrop-filter al canvas');
+
+  // B. contraste del HUD sobre el peor fondo (cielo diurno)
+  for (const [name, src, weakBg, weakToken] of [
+    ['oscuro', dark, sky, 'rgba(10,16,24,.3)'],
+    ['claro', light, parseColor('#0b1220'), 'rgba(250,253,255,.3)'],
+  ]) {
+    const scrim = parseColor(token(src, 'mc-hud-scrim'));
+    const text = parseColor(token(src, 'mc-hud-text'));
+    const comp = scrim && text ? over(scrim, sky) : null;
+    const r = comp ? ratio(text, comp) : 0;
+    ok(r >= 4.5, `ui/game-theme: HUD ${name} ≥4.5:1 sobre el cielo diurno (${r.toFixed(2)}:1)`);
+    const weak = parseColor(weakToken);
+    ok(text && weak && ratio(text, over(weak, weakBg)) < 4.5,
+      `ui/game-theme: el cálculo ${name} discrimina un scrim débil (sanity del umbral)`);
+    ok(scrim && scrim[3] >= 0.7,
+      `ui/game-theme: el scrim ${name} es suficientemente opaco frente al fondo`);
+  }
+
+  // C. tema sin flash, cambio en caliente y control en la configuración
+  ok(/<html[^>]*data-theme="dark"/.test(html),
+    'ui/game-theme: <html> nace con data-theme="dark" (default sin preferencia)');
+  const head = html.slice(0, html.indexOf('<style>'));
+  const themeScript = (head.match(/<script>([\s\S]*?)<\/script>/) || ['', ''])[1];
+  ok(themeScript.length > 0, 'ui/game-theme: script de tema inline antes del CSS (sin flash)');
+  ok(themeScript.includes('mc-theme') && /getItem\(\s*['"]mc-theme['"]\s*\)/.test(themeScript) &&
+    /setItem\(\s*['"]mc-theme['"]/.test(themeScript) && /addEventListener\(\s*['"]storage['"]/.test(themeScript),
+    'ui/game-theme: lee/escribe mc-theme y escucha storage');
+  const runTheme = (stored) => {
+    const writes = [];
+    const documentElement = { dataset: {} };
+    const document = { documentElement, getElementById: () => null };
+    const store = {};
+    if (stored !== undefined) store['mc-theme'] = stored;
+    const localStorage = {
+      getItem: k => (Object.prototype.hasOwnProperty.call(store, k) ? store[k] : null),
+      setItem: (k, v) => { writes.push(k); store[k] = String(v); },
+    };
+    const sandbox = { document, localStorage };
+    sandbox.window = sandbox;
+    sandbox.addEventListener = () => {};
+    vm.createContext(sandbox);
+    vm.runInContext(themeScript, sandbox, { timeout: 1000 });
+    return { get theme() { return documentElement.dataset.theme; }, writes, store, apply: sandbox.applyGameTheme };
+  };
+  const noPref = runTheme();
+  ok(noPref.theme === 'dark' && noPref.writes.length === 0,
+    'ui/game-theme: sin mc-theme arranca oscuro y no escribe storage');
+  const lightPref = runTheme('light');
+  ok(lightPref.theme === 'light' && lightPref.writes.length === 0,
+    'ui/game-theme: mc-theme=light arranca claro sin reescribir la preferencia');
+  ok(runTheme('dark').theme === 'dark', 'ui/game-theme: mc-theme=dark arranca oscuro');
+  const junk = runTheme('violeta');
+  ok(junk.theme === 'dark' && junk.writes.length === 0,
+    'ui/game-theme: un valor inválido cae en oscuro y no se "corrige" en storage');
+  const applied = runTheme('dark');
+  if (typeof applied.apply === 'function') applied.apply('light', true);
+  ok(applied.theme === 'light' && applied.store['mc-theme'] === 'light',
+    'ui/game-theme: applyGameTheme(claro, persistir) actualiza data-theme y mc-theme');
+  const volatile = runTheme('light');
+  if (typeof volatile.apply === 'function') volatile.apply('dark', false);
+  ok(volatile.theme === 'dark' && volatile.writes.length === 0,
+    'ui/game-theme: un cambio sin persistir no toca storage');
+
+  // D. fila "Tema" en la configuración, sincronizada y sin tráfico de red
+  ok(/<label[^>]*for="themeSelect"[^>]*>\s*Tema\s*<\/label>/.test(html),
+    'ui/config: la fila Tema tiene <label for="themeSelect">');
+  ok(/<select[^>]*id="themeSelect"[^>]*>[\s\S]*?<option value="dark">Oscuro<\/option>[\s\S]*?<option value="light">Claro<\/option>/.test(html),
+    'ui/config: #themeSelect ofrece Oscuro y Claro');
+  const themeChange = (html.match(/getElementById\('themeSelect'\)\.onchange\s*=\s*([^;]+);/) || ['', ''])[1];
+  ok(/applyGameTheme/.test(themeChange) && !/netSend|fetch/.test(themeChange),
+    'ui/config: el cambio de tema aplica en caliente y no manda red');
+  ok(/function syncThemeControl\s*\(\s*\)/.test(html) ||
+    /syncThemeControl\s*=\s*\(\s*\)\s*=>/.test(html),
+    'ui/config: #themeSelect se sincroniza con el tema activo');
+  const cfgOpen = (html.match(/getElementById\('btnConfig'\)\.onclick=e=>\{[\s\S]*?\n\};/) || [''])[0];
+  ok(/syncThemeControl\(\)/.test(cfgOpen),
+    'ui/config: al abrir el panel el control refleja el tema activo');
+
+  // E. overlays de menú, configuración, muerte, dormir y loading
+  const ruleOf = (selector) => {
+    const esc = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return (style.match(new RegExp(`(?:^|\\n)\\s*${esc}\\s*\\{([^}]*)\\}`)) || ['', ''])[1];
+  };
+  for (const [sel, label] of [['.overlay', 'overlay'], ['.card', 'tarjeta'], ['#inv .panel', 'panel del inventario']]) {
+    ok(/var\(--mc-/.test(ruleOf(sel)), `ui/game-menu: ${label} consume tokens del tema`);
+  }
+  ok(/#menu,\s*#pause,\s*#death\s*\{[^}]*var\(--mc-/.test(style),
+    'ui/game-menu: #menu, #pause y #death usan el fondo de overlay del tema');
+  ok(/#configPanel\s*\{[^}]*var\(--mc-/.test(style) && /#loading\s*\{[^}]*var\(--mc-/.test(style) &&
+    /#sleep\s*\{[^}]*var\(--mc-/.test(style),
+    'ui/game-menu: configuración, loading y dormir usan tokens');
+  const cardRule = ruleOf('.card');
+  ok(/max-height\s*:\s*92vh/.test(cardRule) && /overflow\s*:\s*auto/.test(cardRule),
+    'ui/game-menu: la tarjeta hace scroll interno sin desbordar el viewport');
+  ok(/\.btn\s*\{[^}]*min-height\s*:\s*44px/.test(style),
+    'ui/game-menu: los botones de los overlays tienen área táctil ≥44 px');
+  for (const [id, name] of [['sensSlider', 'la sensibilidad'], ['brightSlider', 'el brillo'],
+    ['qualitySelect', 'la calidad'], ['themeSelect', 'el tema'], ['showStats', 'FPS y ping']]) {
+    ok(new RegExp(`<label[^>]*for="${id}"`).test(html), `ui/config: ${name} tiene label asociada`);
+  }
+
+  // F. HUD legible sobre el mundo 3D y sin blur permanente
+  for (const [sel, label] of [['.logo', 'el logo'], ['.pill', 'las pills'], ['#perf', 'FPS/ping'],
+    ['#plist', 'la lista de jugadores'], ['#chatlog div', 'el chat'],
+    ['#toast', 'los toasts'], ['#hotbar', 'la hotbar']]) {
+    const rule = ruleOf(sel);
+    ok(/var\(--mc-hud-/.test(rule) && !/backdrop-filter/.test(rule),
+      `ui/hud: ${label} usa scrim del HUD y no depende de backdrop-filter`);
+  }
+  const blurRules = [...style.matchAll(/([^{}]+)\{([^}]*backdrop-filter[^}]*)\}/g)].map(mm => mm[1].trim());
+  ok(blurRules.length > 0 && blurRules.every(sel => sel === '.card'),
+    'ui/game-theme: el blur queda reservado a .card (modales pausados)');
+  const healthRule = ruleOf('#health');
+  ok(/text-shadow/.test(healthRule) && !/(?:^|[^-])filter\s*:/.test(healthRule),
+    'ui/hud: la vida usa text-shadow y scrim, sin filter:drop-shadow');
+  ok(/#cross::before[^{]*\{[^}]*0 0 0 1px rgba\(0,\s*0,\s*0/.test(style) &&
+    /0 0 8px rgba\(255,\s*255,\s*255/.test(style) && !/mix-blend-mode/.test(style),
+    'ui/hud: el crosshair combina contorno oscuro y halo claro (sin mix-blend-mode)');
+
+  // I. Feedback: el tema claro aclara el HUD, la vida queda sin chip y la guía de
+  // controles pasa del HUD fijo a la tarjeta de pausa (colapsable y usable en 360 px).
+  const lightScrim = parseColor(token(light, 'mc-hud-scrim'));
+  const lightRaised = parseColor(token(light, 'mc-hud-raised'));
+  const lightSlot = parseColor(token(light, 'mc-hud-slot'));
+  const lightText = parseColor(token(light, 'mc-hud-text'));
+  const lightDim = parseColor(token(light, 'mc-hud-dim'));
+  const lightLine = parseColor(token(light, 'mc-hud-line'));
+  ok(lightScrim && lum(lightScrim) > 0.6 && lightScrim[3] >= 0.7 && lightScrim[3] < 1,
+    'ui/game-theme: el HUD claro usa un scrim claro y semi-opaco (no el oscuro)');
+  ok(lightRaised && lum(lightRaised) > 0.8 && lightRaised[3] >= 0.9,
+    'ui/game-theme: las superficies elevadas del HUD claro son claras y casi opacas');
+  ok(lightSlot && lightSlot[3] <= 0.15 && lum(lightSlot) < 0.25,
+    'ui/game-theme: los slots del HUD claro son un velo suave sobre superficie clara');
+  ok(lightText && lum(lightText) < 0.08 && lightDim && lum(lightDim) < 0.2,
+    'ui/game-theme: el texto del HUD claro es oscuro (normal y atenuado)');
+  ok(lightLine && lightLine[3] >= 0.25 && lightLine[3] <= 0.6 && lum(lightLine) < 0.2,
+    'ui/game-theme: el borde del HUD claro es una línea oscura translúcida');
+  ok(token(light, 'mc-hud-scrim') !== token(dark, 'mc-hud-scrim') &&
+    token(light, 'mc-hud-text') !== token(dark, 'mc-hud-text'),
+    'ui/game-theme: el HUD claro y el oscuro no comparten paleta');
+  const darkScrim = parseColor(token(dark, 'mc-hud-scrim'));
+  const darkText = parseColor(token(dark, 'mc-hud-text'));
+  ok(darkScrim && lum(darkScrim) < 0.1 && darkText && lum(darkText) > 0.7,
+    'ui/game-theme: el tema oscuro conserva su HUD de scrim oscuro y texto claro');
+
+  // contraste del HUD claro sobre agua y noche, no solo sobre el cielo diurno
+  for (const [bgName, bgHex] of [['agua', '#2b6fb8'], ['noche', '#0b1220']]) {
+    for (const [name, src] of [['oscuro', dark], ['claro', light]]) {
+      const scrim = parseColor(token(src, 'mc-hud-scrim'));
+      const text = parseColor(token(src, 'mc-hud-text'));
+      const r = scrim && text ? ratio(text, over(scrim, parseColor(bgHex))) : 0;
+      ok(r >= 4.5, `ui/game-theme: HUD ${name} ≥4.5:1 sobre ${bgName} (${r.toFixed(2)}:1)`);
+    }
+  }
+
+  // la vida son solo corazones: sin chip de fondo/borde/radio/padding
+  ok(!/\bbackground\s*:/.test(healthRule) && !/\bborder\s*:/.test(healthRule) &&
+    !/border-radius\s*:/.test(healthRule) && !/\bpadding\s*:/.test(healthRule),
+    'ui/hud: la vida son solo corazones, sin chip de fondo, borde, radio ni padding');
+  ok(/html\[data-theme="light"\]\s+#health\s*\{[^}]*rgba\(255,\s*255,\s*255/.test(style),
+    'ui/hud: en tema claro los corazones llevan halo claro para leerse sin caja');
+
+  // crosshair oscuro con halo claro en tema claro (en oscuro queda el original)
+  ok(/html\[data-theme="light"\]\s+#cross::before[^{]*\{[^}]*rgba\(255,\s*255,\s*255/.test(style),
+    'ui/hud: en tema claro el crosshair oscuro lleva halo claro');
+  ok(/#cross::before[^{]*\{[^}]*background\s*:\s*var\(--mc-hud-text\)/.test(style),
+    'ui/hud: el crosshair sigue resolviendo su color desde el tema');
+
+  // la guía de controles vive en la tarjeta de pausa, no flotando en el HUD
+  const pauseBlock = html.slice(html.indexOf('id="pauseMain"'), html.indexOf('id="configPanel"'));
+  ok(/<details class="controls-guide">/.test(pauseBlock) &&
+    /<summary>Guía de controles<\/summary>/.test(pauseBlock) &&
+    /<div id="hint"><\/div>/.test(pauseBlock),
+    'ui/game-menu: la guía de controles vive en la pausa dentro de <details>');
+  ok(pauseBlock.indexOf('<details') > pauseBlock.indexOf('id="btnLobby"'),
+    'ui/game-menu: la guía aparece después de los botones de la pausa');
+  ok((html.match(/id="hint"/g) || []).length === 1 &&
+    html.indexOf('id="hint"') > html.indexOf('id="pauseMain"'),
+    'ui/hud: hay una sola guía y ya no está en el HUD del juego');
+  const hudMarkup = html.slice(html.indexOf('<div id="health">'), html.indexOf('<div id="inv"'));
+  ok(!/id="hint"/.test(hudMarkup), 'ui/hud: el HUD no reserva espacio para la guía fija');
+  const hintRule = ruleOf('#hint');
+  ok(hintRule.length > 0 && /var\(--mc-/.test(hintRule) && /text-align\s*:\s*left/.test(hintRule) &&
+    !/position\s*:\s*fixed/.test(hintRule),
+    'ui/game-menu: #hint es un bloque alineado a la izquierda dentro de la tarjeta');
+  ok(/\.controls-guide summary\s*\{[^}]*min-height\s*:\s*44px[^}]*cursor\s*:\s*pointer/.test(style),
+    'ui/game-menu: el summary de la guía tiene objetivo táctil ≥44 px');
+  ok(/\.controls-guide summary:focus-visible\s*\{[^}]*outline\s*:\s*3px solid var\(--mc-focus\)/.test(style),
+    'ui/game-menu: el summary de la guía muestra foco visible por teclado');
+  ok(!/#hint\s*\{\s*display\s*:\s*none/.test(style) &&
+    !/getElementById\('hint'\)\.style\.display\s*=\s*'none'/.test(html),
+    'ui/game-menu: la guía no se oculta por CSS ni en táctil (sigue disponible en pausa)');
+  ok(/\.controls-guide\s*\{[^}]*text-align\s*:\s*left/.test(style) &&
+    !/\.controls-guide\s*\{[^}]*width\s*:\s*\d+px/.test(style),
+    'ui/game-menu: la guía se adapta al ancho de la tarjeta (sin ancho fijo a 360 px)');
+
+  // el overlay de dormir sigue el tema: texto del tema y fondo claro en claro
+  ok(/#sleep\s*\{[^}]*color\s*:\s*var\(--mc-text\)/.test(style),
+    'ui/game-menu: el overlay de dormir usa el texto del tema activo');
+  ok(/--mc-sleep\s*:\s*radial-gradient\([^;]*rgba\(\s*2[0-9][0-9]\s*,/.test(light),
+    'ui/game-theme: en tema claro el overlay de dormir es claro');
+
+  // G. chat, inventario, hotbar y toasts tokenizados
+  ok(!/id="chatSend"[^>]*style=/.test(html),
+    'ui/inventory: #chatSend ya no lleva color literal en el atributo style');
+  ok(/#chatSend\s*\{[^}]*var\(--mc-/.test(style),
+    'ui/inventory: #chatSend consume tokens del tema');
+  ok(/var\(--mc-/.test(ruleOf('#chatbox input')), 'ui/inventory: el input del chat consume tokens');
+  ok(/var\(--mc-/.test(ruleOf('#chatlog div')), 'ui/inventory: el log del chat consume tokens');
+  const invItemRule = ruleOf('.invItem');
+  ok(/var\(--mc-/.test(invItemRule) && /min-height\s*:\s*44px/.test(invItemRule),
+    'ui/inventory: los ítems consumen tokens y tienen objetivo táctil ≥44 px');
+  ok(/min-height\s*:\s*44px/.test(ruleOf('#invClose')),
+    'ui/inventory: el botón "Listo" tiene objetivo táctil ≥44 px');
+  ok(/var\(--mc-/.test(ruleOf('#inv .sub')), 'ui/inventory: el subtítulo del inventario consume tokens');
+  ok(/var\(--mc-/.test(ruleOf('.slot')), 'ui/inventory: los slots de la hotbar consumen tokens');
+  ok(/\.slot\.sel\s*\{[^}]*border-color\s*:\s*var\(--mc-/.test(style) &&
+    /\.invItem\.inSlot\s*\{[^}]*border-color/.test(style),
+    'ui/inventory: selección por borde y relleno, no solo por color');
+  ok(/body\.touch\s+\.slot\s*\{[^}]*height\s*:\s*46px/.test(style),
+    'ui/inventory: la hotbar táctil conserva sus 9 slots con 46 px de alto');
+
+  // H. accesibilidad, responsive y fallback de rendimiento
+  for (const [sel, label] of [['.btn', 'los botones'], ['.slot', 'los slots'],
+    ['.invItem', 'los ítems del inventario'], ['.pill', 'las pills'], ['#invClose', 'el botón Listo']]) {
+    ok(new RegExp(sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ':focus-visible').test(style),
+      `ui/game-theme: foco visible en ${label}`);
+  }
+  ok(/#configPanel select:focus-visible/.test(style) && /#configPanel input:focus-visible/.test(style) &&
+    /#chatbox input:focus-visible/.test(style), 'ui/game-theme: foco visible en select e input');
+  ok(/outline\s*:\s*3px solid var\(--mc-focus\)/.test(style) && /outline-offset\s*:\s*2px/.test(style) &&
+    /box-shadow\s*:\s*0 0 0 1px var\(--mc-panel-solid\)/.test(style),
+    'ui/game-theme: anillo de foco de doble contraste (paneles claros y oscuros)');
+  const reduced = (style.match(/@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{([\s\S]*?)\n\s*\}/) || ['', ''])[1];
+  ok(/\.slot/.test(reduced) && /\.card/.test(reduced) && /\.zzz/.test(reduced) &&
+    /animation\s*:\s*none/.test(reduced) && !/display\s*:\s*none/.test(reduced),
+    'ui/game-theme: reduced-motion desactiva animaciones sin ocultar información');
+  ok(/@supports\s+not\s*\(\(backdrop-filter:\s*blur\(1px\)\)/.test(style),
+    'ui/game-theme: fallback declarado para navegadores sin backdrop-filter');
+  ok(/@media\s*\(max-width:\s*360px\)\s*\{[\s\S]*?\.card\{[^}]*width:calc\(100% - 24px\)/.test(style) &&
+    /@media\s*\(max-width:\s*360px\)\s*\{[\s\S]*?#invGrid\{[^}]*repeat\(4,1fr\)/.test(style),
+    'ui/game-theme: a 360 px la tarjeta y la grilla se recomponen sin desbordar');
+  const floatCubes = html.match(/<div class="float-cube"[^>]*>/g) || [];
+  ok(floatCubes.length > 0 && floatCubes.every(tag => /aria-hidden="true"/.test(tag)),
+    'ui/game-theme: los float-cube decorativos son aria-hidden');
+  ok(/s\.tabIndex\s*=\s*0/.test(html) && /el\.tabIndex\s*=\s*0/.test(html),
+    'ui/inventory: slots e ítems son alcanzables con Tab');
+  ok(/s\.onkeydown/.test(html) && /el\.onkeydown/.test(html),
+    'ui/inventory: slots e ítems se activan con Enter/Espacio');
+}
+
+if (fails) { console.log(`\n❌ ${fails} chequeo(s) fallaron`); process.exit(1); }
 console.log('\n🎉 tests estáticos OK');

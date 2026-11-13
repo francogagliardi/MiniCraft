@@ -51,3 +51,23 @@ Los overlays de menú del juego (`#menu`, `#pause`, `#configPanel`, `#death`) SH
 #### Scenario: Dormir y cargar
 - **WHEN** aparece el overlay de dormir o el texto de carga
 - **THEN** ambos usan superficies y texto del sistema visual y siguen legibles en los dos temas
+
+### Requirement: Guía de controles en el menú de pausa
+
+La guía SHALL vivir en `#pauseMain`, debajo de los botones, dentro de `<details class="controls-guide">` con `<summary>` accesible, y SHALL NOT flotar sobre el mundo. El `summary` SHALL tener al menos 44 px, `cursor:pointer` y foco visible. El contenido SHALL usar los tokens del tema, alinearse a la izquierda y adaptarse al ancho de la tarjeta sin ancho fijo, para seguir colapsable en móvil y a 360 px.
+
+#### Scenario: Guía colapsada en pausa
+- **WHEN** el jugador abre la pausa
+- **THEN** ve el título "Guía de controles" debajo de los botones y el detalle permanece colapsado hasta que lo abre
+
+#### Scenario: Guía con foco por teclado
+- **WHEN** el jugador recorre la pausa con Tab
+- **THEN** el `summary` de la guía recibe un anillo de foco visible y se abre con Enter o Espacio
+
+#### Scenario: Guía en tema claro y oscuro
+- **WHEN** la guía se abre en cualquiera de los dos temas
+- **THEN** su texto, atenuados y teclas usan la paleta del tema y se leen sobre la tarjeta
+
+#### Scenario: Guía a 360 px y en móvil
+- **WHEN** la pausa se abre en un viewport de 360 px o en un dispositivo táctil
+- **THEN** la guía sigue disponible, se despliega sin desbordar la tarjeta ni generar scroll horizontal y no se oculta por CSS
