@@ -87,7 +87,39 @@ function createAuthLimiters({ env = process.env, now = Date.now, maxConcurrent }
     now,
     concurrency: conc,
   });
-  return { login, register, maxConcurrent: conc.maxConcurrent };
+  return { login, register, maxConcurrent: conc.maxConcurrent, derivations: conc };
 }
 
-module.exports = { createTokenBucket, createConcurrencyLimiter, createLimiter, createAuthLimiters };
+// Bucket propio de la API administrativa, POR IP (change admin-crud-permisos).
+// 20 acciones y 1 cada 2 s por defecto; knobs por env para tests/operación.
+function createAdminLimiter({ env = process.env, now = Date.now, capacity, refillPerSec } = {}) {
+  const num = (v, d) => (v === undefined || v === '' || !Number.isFinite(+v)) ? d : +v;
+  const cap = Math.max(1, capacity !== undefined ? +capacity : num(env.ADMIN_RATE_CAPACITY, 20));
+  const rate = Math.max(0, refillPerSec !== undefined ? +refillPerSec : num(env.ADMIN_RATE_REFILL_PER_SEC, 0.5));
+  const buckets = new Map();
+
+  function bucketFor(ip) {
+    const key = String(ip || 'unknown');
+    let b = buckets.get(key);
+    if (!b) { b = createTokenBucket({ capacity: cap, refillPerSec: rate, now }); buckets.set(key, b); }
+    return b;
+  }
+
+  return {
+    capacity: cap,
+    refillPerSec: rate,
+    tryTake(ip) {
+      // Cota de memoria: al pasar 500 IPs se descartan los buckets ya llenos.
+      if (buckets.size > 500) {
+        for (const [key, b] of buckets) if (b.remaining() >= cap) buckets.delete(key);
+      }
+      return bucketFor(ip).tryTake();
+    },
+    size: () => buckets.size,
+  };
+}
+
+module.exports = {
+  createTokenBucket, createConcurrencyLimiter, createLimiter,
+  createAuthLimiters, createAdminLimiter,
+};

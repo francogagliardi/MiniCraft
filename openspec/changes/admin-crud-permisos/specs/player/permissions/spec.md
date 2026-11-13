@@ -25,6 +25,11 @@ El sistema SHALL exponer en el perfil del jugador un objeto `permissions` con la
 - **WHEN** una cuenta admin también tiene permisos guardados
 - **THEN** el perfil devuelve esos permisos y el comportamiento admin se suma sin quitarlos
 
+#### Scenario: El jugador ve sus permisos en el lobby
+
+- **WHEN** un jugador autenticado abre el lobby
+- **THEN** la sección Permisos muestra con etiquetas en español los permisos vigentes de su cuenta y, si es admin, además "Administrador"
+
 ### Requirement: El cazador ignora a los usuarios con bot_ignore
 
 Un jugador con `bot_ignore` SHALL quedar excluido de las presas del bot cazador aunque esté vivo, no sea admin y esté a su alcance. El bot MUST NOT emitir `hit` contra él ni anunciar su muerte.

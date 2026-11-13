@@ -1,5 +1,6 @@
 // Fixture de tests: levanta `createApp` EN PROCESO con MemoryStore, en un puerto
-// efímero. Ningún test toca Docker ni un Postgres real salvo auth-db.mjs.
+// efímero. Ningún test toca Docker ni un Postgres real salvo auth-db.mjs y
+// admin-db.mjs (ambos gateados por TEST_DATABASE_URL).
 import { createRequire } from 'module';
 import fs from 'fs';
 import os from 'os';
@@ -21,6 +22,7 @@ export async function startApp(opts = {}) {
       role: u.role || 'user',
       skin: u.skin || 'human',
       active: u.active !== false,
+      permissions: u.permissions || {},
     });
   }
 
@@ -36,6 +38,9 @@ export async function startApp(opts = {}) {
     LOGIN_RATE_REFILL_PER_SEC: '1000',
     REGISTER_RATE_CAPACITY: '1000',
     REGISTER_RATE_REFILL_PER_SEC: '1000',
+    // Admin: los tests funcionales no deben chocar con el bucket real (2.8 lo pisa).
+    ADMIN_RATE_CAPACITY: '10000',
+    ADMIN_RATE_REFILL_PER_SEC: '10000',
     ...(opts.env || {}),
   };
   if (opts.botToken !== undefined) env.BOT_TOKEN = opts.botToken;

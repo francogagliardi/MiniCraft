@@ -308,11 +308,11 @@ ok(mh !== '' && pl !== '' && th !== '', 'handlers mousemove/pointerlockchange/po
 {
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'server', 'package.json'), 'utf8'));
   const s = pkg.scripts.test;
-  const required = ['static','avatar','migrate','terrain','water','worldgen','zombie','zombie-client','zombie-protocol','avatar-held','client-robot','skins','camera','bot-cazador','lookguard','auth','rate-limit','http-auth','register','ws-auth','admin-retirement','auth-db','enter-chat','protocol','hora-argentina','cactus','config','bed-sleep','lighting','stats'];
+  const required = ['static','avatar','migrate','terrain','water','worldgen','zombie','zombie-client','zombie-protocol','avatar-held','client-robot','skins','camera','bot-cazador','lookguard','auth','rate-limit','http-auth','register','ws-auth','admin-retirement','auth-db','admin-db','permissions','admin','admin-ws','enter-chat','protocol','hora-argentina','cactus','config','bed-sleep','lighting','stats'];
   const missing = required.filter(n => !new RegExp(`test/${n}\\.mjs`).test(s));
   const count = (s.match(/test\/[\w-]+\.mjs/g) || []).length;
-  ok(missing.length === 0, `npm test da de alta los 30 archivos (faltan: ${missing.join(', ') || 'ninguno'})`);
-  ok(count === 30, `el script test enumera 30 archivos (${count})`);
+  ok(missing.length === 0, `npm test da de alta los 34 archivos (faltan: ${missing.join(', ') || 'ninguno'})`);
+  ok(count === 34, `el script test enumera 34 archivos (${count})`);
 }
 
 if (fails) console.log(`\n💥 ${fails} chequeo(s) fallaron`);

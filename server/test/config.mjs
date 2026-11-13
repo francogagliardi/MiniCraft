@@ -191,14 +191,14 @@ const grabFn = (name) => {
     'tickSky deriva la visibilidad del cielo de la fase, no del brillo (paletteFactor)');
 }
 
-// ---- 6. Alta en la suite (30 archivos) ----
+// ---- 6. Alta en la suite (34 archivos) ----
 {
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'server', 'package.json'), 'utf8'));
   const s = pkg.scripts.test;
   ok(/test\/config\.mjs/.test(s), 'npm test da de alta test/config.mjs');
   ok(/test\/stats\.mjs/.test(s), 'npm test da de alta test/stats.mjs');
   const count = (s.match(/test\/[\w-]+\.mjs/g) || []).length;
-  ok(count === 30, `el script test enumera 30 archivos (${count})`);
+  ok(count === 34, `el script test enumera 34 archivos (${count})`);
   ok(!/count\s*===\s*20/.test(s), 'package.json ya no menciona 20 archivos');
 }
 

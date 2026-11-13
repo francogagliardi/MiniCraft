@@ -12,10 +12,13 @@ Minicraft/
 ├── login.html        ← login
 ├── register.html     ← registro público
 ├── lobby.html        ← lobby y selector de skin
+├── admin.html        ← panel de administración (/admin)
 └── server/
     ├── server.js     ← bootstrap (env → DB → migraciones → app)
     ├── app.js        ← HTTP + WebSocket + mundo
-    ├── migrations/   ← esquema SQL versionado
+    ├── admin-api.js  ← CRUD admin, guardas, auditoría y gate de /admin
+    ├── permissions.js← allowlist de permisos por usuario
+    ├── migrations/   ← esquema SQL versionado (001, 002)
     ├── user-tool.mjs ← crear/cambiar contraseña/listar/activar cuentas
     ├── package.json
     ├── world.json    ← se crea solo (mundo persistido)
@@ -90,12 +93,61 @@ puerto 3000 ahí también. Si hay router con NAT, redirigí el puerto.
 | `REGISTRATION_ENABLED` | `1` | `0` cierra el registro público |
 | `MINICRAFT_DIR` | `..` | Carpeta de donde servir `index.html` |
 | `WORLD_FILE` | `server/world.json` | Dónde persistir el mundo (en Docker: `/data/world.json`) |
+| `ADMIN_RATE_CAPACITY` | `20` | Acciones administrativas por IP antes de `429` (bucket propio) |
+| `ADMIN_RATE_REFILL_PER_SEC` | `0.5` | Recarga del bucket admin (1 acción cada 2 s) |
 
 > No hay clave admin por defecto ni variable `ADMIN_KEY`/`ADMIN_KEY_HASH`: el
 > admin es una **cuenta con rol admin**. Si esas variables siguen en el entorno,
 > el server las ignora y avisa una vez.
 
-## Operar cuentas sin panel (change 1)
+## Panel y API de administración (change 2)
+
+Con una cuenta `role='admin'` entrá al lobby y abrí **Administración** (o
+`/admin` directamente). El server valida el rol: sin sesión → `/login`,
+usuario común → `/lobby`. La página no carga datos antes de ese gate.
+
+**Endpoints** (todos con `Cache-Control: no-store`, sesión admin, JSON estricto,
+`Origin`/`Referer` del mismo host, body ≤8 KB y rate limit propio por IP):
+
+| Método | Ruta | Qué hace |
+|---|---|---|
+| `GET` | `/api/admin/users` | Lista cuentas con rol, skin, estado, permisos y fechas (sin hashes) |
+| `POST` | `/api/admin/users` | Alta (`username`, `password`, `role?`, `skin?`, `active?`, `permissions?`) → `201` sin cookie |
+| `PATCH` | `/api/admin/users/:id` | Edita solo `skin`, `role`, `active`, `permissions`; username inmutable |
+| `POST` | `/api/admin/users/:id/password` | Reset (8–128), revoca sesiones; en la propia cuenta devuelve `self:true` y limpia la cookie |
+| `DELETE` | `/api/admin/users/:id` | Borrado definitivo con cascada de sesiones → `204` |
+| `GET` | `/api/admin/audit?limit=50` | Últimas entradas (1–200, default 50) |
+| `GET` | `/admin` | Página del panel gated por rol |
+
+**Códigos de error:** `invalid_request` (400), `unauthorized` (401),
+`admin_required` (403), `user_not_found` (404), `username_taken` /
+`guard_self_action` / `guard_last_admin` (409), `invalid_request` 413/415,
+`invalid_username`, `username_reserved`, `invalid_password`, `invalid_skin`,
+`invalid_role`, `invalid_permissions`, `username_immutable`, `invalid_field`
+(422), `rate_limited` (429) y `unavailable` (503).
+
+**Guardas:** un admin no puede desactivarse, borrarse ni degradarse a sí mismo
+(`guard_self_action`) y nunca se puede dejar el sistema sin admin activo
+(`guard_last_admin`). Se aplican en una transacción con advisory lock (también
+entre réplicas). Los rechazos se auditan.
+
+**Permisos** (`bot_ignore`, `fly`, `instant_break`): se guardan en
+`users.permissions` JSONB solo como claves `true`; una clave desconocida o un
+valor no booleano responde `422 invalid_permissions`. Los cambios se difunden en
+caliente por WebSocket (`perm`) y **no** revocan sesiones. Cambiar rol,
+desactivar, resetear contraseña o borrar **sí** revoca sesiones y cierra los
+sockets. `bot_ignore` además descarta en el server los `hit` del bot contra esa
+cuenta. `fly`/`instant_break` se aplican en el cliente (sin anti-cheat).
+
+**Auditoría:** tabla `admin_audit` append-only con FKs `ON DELETE SET NULL` y
+snapshot de usernames en `details`; registra acciones y rechazos sin
+contraseñas, hashes ni tokens. La API no permite editarla ni borrarla.
+
+**Migración 002:** `server/migrations/002-admin-permissions.sql` agrega la
+columna `permissions` (default `{}`), su CHECK de objeto JSON y la tabla
+`admin_audit` con índices. El runner existente la aplica una sola vez.
+
+## Operar cuentas por CLI (emergencia)
 
 ```bash
 DATABASE_URL=... node server/user-tool.mjs create ana --role user
@@ -106,7 +158,10 @@ DATABASE_URL=... node server/user-tool.mjs enable ana
 ```
 
 La contraseña se lee por stdin, nunca por argv, y `passwd`/`disable` revocan
-las sesiones de la cuenta. El CRUD desde panel queda para el change 2.
+las sesiones de la cuenta. Los usuarios creados por CLI quedan con
+`permissions='{}'`. **La CLI no aplica las guardas de self/último admin**: es la
+vía de emergencia (por ejemplo, si te quedaste sin admin); el camino normal es
+el panel `/admin`.
 
 ## Probar multijugador en tu PC (2 jugadores)
 

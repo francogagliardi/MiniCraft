@@ -14,6 +14,8 @@ chiquito en Node.js con WebSocket.
 - 🌱 **Modo jugador**: pica con progreso y grietas, sin volar, con vida,
   daño por caída, muerte con animación y respawn
 - 🛠 **Modo admin**: vuela, pica instantáneo, inmune al daño (rol admin de la cuenta)
+- 🛂 **Panel `/admin`**: CRUD de cuentas, permisos por usuario (`bot_ignore`, `fly`,
+  `instant_break`), activar/desactivar, reset de contraseña y auditoría append-only
 - ⚔️ Espada con cooldown, animación y anillo de recarga + PvP
 - 🐷🐑 Chanchitos y ovejitas acariciables (con corazones)
 - 🎒 Inventario creativo (20 bloques) + hotbar de 9
@@ -28,6 +30,7 @@ MiniCraft/
 ├── login.html            ← formulario de login
 ├── register.html         ← registro público
 ├── lobby.html            ← username, skins y elección de mundo
+├── admin.html            ← panel de administración (/admin, solo rol admin)
 ├── Dockerfile            ← imagen del server para Easypanel / VPS
 ├── Dockerfile.bot        ← imagen del bot cazador (servicio aparte)
 ├── docker-compose.yml    ← db + server + bot con persistencia
@@ -40,11 +43,13 @@ MiniCraft/
 │   ├── app.js            ← HTTP estático + API + WebSocket + mundo
 │   ├── auth.js           ← scrypt, tokens, cookies y validaciones
 │   ├── http-auth.js      ← rutas /api/* y páginas de login/registro/lobby
+│   ├── admin-api.js      ← CRUD admin, guardas, auditoría y gate de /admin
+│   ├── permissions.js    ← allowlist y materialización de permisos por usuario
 │   ├── ws-auth.js        ← gate del upgrade (cookie o BOT_TOKEN)
 │   ├── db.js             ← Pool PostgreSQL + transacciones
 │   ├── migrate.js        ← runner de migraciones SQL
-│   ├── migrations/       ← esquema versionado (001-auth.sql)
-│   ├── store-pg.js       ← users/sessions sobre PostgreSQL
+│   ├── migrations/       ← esquema versionado (001-auth.sql, 002-admin-permissions.sql)
+│   ├── store-pg.js       ← users/sessions/admin_audit sobre PostgreSQL
 │   ├── user-tool.mjs     ← crear/cambiar contraseña/listar/activar cuentas
 │   ├── package.json
 │   └── README.md         ← deploy clásico en VPS
@@ -245,7 +250,7 @@ cuentas existentes y el login no se ven afectados.
 | Click der. | Poner bloque · acariciar 🐷🐑 · espada ⚔️ ataca |
 | `E` / `Enter` | Inventario / chat |
 | `V` | Cámara: 1ª / 3ª trasera / 3ª frontal (también 👁 arriba) |
-| `F` | Volar (solo admin) |
+| `F` | Volar (admin o permiso `fly`) |
 
 ### 📱 Controles táctiles (celular)
 
@@ -257,7 +262,7 @@ cuentas existentes y el login no se ven afectados.
 | Mantener el dedo | Picar progresivo ⛏ |
 | ⚔️ | Atacar (**solo con la espada en la mano**) |
 | 🧱 | Poner bloque / saludar / acariciar (equivale a click der.) |
-| ⤒ / 🕊 / 🎒 / 💬 | Saltar / volar (admin) / inventario / chat |
+| ⤒ / 🕊 / 🎒 / 💬 | Saltar / volar (admin o permiso `fly`) / inventario / chat |
 | 👁 (arriba) | Cambiar cámara: 1ª / 3ª trasera / 3ª frontal |
 | ⛶ (arriba) | Pantalla completa |
 
@@ -308,6 +313,65 @@ DATABASE_URL=... node server/user-tool.mjs disable ana    # active=false + revoc
 DATABASE_URL=... node server/user-tool.mjs enable ana
 ```
 
+### 🛂 Panel de administración y permisos (`/admin`)
+
+Con una cuenta `role='admin'`, el lobby muestra el link **Administración** y
+`/admin` sirve el panel. Sin sesión redirige a `/login`; un usuario común que
+escribe `/admin` vuelve a `/lobby` (y la API le responde `403 admin_required`).
+El gate real es el servidor: la página solo oculta lo que igual está prohibido.
+
+**Qué se puede hacer desde el panel**
+
+- **Listar** todas las cuentas (nunca se muestran hashes).
+- **Crear** una cuenta con username, contraseña, rol, aspecto y permisos. El
+  alta no inicia sesión por vos.
+- **Editar** solo `skin`, `role`, `active` y `permissions`. El **username es
+  inmutable** después del alta (la UI lo muestra como texto de solo lectura).
+- **Activar/desactivar** una cuenta. Desactivar revoca sus sesiones y cierra
+  su WebSocket; reactivar no devuelve sesiones.
+- **Resetear la contraseña** (8–128): revoca todas las sesiones del afectado.
+  Si reseteás la tuya, se cierra tu sesión y el panel te manda a `/login`.
+- **Borrar** una cuenta con confirmación destructiva escribiendo el username
+  exacto. El borrado es definitivo y arrastra sus sesiones; la auditoría
+  conserva el username histórico con `target` nulo.
+
+**Contraseñas y autocompletado:** las contraseñas se guardan hasheadas con
+`scrypt`; no se pueden ver ni recuperar desde el panel ni por la API. Si alguien
+la olvidó, se define una nueva con el reset (revoca sus sesiones). Los
+formularios de login, registro, alta y reset declaran `autocomplete="off"` y
+atributos para que los gestores de contraseñas ignoren los campos: eso reduce
+las pestañas y el aviso de guardado, pero **ningún sitio puede garantizar al
+100%** que el navegador no lo ofrezca igual.
+
+**Guardas de integridad:** no podés desactivarte, borrarte ni degradarte a vos
+mismo (`guard_self_action`) y el sistema nunca queda sin admin activo
+(`guard_last_admin`). Los rechazos también se auditan.
+
+**Permisos por usuario** (columna `users.permissions` JSONB, allowlist estricta;
+una clave desconocida o un valor no booleano responde `422 invalid_permissions`):
+
+| Permiso | Efecto real |
+|---|---|
+| `bot_ignore` | El bot cazador lo excluye de sus presas y el **server descarta** cualquier `hit` de la conexión de servicio del bot contra esa cuenta. Defensa en el servidor, no solo cosmética |
+| `fly` | Habilita el vuelo del cliente igual que el rol admin (tecla `F`, botón y touch). El daño de caída, la regen y la inmunidad del admin **no** se heredan |
+| `instant_break` | Rompe el bloque apuntado al instante por la misma ruta del admin; `BEDROCK` sigue inviolable |
+
+Los cambios de permisos se aplican **en caliente** (frame `perm`) sin relogin.
+`fly` e `instant_break` son **client-authoritative**: el server no puede impedir
+que un cliente modificado vuele o pique rápido; el cambio no promete anti-cheat.
+`bot_ignore` sí tiene la defensa server-side descrita.
+
+**Auditoría:** tabla `admin_audit` append-only (`user.create`, `user.update`,
+`user.permissions`, `user.password`, `user.activate`, `user.deactivate`,
+`user.delete`, `user.guard_rejected`), con actor, target, detalle y fecha. No
+guarda contraseñas, hashes ni tokens. Se consulta desde el panel
+(`GET /api/admin/audit`). La API no tiene rutas para editar ni borrar entradas;
+un operador con SQL directo sí puede hacerlo (límite documentado).
+
+La CLI `user-tool` sigue disponible como **vía de emergencia** (por ejemplo, si
+te quedaste sin admin). No aplica las guardas de self/último admin: es una
+operación de operador, no el camino normal.
+
 **Migración desde el deploy viejo:** creá la base, seteá
 `DATABASE_URL`/`ADMIN_PASSWORD`/`BOT_TOKEN`, deployá (las migraciones corren
 solas) y **borrá `ADMIN_KEY` y `ADMIN_KEY_HASH`** del entorno. Si quedan, el
@@ -327,10 +391,16 @@ cd server && npm test
   `register.mjs`, `ws-auth.mjs`, `admin-retirement.mjs`): `scrypt`,
   cookies, validaciones, rate limit, login/perfil/logout, registro público,
   gate del WebSocket, identidad impuesta y retiro de `ADMIN_KEY*`.
-- **Integración DB** (`auth-db.mjs`): migraciones idempotentes, unicidad
-  case-insensitive, hash de sesión, registro transaccional y carrera de
-  usernames, bootstrap del admin y revocación. Corre solo si
-  `TEST_DATABASE_URL` está definida; en CI `REQUIRE_DB_TESTS=1` la exige.
+- **Permisos y admin** (`permissions.mjs`, `admin.mjs`, `admin-ws.mjs`):
+  allowlist/materialización, CRUD administrativo, guardas de self y último
+  admin, auditoría, rate limit, CSRF, gate de `/admin`, `perm` en caliente,
+  descarte del `hit` del bot y cierre de sockets por revocación.
+- **Integración DB** (`auth-db.mjs`, `admin-db.mjs`): migraciones idempotentes
+  (001 y 002), unicidad case-insensitive, hash de sesión, registro transaccional
+  y carrera de usernames, bootstrap del admin, JSONB de permisos, auditoría con
+  `ON DELETE SET NULL`, cascada de sesiones y carrera de guardas con advisory
+  lock. Corre solo si `TEST_DATABASE_URL` está definida; en CI
+  `REQUIRE_DB_TESTS=1` la exige.
 - **Protocolo** (`test/protocol.mjs`): levanta `createApp` + `MemoryStore`
   en proceso, autentica por `POST /api/login` y verifica welcome, movimiento,
   bloques, daño PvP, muerte, chat, sueño y zombis.

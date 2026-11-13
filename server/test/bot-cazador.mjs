@@ -33,7 +33,7 @@ const dir = path.dirname(fileURLToPath(import.meta.url));
 const serverDir = path.join(dir, '..');
 const root = path.join(serverDir, '..');
 const { createBotClient, createHunter, parseWorld } = require(path.join(root, 'bot', 'index.js'));
-const { SPEED, FLY_Y_OFFSET, FLY_Y_DEADBAND } = require(path.join(root, 'bot', 'cazador.js'));
+const { SPEED, FLY_Y_OFFSET, FLY_Y_DEADBAND, normPlayer } = require(path.join(root, 'bot', 'cazador.js'));
 
 const TIMEOUT = 8000;
 const SWORD = 100;
@@ -680,6 +680,60 @@ try {
     } finally {
       if (prevSkin === undefined) delete process.env.BOT_SKIN; else process.env.BOT_SKIN = prevSkin;
     }
+  }
+  // =====================================================================
+  // 11. bot_ignore: el cazador excluye a los protegidos (welcome/join/perm)
+  // =====================================================================
+  {
+    ok(normPlayer({ id: 2, name: 'Protegido', mode: 'player', botIgnore: true }).botIgnore === true,
+      'normPlayer lee botIgnore:true del roster');
+    ok(normPlayer({ id: 2, name: 'Comun', mode: 'player' }).botIgnore === false,
+      'normPlayer sin el flag queda como no protegido (server viejo)');
+    ok(normPlayer({ id: 2, name: 'Otro', mode: 'player', botIgnore: 'si' }).botIgnore === false,
+      'normPlayer solo acepta el flag booleano true');
+
+    const prey = [103.5, GROUND, 100.5];
+    const protectedPlayer = { id: 2, name: 'Protegido', mode: 'player', hp: 10, dead: 0, pos: prey, botIgnore: true };
+
+    const wp = pureHunt({ players: [protectedPlayer], spawn: [100.5, GROUND, 100.5], ticks: 6 });
+    ok(pureHits(wp.frames).length === 0, 'con botIgnore en el welcome el bot no emite ningún hit');
+    ok(wp.hunter.getPlayers().get(2).botIgnore === true, 'el welcome conserva el flag en el roster interno');
+
+    const joinFrames = [];
+    const joinHunter = createHunter({
+      send: (f) => joinFrames.push(f), now: () => 0, log: () => {},
+      world: flatWorld(), spawn: [100.5, GROUND, 100.5],
+    });
+    joinHunter.handle({ t: 'welcome', id: 1, players: [] });
+    joinHunter.handle({ t: 'join', ...protectedPlayer });
+    for (let i = 0; i < 6; i++) joinHunter.tick(0.05);
+    ok(pureHits(joinFrames).length === 0, 'un join con botIgnore:true tampoco se convierte en presa');
+    ok(joinHunter.getPlayers().get(2).botIgnore === true, 'el join conserva el flag');
+
+    const normal = pureHunt({ players: [{ ...protectedPlayer, botIgnore: false }], spawn: [100.5, GROUND, 100.5], ticks: 3 });
+    ok(pureHits(normal.frames).length >= 1, 'sin el flag el bot persigue y golpea como antes');
+
+    const permOnFrames = [];
+    const permOn = createHunter({
+      send: (f) => permOnFrames.push(f), now: () => 0, log: () => {},
+      world: flatWorld(), spawn: [100.5, GROUND, 100.5],
+    });
+    permOn.handle({ t: 'welcome', id: 1, players: [{ ...protectedPlayer, botIgnore: false }] });
+    permOn.handle({ t: 'perm', id: 2, permissions: { bot_ignore: true, fly: false, instant_break: false } });
+    for (let i = 0; i < 6; i++) permOn.tick(0.05);
+    ok(pureHits(permOnFrames).length === 0, 'un perm con bot_ignore:true saca a la presa antes del golpe');
+
+    const permOffFrames = [];
+    const permOff = createHunter({
+      send: (f) => permOffFrames.push(f), now: () => 0, log: () => {},
+      world: flatWorld(), spawn: [100.5, GROUND, 100.5],
+    });
+    permOff.handle({ t: 'welcome', id: 1, players: [protectedPlayer] });
+    for (let i = 0; i < 3; i++) permOff.tick(0.05);
+    ok(pureHits(permOffFrames).length === 0, 'el protegido no recibe golpes mientras dure el permiso');
+    permOff.handle({ t: 'perm', id: 2, permissions: { bot_ignore: false, fly: false, instant_break: false } });
+    for (let i = 0; i < 3; i++) permOff.tick(0.05);
+    ok(pureHits(permOffFrames).length >= 1, 'un perm con bot_ignore:false vuelve a habilitarlo como presa');
   }
 } catch (e) {
   console.log('❌ excepción: ' + (e && e.stack || e));

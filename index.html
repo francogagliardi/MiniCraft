@@ -875,6 +875,18 @@ const DEFAULT_HOTBAR = [GRASS,DIRT,STONE,PLANKS,LOG,LEAVES,GLASS,BRICK,COBBLE];
 /* ============ MODO / VIDA ============ */
 let mode = 'player';           // 'player' | 'admin'
 const isAdmin = () => mode === 'admin';
+// Permisos por usuario (spec player/permissions): el server los impone en el
+// perfil/welcome; el cliente los usa SOLO para vuelo y rotura instantánea.
+const PERM_KEYS = ['bot_ignore','fly','instant_break'];
+let myPermissions = { bot_ignore:false, fly:false, instant_break:false };
+function normalizePerms(p){
+  const out = { bot_ignore:false, fly:false, instant_break:false };
+  if(p && typeof p === 'object' && !Array.isArray(p))
+    for(const k of PERM_KEYS) out[k] = p[k] === true;
+  return out;
+}
+const canFly = () => isAdmin() || myPermissions.fly === true;
+const canInstantBreak = () => isAdmin() || myPermissions.instant_break === true;
 let hp = 10; const MAXHP = 10;
 let dead = false, lastHurt = -99, lastRegen = 0, airPeak = 0, godT = 0, shakeT = 0;
 let deathPos = null, deathT = 0, deathShown = false;
@@ -2177,7 +2189,7 @@ addEventListener('keydown', e=>{
   if(state!=='play'||!canAct()||dead) return;
   if(e.code==='KeyV'){ toggleCam(); return; } // cámara 1ª/3ª (spec ui/camera)
   if(e.code.startsWith('Digit')){ const n=+e.code.slice(5); if(n>=1&&n<=9) select(n-1); }
-  if(e.code==='KeyF'&&isAdmin()) toggleFly();
+  if(e.code==='KeyF'&&canFly()) toggleFly();
 });
 addEventListener('keyup', e=>keys[e.code]=false);
 
@@ -3391,7 +3403,7 @@ function onLeftDown(){
   if(av){ needSword(); lastAct=performance.now(); return; }
   const an=animalHit();
   if(an){ pet(an.a); lastAct=performance.now(); return; }
-  if(isAdmin()){ doBreak(); lastAct=performance.now(); }
+  if(canInstantBreak()){ doBreak(); lastAct=performance.now(); }
   // en modo jugador la rotura progresiva la maneja el loop (mantener presionado)
 }
 function greetRemote(a){
@@ -3426,12 +3438,12 @@ addEventListener('wheel',e=>{
 // rotura progresiva modo jugador + repetición admin
 setInterval(()=>{
   if(state!=='play'||!canAct()||dead) return;
-  if(performance.now()-lastAct< (isAdmin()?230:60)) return;
-  if(mouseDown[0]&&isAdmin()){ onLeftDown(); lastAct=performance.now(); }
+  if(performance.now()-lastAct< (canInstantBreak()?230:60)) return;
+  if(mouseDown[0]&&canInstantBreak()){ onLeftDown(); lastAct=performance.now(); }
   if(mouseDown[2]&&rAction==='place'){ doPlace(); lastAct=performance.now(); }
 },60);
 function tickBreak(dt){
-  if(isAdmin()||!mouseDown[0]||dead){ return; }
+  if(canInstantBreak()||!mouseDown[0]||dead){ return; }
   const h=raycast(); // alcance 8 ok para picar
   if(!h){ resetBreak(); return; }
   const key=h.x+','+h.y+','+h.z;
@@ -3769,6 +3781,7 @@ function connectMP(wantedMode){
         clearTimeout(to); mp=true; myId=m.id; NET=ws;
         // perfil autoritativo (defensivo): reafirma nombre y skin del server
         if(m.user && m.user.username){ myName=m.user.username; setSkin(m.user.skin, false); }
+        if(m.user && m.user.permissions) myPermissions = normalizePerms(m.user.permissions);
         // ciclo día/noche: adoptar la hora y la duración del server (primera fase directa)
         if(Number.isFinite(m.cyc)) cycleMs=m.cyc;
         if(Number.isFinite(m.tod)) onTod(m.tod);
@@ -3809,6 +3822,19 @@ function setupNetHandlers(){
     }
     else if(m.t==='join'){ addRemote(m); chatMsg('🌿',`${m.name} se unió`); }
     else if(m.t==='leave'){ removeRemote(m.id); }
+    else if(m.t==='perm'){
+      // Cambio de permisos en caliente (spec net/session): solo afecta al propio
+      // jugador; el resto del roster no necesita el objeto para renderizar.
+      if(m.id===myId){
+        const hadFly = myPermissions.fly === true;
+        myPermissions = normalizePerms(m.permissions);
+        if(hadFly && !myPermissions.fly && player.fly){
+          player.fly=false; player.vel.y=0;
+          toast('🕊 Te quitaron el vuelo');
+        }
+        applyModeUI();
+      }
+    }
     else if(m.t==='chat'){ chatMsg(m.from,m.text); tone(700,900,.07,'sine',.1); }
     else if(m.t==='phit'){
       if(isAdmin()){
@@ -3960,15 +3986,15 @@ document.getElementById('showStats').onchange=e=>{
 };
 function applyModeUI(){
   const fly=document.getElementById('btnFly');
-  fly.textContent = isAdmin() ? `🕊 Volar: ${player.fly?'on':'off'}` : '🌱 Supervivencia';
-  fly.classList.toggle('off',!isAdmin());
+  fly.textContent = canFly() ? `🕊 Volar: ${player.fly?'on':'off'}` : '🌱 Supervivencia';
+  fly.classList.toggle('off',!canFly());
   renderHealth();
   document.getElementById('hint').innerHTML = isAdmin()
     ? '<b>W A S D</b> moverse · <b>Espacio</b> saltar<br><b>Click izq</b> romper · <b>Click der</b> poner<br><b>E</b> inventario · <b>F</b> volar · <b>Enter</b> chat · <b>P</b> pantalla · <b>V</b> cámara'
     : '<b>W A S D</b> moverse · <b>Espacio</b> saltar<br><b>Mantené click izq</b> para picar ⛏ (con el <b>pico</b> en mano, al toque)<br><b>E</b> inventario · <b>Enter</b> chat · <b>P</b> pantalla · <b>V</b> cámara · ¡cuidado al caer!';
 }
 function toggleFly(){
-  if(!isAdmin()) return;
+  if(!canFly()) return;
   player.fly=!player.fly; player.vel.y=0;
   const b=document.getElementById('btnFly');
   b.textContent=`🕊 Volar: ${player.fly?'on':'off'}`; b.classList.toggle('on',player.fly);
@@ -4079,6 +4105,7 @@ if(profile || !isHttp){
     myName = profile.username;
     setSkin(profile.skin, false);
     mode = profile.role==='admin' ? 'admin' : 'player';
+    myPermissions = normalizePerms(profile.permissions);
     document.getElementById('playerName').textContent = myName;
     document.getElementById('playerSkin').textContent = 'Aspecto: ' + skinSpec(mySkin).label;
     // /game con sesión (spec ui/lobby): directo a jugar. autoStartGame muestra "Conectando…"
@@ -4109,6 +4136,7 @@ async function startGame(){
     const d=res.data;
     // El perfil del server manda: `welcome.user` reafirma nombre/skin (defensivo).
     if(d.user && d.user.username){ myName=d.user.username; setSkin(d.user.skin, false); }
+    if(d.user && d.user.permissions) myPermissions = normalizePerms(d.user.permissions);
     mode=d.admin?'admin':'player';
     SEED=d.seed; newWorld();
     for(const e of (d.edits||[])){

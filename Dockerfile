@@ -10,7 +10,7 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY server/*.js ./
 COPY server/migrations ./migrations
-COPY index.html login.html register.html lobby.html ./
+COPY index.html login.html register.html lobby.html admin.html ./
 RUN mkdir -p /data
 
 ENV PORT=3000 \

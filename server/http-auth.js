@@ -8,6 +8,8 @@ const A = require('./auth.js');
 const Skins = require('./skins.js');
 const RL = require('./rate-limit.js');
 const CFG = require('./env-config.js');
+const Permissions = require('./permissions.js');
+const { createAdminRouter } = require('./admin-api.js');
 
 const BODY_LIMIT = 8 * 1024;
 const RATE_LOG_MS = 10000;
@@ -27,7 +29,12 @@ const ERRORS = {
 };
 
 function publicUser(u) {
-  return { username: u.username, role: u.role, skin: u.skin };
+  return {
+    username: u.username,
+    role: u.role,
+    skin: u.skin,
+    permissions: Permissions.materializePermissions(u.permissions),
+  };
 }
 
 function clientIp(req, { trustProxy }) {
@@ -41,13 +48,21 @@ function clientIp(req, { trustProxy }) {
   return req.socket && req.socket.remoteAddress ? req.socket.remoteAddress : 'unknown';
 }
 
-function createAuthRouter({ store, env = process.env, staticDir, now = () => Date.now(), log = console.log, warn = console.warn, onSessionRevoked } = {}) {
+function createAuthRouter({ store, env = process.env, staticDir, now = () => Date.now(), log = console.log, warn = console.warn, onSessionRevoked, onPermissionsChanged } = {}) {
   const secure = CFG.cookieSecure(env);
   const trustProxy = CFG.trustProxy(env);
   const registrationOpen = CFG.registrationEnabled(env, warn);
   const adminUser = CFG.adminUsername(env);
   const limiters = RL.createAuthLimiters({ env, now });
   let lastRateLog = 0;
+
+  const admin = createAdminRouter({
+    store, env, staticDir, now: () => now(), log, warn,
+    currentSession, sameOrigin, readJson,
+    clientIp: (req) => clientIp(req, { trustProxy }),
+    secure, derivations: limiters.derivations,
+    onSessionRevoked, onPermissionsChanged,
+  });
 
   function rateWarn(what) {
     const t = now();
@@ -318,6 +333,9 @@ function createAuthRouter({ store, env = process.env, staticDir, now = () => Dat
     if (urlPath === '/api/register' && method === 'POST') return handleRegister(req, res);
     if (urlPath === '/api/logout' && method === 'POST') return handleLogout(req, res);
     if (urlPath === '/api/me' && (method === 'GET' || method === 'PATCH')) return handleMe(req, res, method);
+
+    // Administración (CRUD de cuentas, auditoría y página /admin).
+    if (urlPath === '/admin' || urlPath.startsWith('/api/admin/')) return admin.handle(req, res);
 
     // Rutas que no son de este router: si empiezan con /api/ respondemos 404 JSON.
     if (urlPath.startsWith('/api/')) { sendError(res, 404, 'invalid_request'); return true; }

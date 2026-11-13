@@ -81,6 +81,10 @@
   }
   input:hover { border-color: var(--line-strong); }
   input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--glow); }
+  /* Chromium/Edge: el campo deja de ser type=password para que el gestor
+     integrado no ofrezca guardar; el enmascarado lo hace CSS. Firefox conserva
+     type=password (no soporta esta propiedad). */
+  .secret { -webkit-text-security: disc; text-security: disc; }
   button[type=submit] {
     width: 100%; min-height: 50px; margin-top: 22px; padding: 12px 18px; border: 0; border-radius: 5px;
     cursor: pointer; background: var(--accent); color: var(--accent-ink); font: inherit; font-size: 16px;
@@ -131,11 +135,13 @@
   <div class="logo"><span class="logo-mark"></span>MINICRAFT</div>
   <h1>Entrar a tu cuenta</h1>
   <p class="lede">Tu nombre y tu aspecto salen del perfil, no del juego.</p>
-  <form id="loginForm" novalidate>
+  <form id="loginForm" novalidate autocomplete="off">
+    <!-- Política de autocompletado: off + atributos de ignorado reducen las pestañas y el
+         prompt de guardar. Ningún sitio puede impedir al 100% que el navegador lo ofrezca. -->
     <label for="username">Usuario</label>
-    <input id="username" name="username" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" required minlength="3" maxlength="16">
+    <input id="username" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-dashlane-ignore="true" required minlength="3" maxlength="16">
     <label for="password">Contraseña</label>
-    <input id="password" name="password" type="password" autocomplete="current-password" required minlength="8" maxlength="128">
+    <input id="password" type="text" class="secret" data-secret="1" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-dashlane-ignore="true" required minlength="8" maxlength="128">
     <button type="submit" id="submitBtn">Entrar</button>
     <div class="error" id="formError" role="alert" aria-live="polite"></div>
   </form>
@@ -158,6 +164,32 @@
     try { localStorage.setItem('mc-theme', next); } catch (e) {}
   });
 
+  // Los campos nacen como type=text enmascarado: Edge/Chromium dispara el
+  // prompt de "guardar contraseña" con solo ver type=password en el HTML.
+  // En navegadores sin enmascarado CSS (Firefox) se vuelve a type=password.
+  (function initSecrets() {
+    const fields = document.querySelectorAll('[data-secret]');
+    try {
+      const supported = (window.CSS && CSS.supports && CSS.supports('-webkit-text-security', 'disc'))
+        || ('webkitTextSecurity' in document.documentElement.style);
+      fields.forEach((el) => {
+        if (supported) {
+          el.type = 'text';
+          el.classList.add('secret');
+          el.style.webkitTextSecurity = 'disc';
+          el.setAttribute('autocomplete', 'off');
+          el.setAttribute('data-form-type', 'other');
+        } else {
+          el.type = 'password';
+          el.classList.remove('secret');
+          el.style.webkitTextSecurity = '';
+        }
+      });
+    } catch (e) {
+      fields.forEach((el) => { el.type = 'password'; el.classList.remove('secret'); });
+    }
+  })();
+
   const form = document.getElementById('loginForm');
   const err = document.getElementById('formError');
   const btn = document.getElementById('submitBtn');
@@ -166,8 +198,11 @@
     ev.preventDefault();
     show('');
     const username = document.getElementById('username').value.trim();
-    const password = document.getElementById('password').value;
-    if (!username || !password) { show('Escribí tu usuario y tu contraseña.'); return; }
+    const passEl = document.getElementById('password');
+    const password = passEl.value;
+    passEl.value = ''; // vacío antes del submit: el gestor no tiene qué guardar
+    if (!username || !password) { passEl.value = password; show('Escribí tu usuario y tu contraseña.'); return; }
+    let ok = false;
     btn.disabled = true;
     try {
       const res = await fetch('/api/login', {
@@ -175,13 +210,14 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password }),
       });
-      if (res.ok) { location.replace('/lobby'); return; }
+      if (res.ok) { ok = true; location.replace('/lobby'); return; }
       if (res.status === 429) show('Demasiados intentos: esperá un momento e intentá de nuevo.');
       else if (res.status === 503) show('El servicio no está disponible. Probá de nuevo en unos segundos.');
       else show('Usuario o contraseña incorrectos');
     } catch (e) {
       show('No se pudo conectar. Revisá tu conexión e intentá de nuevo.');
     } finally {
+      if (!ok) passEl.value = password; // devuelve lo escrito si falló
       btn.disabled = false;
     }
   });

@@ -94,7 +94,7 @@ La página SHALL permitir editar skin, rol, estado y permisos de una cuenta medi
 
 ### Requirement: Reset de contraseña desde el panel
 
-La página SHALL ofrecer una acción de reset de contraseña con campo de nueva contraseña y confirmación, mostrar el resultado de sesiones revocadas y advertir cuando el target es el propio admin. La contraseña MUST NOT quedar visible en la tabla ni en la auditoría.
+La página SHALL ofrecer una acción de reset de contraseña con campo de nueva contraseña y confirmación, mostrar las sesiones revocadas y advertir cuando el target es el propio admin. La contraseña MUST NOT aparecer en la tabla ni en la auditoría.
 
 #### Scenario: Reset exitoso
 
@@ -110,6 +110,15 @@ La página SHALL ofrecer una acción de reset de contraseña con campo de nueva 
 
 - **WHEN** la nueva contraseña tiene menos de 8 caracteres
 - **THEN** el error se muestra junto al campo y no se envía el pedido
+
+### Requirement: Las contraseñas guardadas no se pueden mostrar
+
+La página MUST NOT ofrecer ver contraseñas en texto plano ni consultar la contraseña actual: se guarda hasheada con `scrypt` y no es recuperable. El diálogo de reset SHALL explicar de forma visible que no se puede mostrar y que definir una nueva es la única vía. MUST NOT existir endpoint ni campo para leerla.
+
+#### Scenario: La contraseña actual no se puede ver
+
+- **WHEN** el admin abre el diálogo de reset de una cuenta
+- **THEN** la página explica que la contraseña está hasheada, que no se puede mostrar y que el reset es la única vía, sin ofrecer ningún botón, campo o endpoint para revelarla
 
 ### Requirement: Borrado con confirmación explícita
 
@@ -172,3 +181,36 @@ La página SHALL compartir la identidad visual del lobby, ofrecer tema oscuro y 
 
 - **WHEN** el sistema pide movimiento reducido
 - **THEN** las transiciones se desactivan sin perder información ni foco visible
+
+### Requirement: Autocompletado de credenciales
+
+Los formularios de alta y reset de contraseña SHALL declarar `autocomplete="off"` y los campos SHALL incluir atributos de ignorado para los gestores (`data-lpignore`, `data-1p-ignore`, `data-bwignore`, `data-dashlane-ignore`) y MUST NOT declarar `autocomplete="new-password"`. Ningún sitio puede garantizar al 100% que el navegador no ofrezca guardar credenciales; la página SHALL documentar ese límite.
+
+#### Scenario: Alta sin pestañas de autocompletado
+
+- **WHEN** el admin abre el diálogo de nueva cuenta
+- **THEN** los campos de usuario y contraseña piden al navegador no autocompletar ni ofrecer guardado, sin perder las etiquetas ni la accesibilidad
+
+#### Scenario: Reset sin pestañas de autocompletado
+
+- **WHEN** el admin abre el diálogo de reset de contraseña
+- **THEN** los dos campos de contraseña declaran `autocomplete="off"` y los atributos de ignorado de gestores
+
+### Requirement: Enmascarado sin type=password
+
+En el HTML inicial los campos de contraseña del panel MUST NOT declarar `type="password"`: SHALL nacer como `type="text"` enmascarado por CSS. En navegadores sin `-webkit-text-security` SHALL cambiarse a `type="password"` para usar el enmascarado nativo. La contraseña SHALL vaciarse antes de enviar el formulario y limpiarse después de un alta o reset exitoso.
+
+#### Scenario: Edge/Chromium no ofrece guardar la contraseña
+
+- **WHEN** el admin abre el alta o el reset en un navegador con soporte de `-webkit-text-security`
+- **THEN** el HTML ya trae los campos como `type="text"` enmascarado y el gestor integrado no detecta un campo de contraseña
+
+#### Scenario: Navegador sin enmascarado CSS
+
+- **WHEN** el admin abre el alta o el reset en un navegador sin soporte de `-webkit-text-security`
+- **THEN** el JS cambia los campos a `type="password"` y el enmascarado nativo, sin romper el formulario
+
+#### Scenario: Contraseña vacía antes del submit
+
+- **WHEN** el admin confirma un alta o un reset válido
+- **THEN** el campo se vacía antes de la petición y se restaura solo si la operación falla

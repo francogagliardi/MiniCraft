@@ -12,6 +12,7 @@ const WebSocket = require('ws');
 const Sleep = require('./sleep.js');
 const Zombie = require('./zombie.js');
 const Skins = require('./skins.js');
+const Permissions = require('./permissions.js');
 
 const DEFAULT_SKIN = 'human';
 const RATE_WARN_MS = 10000;
@@ -139,6 +140,15 @@ function save() {
   // ---- jugadores ----
   const players = new Map(); // ws -> {id, name, mode, admin, pos, ...}
   let nextId = 1;
+  let lastBotHitWarn = 0;
+
+  // El descarte del hit del bot es por diseño; se loguea como máximo cada 10 s.
+  function botHitWarn() {
+    const t = now();
+    if (t - lastBotHitWarn < RATE_WARN_MS) return;
+    lastBotHitWarn = t;
+    warn('   ⚠️ bot: hit descartado por bot_ignore');
+  }
 
   // ---- HTTP ----
   // Router de auth (se inyecta o se construye desde el store). Si no hay router,
@@ -148,6 +158,7 @@ function save() {
     auth = require('./http-auth.js').createAuthRouter({
       store, env, staticDir: STATIC, now: () => now(), log, warn,
       onSessionRevoked: (userId) => closeUserSockets(userId),
+      onPermissionsChanged: (userId, permissions) => applyPermissionsChange(userId, permissions),
     });
   }
   const httpServer = http.createServer((req, res) => {
@@ -193,13 +204,14 @@ function save() {
       const a = ws.auth;
       if (!a) return null;
       if (a.kind === 'bot') {
-        return { name: m.name, skin: m.skin, mode: 'player', admin: false, bot: true };
+        return { name: m.name, skin: m.skin, mode: 'player', admin: false, bot: true, permissions: {} };
       }
       const isAdmin = a.role === 'admin';
+      const permissions = Permissions.materializePermissions(a.permissions);
       return {
         name: a.username, skin: a.skin, mode: isAdmin ? 'admin' : 'player',
-        admin: isAdmin, bot: false,
-        profile: { username: a.username, role: a.role, skin: a.skin },
+        admin: isAdmin, bot: false, permissions,
+        profile: { username: a.username, role: a.role, skin: a.skin, permissions },
         userId: a.userId, tokenHash: a.tokenHash,
       };
     };
@@ -276,6 +288,19 @@ function save() {
         removePlayer(ws);
         try { ws.close(4001, 'session revoked'); } catch (e) { try { ws.terminate(); } catch (e2) {} }
       }
+    }
+  }
+
+  // Cambio de permisos en caliente (change admin-crud-permisos): actualiza la
+  // copia server-side ANTES de difundir para que el descarte de `hit` use el
+  // valor nuevo aunque el frame llegue tarde. No revoca sesiones.
+  function applyPermissionsChange(userId, permissions) {
+    const materialized = Permissions.materializePermissions(permissions);
+    for (const [ws, p] of players) {
+      if (p.bot || p.userId == null || String(p.userId) !== String(userId)) continue;
+      p.permissions = materialized;
+      if (ws.auth && ws.auth.kind === 'user') ws.auth.permissions = materialized;
+      broadcast({ t: 'perm', id: p.id, permissions: materialized });
     }
   }
 
@@ -373,6 +398,7 @@ function save() {
           mode: identity.mode === 'admin' ? 'admin' : 'player',
           admin: identity.admin === true,
           bot: identity.bot === true,
+          permissions: Permissions.materializePermissions(identity.permissions),
           profile: identity.profile || null,
           userId: identity.userId || null,
           tokenHash: identity.tokenHash || null,
@@ -391,11 +417,11 @@ function save() {
           zom: horde.zombies.map(z => ({ i: z.i, p: [z.x, z.y, z.z], yaw: z.yaw, hp: z.hp, dead: z.dead, atk: z.atk || 0 })),
           adminDenied: identity.adminDenied === true,
           players: [...players.values()].filter(p => p !== me)
-            .map(p => ({ id: p.id, name: p.name, mode: p.mode, hp: p.hp ?? 10, dead: p.dead ?? 0, pos: p.pos, yaw: p.yaw, pitch: p.pitch, held: p.held ?? 0, seq: p.seq ?? 0, skin: p.skin ?? DEFAULT_SKIN })),
+            .map(p => ({ id: p.id, name: p.name, mode: p.mode, hp: p.hp ?? 10, dead: p.dead ?? 0, pos: p.pos, yaw: p.yaw, pitch: p.pitch, held: p.held ?? 0, seq: p.seq ?? 0, skin: p.skin ?? DEFAULT_SKIN, ...(p.permissions.bot_ignore ? { botIgnore: true } : {}) })),
         };
-        if (me.profile) welcome.user = { username: me.profile.username, role: me.profile.role, skin: me.profile.skin };
+        if (me.profile) welcome.user = { username: me.profile.username, role: me.profile.role, skin: me.profile.skin, permissions: me.permissions };
         send(ws, welcome);
-        broadcast({ t: 'join', id: me.id, name: me.name, mode: me.mode, dead: 0, pos: me.pos, yaw: me.yaw, pitch: me.pitch, held: me.held, seq: me.seq, skin: me.skin }, ws);
+        broadcast({ t: 'join', id: me.id, name: me.name, mode: me.mode, dead: 0, pos: me.pos, yaw: me.yaw, pitch: me.pitch, held: me.held, seq: me.seq, skin: me.skin, ...(me.permissions.bot_ignore ? { botIgnore: true } : {}) }, ws);
         broadcast({ t: 'chat', from: '🌿', text: `${me.name} se unió (${me.mode === 'admin' ? 'admin 🛠' : 'jugador 🌱'})` }, ws);
         log(horaAr() + `➕ ${me.name} (${me.mode}) — ${players.size} conectados`);
         if (anySleeping()) checkSleep();
@@ -447,7 +473,12 @@ function save() {
       } else if (m.t === 'wake') {
         wakeAndBroadcast(me);
       } else if (m.t === 'hit') {
-        const target = [...players.keys()].find(w => players.get(w).id === m.id);
+        const entry = [...players.entries()].find(([, p]) => p.id === m.id);
+        if (entry && me.bot === true && entry[1].permissions.bot_ignore === true) {
+          botHitWarn();
+          return; // defensa en profundidad: sin `phit` ni `hitok`
+        }
+        const target = entry ? entry[0] : null;
         if (target) {
           const dmg = Math.min(6, +m.dmg || 2);
           send(target, { t: 'phit', from: me.name, fromId: me.id, dmg, dx: +m.dx || 0, dz: +m.dz || 0 });

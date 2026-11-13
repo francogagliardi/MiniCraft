@@ -81,6 +81,10 @@
   }
   input:hover { border-color: var(--line-strong); }
   input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--glow); }
+  /* Chromium/Edge: el campo deja de ser type=password para que el gestor
+     integrado no ofrezca guardar; el enmascarado lo hace CSS. Firefox conserva
+     type=password (no soporta esta propiedad). */
+  .secret { -webkit-text-security: disc; text-security: disc; }
   button[type=submit] {
     width: 100%; min-height: 50px; margin-top: 22px; padding: 12px 18px; border: 0; border-radius: 5px;
     cursor: pointer; background: var(--accent); color: var(--accent-ink); font: inherit; font-size: 16px;
@@ -150,15 +154,17 @@
   <!-- register:open:start -->
   <h1>Crear cuenta</h1>
   <p class="lede">Elegí un usuario y una contraseña. Después entrás directo al lobby.</p>
-  <form id="registerForm" novalidate>
+  <form id="registerForm" novalidate autocomplete="off">
+    <!-- Política de autocompletado: off + atributos de ignorado reducen las pestañas y el
+         prompt de guardar. Ningún sitio puede impedir al 100% que el navegador lo ofrezca. -->
     <label for="username">Usuario</label>
-    <input id="username" name="username" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" required minlength="3" maxlength="16" pattern="[A-Za-z0-9_-]+">
+    <input id="username" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-dashlane-ignore="true" required minlength="3" maxlength="16" pattern="[A-Za-z0-9_-]+">
     <div class="field-error" id="usernameError" role="alert" aria-live="polite"></div>
     <label for="password">Contraseña</label>
-    <input id="password" name="password" type="password" autocomplete="new-password" required minlength="8" maxlength="128">
+    <input id="password" type="text" class="secret" data-secret="1" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-dashlane-ignore="true" required minlength="8" maxlength="128">
     <div class="field-error" id="passwordError" role="alert" aria-live="polite"></div>
     <label for="password2">Repetir contraseña</label>
-    <input id="password2" name="password2" type="password" autocomplete="new-password" required minlength="8" maxlength="128">
+    <input id="password2" type="text" class="secret" data-secret="1" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-dashlane-ignore="true" required minlength="8" maxlength="128">
     <button type="submit" id="submitBtn">Crear cuenta</button>
     <div class="error" id="formError" role="alert" aria-live="polite"></div>
   </form>
@@ -171,6 +177,31 @@
 (function () {
   const form = document.getElementById('registerForm');
   if (!form) return; // registro cerrado: el server quitó el bloque abierto
+  // Los campos nacen como type=text enmascarado: Edge/Chromium dispara el
+  // prompt de "guardar contraseña" con solo ver type=password en el HTML.
+  // En navegadores sin enmascarado CSS (Firefox) se vuelve a type=password.
+  (function initSecrets() {
+    const fields = document.querySelectorAll('[data-secret]');
+    try {
+      const supported = (window.CSS && CSS.supports && CSS.supports('-webkit-text-security', 'disc'))
+        || ('webkitTextSecurity' in document.documentElement.style);
+      fields.forEach((el) => {
+        if (supported) {
+          el.type = 'text';
+          el.classList.add('secret');
+          el.style.webkitTextSecurity = 'disc';
+          el.setAttribute('autocomplete', 'off');
+          el.setAttribute('data-form-type', 'other');
+        } else {
+          el.type = 'password';
+          el.classList.remove('secret');
+          el.style.webkitTextSecurity = '';
+        }
+      });
+    } catch (e) {
+      fields.forEach((el) => { el.type = 'password'; el.classList.remove('secret'); });
+    }
+  })();
   const err = document.getElementById('formError');
   const uErr = document.getElementById('usernameError');
   const pErr = document.getElementById('passwordError');
@@ -186,11 +217,15 @@
     ev.preventDefault();
     clear();
     const username = document.getElementById('username').value.trim();
-    const password = document.getElementById('password').value;
-    const password2 = document.getElementById('password2').value;
-    if (!/^[A-Za-z0-9_-]{3,16}$/.test(username)) { uErr.textContent = MESSAGES.invalid_username; return; }
-    if (password.length < 8 || password.length > 128) { pErr.textContent = MESSAGES.invalid_password; return; }
-    if (password !== password2) { pErr.textContent = 'Las contraseñas no coinciden'; return; }
+    const passEl = document.getElementById('password');
+    const pass2El = document.getElementById('password2');
+    const password = passEl.value;
+    const password2 = pass2El.value;
+    passEl.value = ''; pass2El.value = ''; // vacíos antes del submit
+    if (!/^[A-Za-z0-9_-]{3,16}$/.test(username)) { passEl.value = password; pass2El.value = password2; uErr.textContent = MESSAGES.invalid_username; return; }
+    if (password.length < 8 || password.length > 128) { passEl.value = password; pass2El.value = password2; pErr.textContent = MESSAGES.invalid_password; return; }
+    if (password !== password2) { passEl.value = password; pass2El.value = password2; pErr.textContent = 'Las contraseñas no coinciden'; return; }
+    let ok = false;
     btn.disabled = true;
     try {
       const res = await fetch('/api/register', {
@@ -198,7 +233,7 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password }),
       });
-      if (res.ok) { location.replace('/lobby'); return; }
+      if (res.ok) { ok = true; location.replace('/lobby'); return; }
       let data = {};
       try { data = await res.json(); } catch (e) {}
       const code = data.error;
@@ -211,6 +246,7 @@
     } catch (e) {
       err.textContent = 'No se pudo conectar. Revisá tu conexión e intentá de nuevo.';
     } finally {
+      if (!ok) { passEl.value = password; pass2El.value = password2; }
       btn.disabled = false;
     }
   });

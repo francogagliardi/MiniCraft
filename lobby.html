@@ -39,6 +39,9 @@
     --focus:#1d63c8;
   }
   * { box-sizing: border-box; }
+  /* El atributo hidden debe ganarle a los display explícitos (a.ghost, button): si no,
+     el link de administración queda visible y ocupando espacio para un jugador común. */
+  [hidden] { display: none !important; }
   body {
     margin: 0; min-height: 100vh; color: var(--text);
     font-family: "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
@@ -102,6 +105,19 @@
   }
   .save { min-height: 20px; margin-top: 12px; font-size: 13px; color: var(--dim); }
   .save.err { color: var(--danger); }
+  .perms { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }
+  .perm {
+    display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 6px 12px;
+    font-size: 13px; font-weight: 600; color: var(--text);
+    background: var(--field); border: 1px solid var(--line); border-radius: 4px;
+  }
+  .perm::before {
+    content: ''; width: 8px; height: 8px; flex: none; border-radius: 2px;
+    background: var(--accent); box-shadow: 0 0 0 2px var(--glow);
+  }
+  .perm.admin { border-color: var(--accent); color: var(--accent-strong); }
+  .perm.none { color: var(--dim); border-style: dashed; }
+  .perm.none::before { display: none; }
   .worlds { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 14px; }
   .world {
     display: block; min-height: 132px; padding: 18px; border-radius: 6px;
@@ -133,6 +149,7 @@
   }
   .ghost:hover { transform: translateY(-2px); border-color: var(--accent); color: var(--accent-strong); background: var(--panel); }
   .ghost:active { transform: translateY(0); }
+  a.ghost { text-decoration: none; display: inline-flex; align-items: center; }
   .theme-toggle {
     width: 46px; height: 46px; display: grid; place-items: center;
     border: 1px solid var(--line); border-radius: 5px; background: var(--field); color: var(--text);
@@ -166,6 +183,7 @@
       <svg class="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a7 7 0 1 0 10.5 10.5Z"/></svg>
       <svg class="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.6v2.2M12 19.2v2.2M2.6 12h2.2M19.2 12h2.2M5.4 5.4l1.6 1.6M17 17l1.6 1.6M18.6 5.4 17 7M7 17l-1.6 1.6"/></svg>
     </button>
+    <a class="ghost" id="adminLink" href="/admin" hidden>Administración</a>
     <div class="who" id="who">Cargando perfil…</div>
     <button class="ghost" id="logoutBtn" type="button">Cerrar sesión</button>
   </div>
@@ -186,6 +204,14 @@
       <button class="skin" type="button" role="radio" aria-checked="false" data-skin="gojo">Gojo</button>
     </div>
     <div class="save" id="saveState" role="status" aria-live="polite"></div>
+  </section>
+
+  <section class="panel" aria-labelledby="permsTitle">
+    <h2 id="permsTitle">Permisos</h2>
+    <p class="note">Los permisos los asigna un administrador. Se aplican al entrar al mundo y algunos cambian sin reconectar.</p>
+    <ul class="perms" id="permsList" aria-label="Permisos de tu cuenta">
+      <li class="perm none">Sin permisos especiales.</li>
+    </ul>
   </section>
 
   <section class="panel" aria-labelledby="worldTitle">
@@ -222,11 +248,46 @@
   });
 
   const who = document.getElementById('who');
+  const adminLink = document.getElementById('adminLink');
   const picker = document.getElementById('skinPicker');
   const saveState = document.getElementById('saveState');
+  const permsList = document.getElementById('permsList');
   const logout = document.getElementById('logoutBtn');
   const cards = Array.from(picker.querySelectorAll('[data-skin]'));
   let current = 'human';
+
+  // Etiquetas visibles de los permisos (spec player/permissions): el lobby nunca muestra el id crudo.
+  const PERMISSION_LABELS = {
+    bot_ignore: 'El bot no te ataca',
+    fly: 'Podés volar',
+    instant_break: 'Rompes bloques al instante',
+  };
+
+  function renderPermissions(permissions, role) {
+    if (!permsList) return;
+    permsList.textContent = '';
+    const map = permissions || {};
+    const perms = typeof map === 'object' ? map : {};
+    const items = [];
+    // Los poderes de admin son implícitos: se muestran como un permiso más.
+    if (role === 'admin') items.push(['Administrador', 'admin']);
+    for (const [key, label] of Object.entries(PERMISSION_LABELS)) {
+      if (perms[key] === true) items.push([label, 'on']);
+    }
+    if (!items.length) {
+      const li = document.createElement('li');
+      li.className = 'perm none';
+      li.textContent = 'Sin permisos especiales.';
+      permsList.append(li);
+      return;
+    }
+    for (const [label, cls] of items) {
+      const li = document.createElement('li');
+      li.className = 'perm ' + cls;
+      li.textContent = label;
+      permsList.append(li);
+    }
+  }
 
   function mark(skin) {
     for (const c of cards) c.setAttribute('aria-checked', c.dataset.skin === skin ? 'true' : 'false');
@@ -245,6 +306,9 @@
       const user = data.user;
       who.innerHTML = '';
       const b = document.createElement('b'); b.textContent = user.username; who.append('Hola, ', b, user.role === 'admin' ? ' · administrador' : '');
+      // Acceso al panel: solo cuando /api/me confirma role=admin (nunca antes).
+      if (user.role === 'admin') adminLink.hidden = false;
+      renderPermissions(user.permissions, user.role);
       current = user.skin || 'human';
       mark(current);
     } catch (e) {

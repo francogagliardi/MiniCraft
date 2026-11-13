@@ -603,9 +603,12 @@ ok(html.includes('Necesitás la espada'), 'aviso al atacar sin espada');
     'login/register/lobby son noindex');
   ok(register.includes('id="registerForm"') && register.includes('Registro cerrado') && register.includes('register:open:start'),
     'register.html: formulario + bloque "Registro cerrado"');
-  ok(login.includes('autocomplete="username"') && login.includes('autocomplete="current-password"'),
-    'login.html: autocomplete username/current-password');
-  ok(register.includes('autocomplete="new-password"'), 'register.html: autocomplete new-password');
+  ok(/<form[^>]*id="loginForm"[^>]*autocomplete="off"/.test(login) &&
+    !/autocomplete="(?:username|current-password)"/.test(login),
+    'login.html: pide no autocompletar credenciales (política post-prueba)');
+  ok(/<form[^>]*id="registerForm"[^>]*autocomplete="off"/.test(register) &&
+    !/autocomplete="new-password"/.test(register),
+    'register.html: pide no autocompletar contraseñas (política post-prueba)');
   ok(!/id="nameInput"|id="keyInput"|id="skinPicker"|id="btnAdmin"/.test(html),
     'index.html: sin nombre/clave/selector/admin en el menú');
   ok(/id="btnEnter"/.test(html) && /\/api\/me/.test(html) && /location\.replace\('\/login'\)/.test(html),
@@ -708,6 +711,186 @@ ok(html.includes('Necesitás la espada'), 'aviso al atacar sin espada');
     'index.html: el autoarranque es idempotente (no arranca dos veces)');
   ok(/Hacé clic para capturar el mouse/.test(html),
     'index.html: avisa cómo capturar el mouse cuando el pointer lock necesita un gesto');
+}
+
+// 11. admin-crud-permisos: panel /admin, permisos en el cliente y acceso del lobby
+{
+  const read = (f) => fs.readFileSync(path.join(root, f), 'utf8');
+  const admin = read('admin.html');
+  const lobby = read('lobby.html');
+  const httpSrc = read('server/http-auth.js');
+  const apiSrc = read('server/admin-api.js');
+
+  ok(/noindex/i.test(admin), 'admin.html es noindex');
+  ok(/<html[^>]*\sdata-theme="(?:dark|light)"/.test(admin), 'admin.html declara data-theme en <html>');
+  ok(admin.includes('mc-theme') && admin.indexOf('mc-theme') < admin.indexOf('<style'),
+    'admin.html aplica mc-theme antes del CSS (sin flash)');
+  ok(/localStorage\.getItem\(\s*['"]mc-theme['"]\s*\)/.test(admin), 'admin.html lee mc-theme al cargar');
+  ok(/localStorage\.setItem\(\s*['"]mc-theme['"]/.test(admin), 'admin.html guarda mc-theme al alternar');
+  ok(/<button[^>]*id="themeToggle"[^>]*type="button"/.test(admin), 'admin.html: toggle de tema type=button');
+  ok(/id="themeToggle"[^>]*aria-pressed="(?:true|false)"/.test(admin), 'admin.html: el toggle declara aria-pressed');
+  ok(/id="themeToggle"[^>]*aria-label="[^"]*tema[^"]*"/i.test(admin), 'admin.html: aria-label del tema en español');
+  ok(/\[data-theme="light"\]\s*\{/.test(admin) && /--bg\s*:/.test(admin) && /--text\s*:/.test(admin),
+    'admin.html define variables para ambos temas');
+  ok(/:focus-visible/.test(admin), 'admin.html tiene foco visible');
+  ok(/prefers-reduced-motion/.test(admin), 'admin.html respeta prefers-reduced-motion');
+  ok(/min-height:\s*44px/.test(admin), 'admin.html usa controles de al menos 44 px');
+  ok(/aria-live="polite"/.test(admin) && /role="alert"/.test(admin), 'admin.html anuncia estado y errores');
+  ok(/<dialog/.test(admin), 'admin.html usa diálogos nativos <dialog>');
+
+  for (const id of ['usersTable', 'usersBody', 'auditList', 'newUserBtn', 'userDialog', 'userForm',
+    'passwordDialog', 'passwordForm', 'deleteDialog', 'deleteForm', 'deleteConfirm', 'deleteBtn']) {
+    ok(new RegExp(`id="${id}"`).test(admin), `admin.html declara #${id}`);
+  }
+  ok(admin.includes('Esta acción es definitiva'), 'admin.html advierte que el borrado es definitivo');
+  ok(/no se edita|no se puede cambiar/i.test(admin), 'admin.html explica que el username es inmutable');
+  ok(admin.includes('El cazador lo ignora') && admin.includes('Vuelo') && admin.includes('Rotura instantánea'),
+    'admin.html etiqueta los permisos en español');
+  ok(/deleteBtn\.disabled\s*=\s*deleteConfirm\.value\s*!==\s*deleteTarget\.username/.test(admin),
+    'admin.html exige el username exacto para habilitar el borrado');
+  ok(!admin.includes('<script src=') && !/three(\.min)?\.js/i.test(admin),
+    'admin.html es autocontenido (sin scripts externos ni Three.js)');
+  ok(!/<script src=/.test(admin) && admin.includes('noindex'), 'admin.html no carga frameworks');
+
+  ok(/<a[^>]*id="adminLink"[^>]*href="\/admin"[^>]*hidden/.test(lobby),
+    'lobby.html: el link de administración nace oculto');
+  ok(/user\.role\s*===\s*'admin'/.test(lobby) && /adminLink\.hidden\s*=\s*false/.test(lobby),
+    'lobby.html: solo muestra el link cuando /api/me confirma role=admin');
+
+  ok(httpSrc.includes("'/admin'"), 'el router HTTP cablea GET /admin');
+  ok(apiSrc.includes("'/api/admin/users'") && apiSrc.includes("'/api/admin/audit'"),
+    'admin-api.js declara los endpoints de usuarios y auditoría');
+  ok(apiSrc.includes('/password'), 'admin-api.js declara el reset de contraseña');
+  ok(/'Cache-Control': 'no-store'/.test(apiSrc), 'admin-api.js responde Cache-Control: no-store');
+
+  ok(/const canFly\s*=\s*\(\)\s*=>\s*isAdmin\(\)\s*\|\|\s*myPermissions\.fly === true/.test(html),
+    'index.html define canFly() (admin o permiso)');
+  ok(/const canInstantBreak\s*=\s*\(\)\s*=>\s*isAdmin\(\)\s*\|\|\s*myPermissions\.instant_break === true/.test(html),
+    'index.html define canInstantBreak() (admin o permiso)');
+  ok(/e\.code==='KeyF'\s*&&\s*canFly\(\)/.test(html), 'index.html usa canFly() en la tecla F');
+  ok(/function toggleFly\(\)\{\s*\n\s*if\(!canFly\(\)\) return;/.test(html),
+    'index.html usa canFly() al alternar el vuelo');
+  ok(/if\(canInstantBreak\(\)\)\{\s*doBreak\(\);/.test(html), 'index.html usa canInstantBreak() en el click izquierdo');
+  ok(/mouseDown\[0\]&&canInstantBreak\(\)/.test(html), 'index.html usa canInstantBreak() en la repetición');
+  ok(/function tickBreak\(dt\)\{\s*\n\s*if\(canInstantBreak\(\)\|\|/.test(html),
+    'index.html usa canInstantBreak() en tickBreak');
+  ok(/m\.t==='perm'/.test(html), 'index.html maneja el frame perm');
+  ok(/myPermissions\s*=\s*normalizePerms\(m\.user\.permissions\)/.test(html) &&
+    /myPermissions\s*=\s*normalizePerms\(d\.user\.permissions\)/.test(html),
+    'index.html carga los permisos de welcome.user en ambos caminos');
+  ok(/Te quitaron el vuelo/.test(html), 'index.html avisa cuando revocan fly en caliente');
+  ok(!/toast\([^)]*(?:bot_ignore|instant_break)/.test(html), 'el HUD no muestra el id crudo de un permiso');
+  ok(/isAdmin\(\)\?'🛠':'🌱'/.test(html), 'index.html mantiene el rol admin para el resto de sus poderes');
+}
+
+// 12. feedback post-prueba de admin-crud-permisos: link admin realmente oculto,
+// permisos visibles en el lobby, autocompletado suprimido y contraseñas no mostrables.
+{
+  const read = (f) => fs.readFileSync(path.join(root, f), 'utf8');
+  const login = read('login.html');
+  const register = read('register.html');
+  const lobby = read('lobby.html');
+  const admin = read('admin.html');
+  const IGNORE_ATTRS = ['data-lpignore="true"', 'data-1p-ignore="true"', 'data-bwignore="true"', 'data-dashlane-ignore="true"'];
+  const inputTag = (page, id) => (page.match(new RegExp(`<input[^>]*id="${id}"[^>]*>`)) || [''])[0];
+
+  // A. el link de administración no se ve ni ocupa espacio para un no-admin: [hidden]
+  // debe ganarle al display de a.ghost/button sin romper el toggle de tema.
+  ok(/\[hidden\]\s*\{[^}]*display\s*:\s*none\s*!important/.test(lobby),
+    'lobby: [hidden] gana sobre el display de a.ghost/button (display:none !important)');
+  ok(/a\.ghost\s*\{[^}]*display\s*:\s*inline-flex/.test(lobby),
+    'lobby: a.ghost conserva inline-flex al mostrarse (el fix es por especificidad)');
+  ok(/\.theme-toggle\s*\{[^}]*display\s*:\s*grid/.test(lobby) && !/\.theme-toggle\s*\[hidden\]/.test(lobby),
+    'lobby: el fix de [hidden] no toca el toggle de tema');
+  ok(/<a[^>]*id="adminLink"[^>]*href="\/admin"[^>]*hidden/.test(lobby) &&
+    /if \(user\.role === 'admin'\) adminLink\.hidden = false;/.test(lobby),
+    'lobby: el link nace oculto y solo se libera con role=admin');
+
+  // B. sección Permisos en el lobby con las etiquetas exactas y fallback sin permisos
+  ok(/<section class="panel" aria-labelledby="permsTitle">/.test(lobby) &&
+    /<h2 id="permsTitle">Permisos<\/h2>/.test(lobby) && /id="permsList"/.test(lobby),
+    'lobby: sección "Permisos" con título accesible y lista');
+  ok(/bot_ignore:\s*'El bot no te ataca'/.test(lobby), 'lobby: bot_ignore se explica como "El bot no te ataca"');
+  ok(/fly:\s*'Podés volar'/.test(lobby), 'lobby: fly se explica como "Podés volar"');
+  ok(/instant_break:\s*'Rompes bloques al instante'/.test(lobby),
+    'lobby: instant_break se explica como "Rompes bloques al instante"');
+  ok(/Sin permisos especiales\./.test(lobby), 'lobby: muestra "Sin permisos especiales." cuando no hay ninguno');
+  ok(/role === 'admin'/.test(lobby) && /'Administrador'/.test(lobby),
+    'lobby: el rol admin se muestra como permiso implícito');
+  ok(/renderPermissions\(user\.permissions,\s*user\.role\)/.test(lobby),
+    'lobby: renderiza los permisos con el perfil de /api/me (sin romper la carga)');
+  ok(/typeof permissions !== 'object'/.test(lobby) || /permissions \|\| \{\}/.test(lobby),
+    'lobby: un perfil sin permissions no rompe el render');
+
+  // C. autocompletado y prompt de guardado suprimidos en login/registro/alta/reset
+  ok(/<form[^>]*id="loginForm"[^>]*autocomplete="off"/.test(login),
+    'login.html: form con autocomplete="off"');
+  for (const id of ['username', 'password']) {
+    const tag = inputTag(login, id);
+    ok(/autocomplete="off"/.test(tag), `login.html: #${id} con autocomplete="off"`);
+    ok(!/\sname="/.test(tag), `login.html: #${id} sin name (el JS usa id)`);
+    ok(IGNORE_ATTRS.every(a => tag.includes(a)), `login.html: #${id} con atributos de ignorado de gestores`);
+  }
+  ok(/<form[^>]*id="registerForm"[^>]*autocomplete="off"/.test(register),
+    'register.html: form con autocomplete="off"');
+  for (const id of ['username', 'password', 'password2']) {
+    const tag = inputTag(register, id);
+    ok(/autocomplete="off"/.test(tag), `register.html: #${id} con autocomplete="off"`);
+    ok(!/\sname="/.test(tag), `register.html: #${id} sin name (el JS usa id)`);
+    ok(IGNORE_ATTRS.every(a => tag.includes(a)), `register.html: #${id} con atributos de ignorado de gestores`);
+  }
+  for (const [formId, name] of [['userForm', 'alta'], ['passwordForm', 'reset'], ['deleteForm', 'borrado']]) {
+    ok(new RegExp(`<form[^>]*id="${formId}"[^>]*autocomplete="off"`).test(admin),
+      `admin.html: form de ${name} con autocomplete="off"`);
+  }
+  for (const id of ['passwordInput', 'newPassword', 'repeatPassword']) {
+    const tag = inputTag(admin, id);
+    ok(/autocomplete="off"/.test(tag), `admin.html: #${id} con autocomplete="off"`);
+    ok(!/\sname="/.test(tag), `admin.html: #${id} sin name (el JS usa id)`);
+    ok(IGNORE_ATTRS.every(a => tag.includes(a)), `admin.html: #${id} con atributos de ignorado de gestores`);
+  }
+  ok(!/autocomplete="(?:username|current-password|new-password)"/.test(login + register + admin),
+    'ninguna página pide al navegador recordar credenciales');
+
+  // C2. Edge/Chromium: los campos nacen type=text enmascarado (nunca password).
+  for (const [name, page] of [['login.html', login], ['register.html', register], ['admin.html', admin]]) {
+    ok(/-webkit-text-security\s*:\s*disc/.test(page), `${name}: enmascarado CSS para campos secretos`);
+    ok(/CSS\.supports\('-webkit-text-security', 'disc'\)/.test(page),
+      `${name}: detecta soporte de enmascarado`);
+    ok(/querySelectorAll\('\[data-secret\]'\)/.test(page), `${name}: inicializa los campos data-secret`);
+    ok(/el\.type = 'password'/.test(page), `${name}: fallback a password sin enmascarado`);
+    ok(!/<input[^>]*type="password"/.test(page), `${name}: ningún input nace type=password`);
+  }
+  for (const [name, page, ids] of [
+    ['login.html', login, ['password']],
+    ['register.html', register, ['password', 'password2']],
+    ['admin.html', admin, ['passwordInput', 'newPassword', 'repeatPassword']],
+  ]) {
+    for (const id of ids) {
+      const tag = inputTag(page, id);
+      ok(/type="text"/.test(tag) && /data-secret="1"/.test(tag) && /class="secret"/.test(tag),
+        `${name}: #${id} nace text enmascarado`);
+    }
+  }
+  ok(/passEl\.value = ''/.test(login), 'login.html: vacía la clave antes del submit');
+  ok(/passEl\.value = ''; pass2El\.value = ''/.test(register),
+    'register.html: vacía las claves antes del submit');
+  ok(/newEl\.value = ''; repEl\.value = ''/.test(admin),
+    'admin.html: vacía las claves antes del submit');
+  ok(/if \(!ok\) passEl\.value = password/.test(login),
+    'login.html: restaura la clave si el login falla');
+  ok(/if \(!ok\) \{ passEl\.value = password; pass2El\.value = password2; \}/.test(register),
+    'register.html: restaura las claves si el registro falla');
+
+  // D. las contraseñas están hasheadas: el panel no las muestra y lo explica
+  ok(admin.includes('Las contraseñas se guardan hasheadas y no se pueden mostrar.'),
+    'admin.html: avisa que las contraseñas se guardan hasheadas');
+  ok(admin.includes('Definí una nueva; se revocan las sesiones.'),
+    'admin.html: el reset es la vía y revoca las sesiones');
+  ok(!/passwordHash|password_hash/.test(admin), 'admin.html no recibe ni muestra hashes');
+  ok(/\/password'[\s\S]{0,80}method:\s*'POST'/.test(admin),
+    'admin.html solo envía la contraseña nueva por POST (no hay lectura)');
+  ok(!/reveal|plaintext|ver contraseña/i.test(admin), 'admin.html no ofrece ver contraseñas');
 }
 
 if (fails) { console.log(`\n💥 ${fails} chequeo(s) fallaron`); process.exit(1); }

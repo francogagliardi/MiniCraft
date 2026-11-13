@@ -25,6 +25,9 @@ try {
     ok(res.status === 200, 'login correcto responde 200');
     ok(body.user && body.user.username === 'ana' && body.user.role === 'user' && body.user.skin === 'human',
       'login devuelve el perfil público (username/role/skin)');
+    ok(body.user.permissions && body.user.permissions.bot_ignore === false &&
+      body.user.permissions.fly === false && body.user.permissions.instant_break === false,
+      'login devuelve permissions con las tres claves en false');
     ok(!('password' in body.user) && !('passwordHash' in body.user), 'el perfil no expone hash ni contraseña');
     ok(/mc_sid=/.test(set) && /HttpOnly/.test(set) && /SameSite=Lax/.test(set) && /Max-Age=604800/.test(set),
       'login setea cookie HttpOnly/SameSite=Lax/Max-Age 7d');
@@ -74,21 +77,34 @@ try {
     const res = await FIX.request('/api/me', { cookie });
     const body = await res.json();
     ok(res.status === 200 && body.user.username === 'ana', '/api/me con cookie devuelve el perfil');
+    ok(body.user.permissions && Object.keys(body.user.permissions).sort().join(',') === 'bot_ignore,fly,instant_break',
+      '/api/me devuelve permissions con las tres claves');
     ok((res.headers.get('cache-control') || '').includes('no-store'), '/api/me responde no-store');
     const anon = await FIX.request('/api/me');
     ok(anon.status === 401, '/api/me sin cookie → 401');
   }
   {
-    const res = await FIX.request('/api/me', { method: 'PATCH', cookie, body: { skin: 'giant', role: 'admin', username: 'otro' } });
+    const res = await FIX.request('/api/me', { method: 'PATCH', cookie, body: { skin: 'giant', role: 'admin', username: 'otro', permissions: { fly: true } } });
     const body = await res.json();
     ok(res.status === 200 && body.user.skin === 'giant', 'PATCH /api/me cambia el skin');
     ok(body.user.role === 'user' && body.user.username === 'ana', 'PATCH ignora role y username');
+    ok(body.user.permissions.fly === false, 'PATCH /api/me no permite autoasignarse permisos');
     const bad = await FIX.request('/api/me', { method: 'PATCH', cookie, body: { skin: 'robot' } });
     ok(bad.status === 400, 'PATCH con robot → 400');
     const bad2 = await FIX.request('/api/me', { method: 'PATCH', cookie, body: { skin: 'inventado' } });
     ok(bad2.status === 400, 'PATCH con skin inventado → 400');
     const still = await FIX.request('/api/me', { cookie });
     ok((await still.json()).user.skin === 'giant', 'un skin inválido no pisa el guardado');
+  }
+  {
+    const res = await FIX.request('/api/register', {
+      method: 'POST', body: { username: 'nuevo_http', password: 'password-123' },
+    });
+    const body = await res.json();
+    ok(res.status === 201 && body.user.permissions &&
+      body.user.permissions.fly === false && body.user.permissions.bot_ignore === false,
+      'el registro devuelve permissions con las tres claves');
+    ok(!('passwordHash' in body.user) && !('password_hash' in body.user), 'el registro no expone el hash');
   }
 
   // ---- logout ----

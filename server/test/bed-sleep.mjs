@@ -189,13 +189,13 @@ ok(/sleepBed/.test(server), 'server recuerda la celda de la cama por durmiente')
 // ---------- 4. bot ----------
 ok(/t:\s*'hello'[^;]*bot:\s*true/s.test(bot), 'el bot declara bot:true en el hello');
 
-// ---------- 5. alta en la suite (30 archivos) ----------
+// ---------- 5. alta en la suite (34 archivos) ----------
 {
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'server', 'package.json'), 'utf8'));
   const s = pkg.scripts.test;
   ok(/test\/bed-sleep\.mjs/.test(s), 'npm test da de alta test/bed-sleep.mjs');
   const count = (s.match(/test\/[\w-]+\.mjs/g) || []).length;
-  ok(count === 30, `el script test enumera 30 archivos (${count})`);
+  ok(count === 34, `el script test enumera 34 archivos (${count})`);
 }
 
 if (fails) { console.log(`\n💥 ${fails} chequeo(s) fallaron`); process.exit(1); }

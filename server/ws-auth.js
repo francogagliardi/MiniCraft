@@ -3,6 +3,7 @@
 // `Authorization: Bearer <BOT_TOKEN>` para el bot de servicio (tiempo constante).
 const A = require('./auth.js');
 const CFG = require('./env-config.js');
+const Permissions = require('./permissions.js');
 
 const REASONS = { 401: 'Unauthorized', 503: 'Service Unavailable' };
 
@@ -52,6 +53,7 @@ function createWsGate({ store, env = process.env, now = () => Date.now(), log = 
       username: found.user.username,
       role: found.user.role,
       skin: found.user.skin,
+      permissions: Permissions.materializePermissions(found.user.permissions),
     };
   }
 

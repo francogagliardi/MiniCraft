@@ -70,6 +70,7 @@ function normPlayer(p) {
     pos: Array.isArray(p.pos) ? [p.pos[0], p.pos[1], p.pos[2]] : [0, 0, 0],
     dead: p.dead === 1 ? 1 : 0,
     hp: Number.isFinite(p.hp) ? p.hp : MAX_HP,
+    botIgnore: p.botIgnore === true,
   };
 }
 
@@ -114,8 +115,8 @@ function createHunter(cfg = {}) {
   const sendChat = (text) => send({ t: 'chat', text: String(text).slice(0, 140) });
   const setMode = (m) => { modo = m; };
 
-  /** Presa válida: no-admin, viva y que no sea el propio bot. */
-  const isPrey = (p) => p && p.id !== self.id && p.mode !== 'admin' && p.dead === 0;
+  /** Presa válida: no-admin, viva, sin bot_ignore y que no sea el propio bot. */
+  const isPrey = (p) => p && p.id !== self.id && p.mode !== 'admin' && p.dead === 0 && p.botIgnore !== true;
 
   /** Presa viva no-admin más cercana (o null). `maxD` acota la distancia horizontal. */
   function nearestPrey(maxD) {
@@ -257,6 +258,12 @@ function createHunter(cfg = {}) {
       }
       case 'chat': {
         handleChat(m);
+        break;
+      }
+      case 'perm': {
+        // Cambio en caliente (change admin-crud-permisos): sin frame ⇒ no protegido.
+        const p = players.get(m.id);
+        if (p) p.botIgnore = !!(m.permissions && m.permissions.bot_ignore === true);
         break;
       }
       case 'phit':
