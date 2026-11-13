@@ -22,7 +22,7 @@
 ## 4. Verificación de integración
 
 - [x] 4.1 Correr `cd server && npm test` y verificar que toda la suite queda verde sin cambiar la cantidad de archivos de test.
-- [ ] 4.2 Probar en el navegador el recorrido completo (puede ser con Docker del bloque de aprobación): morir y volver al lobby sin cerrar sesión; pausa sin “Cerrar sesión”; Tab con foco visible en ambos botones; 360 px de ancho sin scroll horizontal; toque en móvil al primer intento.
+- [x] 4.2 Probar en el navegador el recorrido completo (puede ser con Docker del bloque de aprobación): morir y volver al lobby sin cerrar sesión; pausa sin “Cerrar sesión”; Tab con foco visible en ambos botones; 360 px de ancho sin scroll horizontal; toque en móvil al primer intento.
 
 ## Workflow follow-up
 
