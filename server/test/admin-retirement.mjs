@@ -33,6 +33,26 @@ const ok = (cond, msg) => {
   ok(seen3.length === 0, 'no se escribe nada sin variables legacy');
 }
 
+// ---- warning de BOT_TOKEN retirado, una sola vez y sin valor ----
+{
+  const seen = [];
+  B.resetLegacyBotToken();
+  ok(typeof B.warnLegacyBotToken === 'function', 'existe el aviso de BOT_TOKEN legado');
+  if (typeof B.warnLegacyBotToken === 'function') {
+    ok(B.warnLegacyBotToken({ BOT_TOKEN: 'bot-secreto-999' }, (...a) => seen.push(a.join(' '))) === true,
+      'BOT_TOKEN dispara el aviso de retiro');
+    B.warnLegacyBotToken({ BOT_TOKEN: 'bot-secreto-999' }, (...a) => seen.push(a.join(' ')));
+    ok(seen.length === 1, 'el aviso de BOT_TOKEN se registra una sola vez por proceso');
+    ok(seen[0] && seen[0].includes('BOT_TOKEN') && !seen[0].includes('bot-secreto-999'),
+      'el aviso nombra BOT_TOKEN sin loguear su valor');
+    ok(/\/admin/.test(seen[0] || ''), 'el aviso indica que los bots se administran en /admin');
+    const none = [];
+    B.resetLegacyBotToken();
+    ok(B.warnLegacyBotToken({}, (...a) => none.push(a.join(' '))) === false, 'sin BOT_TOKEN no hay aviso');
+    ok(none.length === 0, 'no se escribe nada sin BOT_TOKEN');
+  }
+}
+
 // ---- bootstrap del admin ----
 {
   const store = new MemoryStore();

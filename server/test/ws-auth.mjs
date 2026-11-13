@@ -22,7 +22,8 @@ const FIX = await startApp({
     { username: 'root', password: 'admin-12345', role: 'admin', skin: 'giant' },
     { username: 'beto', password: 'correcta-123', role: 'user', skin: 'small' },
   ],
-  botToken: 'bot-secret-1234567890',
+  // Variable legada: aunque esté seteada, ya no autentica ningún upgrade.
+  env: { BOT_TOKEN: 'bot-secret-1234567890' },
 });
 try {
   // ---- rechazos ----
@@ -33,6 +34,8 @@ try {
     ok(badCookie.status === 401, 'cookie inválida → 401');
     const badBearer = await connect(FIX.wsUrl(), { headers: { Authorization: 'Bearer otro-token' } });
     ok(badBearer.status === 401, 'Bearer incorrecto → 401 (no cae a cookie)');
+    const legacyBearer = await connect(FIX.wsUrl(), { headers: { Authorization: 'Bearer bot-secret-1234567890' } });
+    ok(legacyBearer.status === 401, 'Bearer con el BOT_TOKEN legado → 401 (credencial retirada)');
   }
 
   // ---- sesión válida e identidad impuesta ----
@@ -87,21 +90,15 @@ try {
     ws.ws.close();
   }
 
-  // ---- bot de servicio ----
+  // ---- un usuario de cookie no puede declararse bot ----
   {
-    const bot = await connect(FIX.wsUrl(), { headers: { Authorization: 'Bearer bot-secret-1234567890' } });
-    ok(bot.status === 101, 'bot con BOT_TOKEN válido entra');
-    bot.ws.send(JSON.stringify({ t: 'hello', name: 'OPSX-bot', skin: 'robot', mode: 'admin', bot: true }));
-    const w = await nextMessage(bot.ws, 'welcome');
-    ok(w.admin === false && w.user === undefined, 'el bot no es admin ni tiene perfil de usuario');
-    // un usuario ve al bot con bot=true → no suma al quórum
-    const u = await connect(FIX.wsUrl(), { headers: { Cookie: cAna } });
-    helloFrame(u.ws);
-    const wu = await nextMessage(u.ws, 'welcome');
-    ok(wu.sleepNeed === 1, 'el bot no cuenta para el quórum de sueño (need=1)');
-    const botEntry = wu.players.find(p => p.name === 'OPSX-bot');
-    ok(botEntry && botEntry.mode === 'player', 'el bot se difunde como player');
-    u.ws.close(); bot.ws.close();
+    const botLike = await connect(FIX.wsUrl(), { headers: { Cookie: cAna } });
+    helloFrame(botLike.ws);
+    const w = await nextMessage(botLike.ws, 'welcome');
+    ok(w.admin === false && w.user.role === 'user',
+      'el hello con bot:true no crea un bot ni cambia el rol');
+    ok(w.sleepNeed === 1, 'el intento de bot:true no lo excluye del quórum de sueño (need=1)');
+    botLike.ws.close();
   }
 
   // ---- DB caída en el upgrade ----

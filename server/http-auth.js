@@ -48,7 +48,7 @@ function clientIp(req, { trustProxy }) {
   return req.socket && req.socket.remoteAddress ? req.socket.remoteAddress : 'unknown';
 }
 
-function createAuthRouter({ store, env = process.env, staticDir, now = () => Date.now(), log = console.log, warn = console.warn, onSessionRevoked, onPermissionsChanged } = {}) {
+function createAuthRouter({ store, env = process.env, staticDir, now = () => Date.now(), log = console.log, warn = console.warn, onSessionRevoked, onPermissionsChanged, bots } = {}) {
   const secure = CFG.cookieSecure(env);
   const trustProxy = CFG.trustProxy(env);
   const registrationOpen = CFG.registrationEnabled(env, warn);
@@ -61,7 +61,7 @@ function createAuthRouter({ store, env = process.env, staticDir, now = () => Dat
     currentSession, sameOrigin, readJson,
     clientIp: (req) => clientIp(req, { trustProxy }),
     secure, derivations: limiters.derivations,
-    onSessionRevoked, onPermissionsChanged,
+    onSessionRevoked, onPermissionsChanged, bots,
   });
 
   function rateWarn(what) {

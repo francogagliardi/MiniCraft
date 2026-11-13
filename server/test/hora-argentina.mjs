@@ -1,6 +1,6 @@
 // Test del prefijo de hora de Argentina en los logs (change hora-argentina-logs).
-// Cubre las dos superficies: `server.js` (unión/salida, sobre el stdout REAL del
-// server) y `bot/cazador.js` (golpe, con `log` inyectado).
+// Cubre las dos superficies: `server/app.js` (unión/salida, sobre el stdout REAL
+// del server) y `server/bot-runtime.js` (golpe de un bot in-process).
 //
 // Nunca asierta contra el reloj real ni contra la TZ de la máquina: usa epochs
 // FIJOS (`Date.UTC`) y el helper formatea con `timeZone:
@@ -12,11 +12,14 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
 import { startApp, connect } from './support/app-fixture.mjs';
+import { MemoryStore } from './support/memory-store.mjs';
 
 const require = createRequire(import.meta.url);
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const serverDir = path.join(dir, '..');
 const root = path.join(serverDir, '..');
+
+const BotRuntime = require('../bot-runtime.js');
 
 let fails = 0;
 const ok = (cond, msg) => { console.log((cond ? '✅ ' : '❌ ') + msg); if (!cond) fails++; };
@@ -34,52 +37,60 @@ async function until(fn, ms = 6000) {
 // ---- epochs FIJOS (Argentina = UTC−3 todo el año) ----
 const EPOCH_2353 = Date.UTC(2026, 9, 17, 2, 53); // 17/10/2026 02:53 UTC ⇒ 23:53 en Argentina
 const EPOCH_0000 = Date.UTC(2026, 9, 17, 3, 0);  // 17/10/2026 03:00 UTC ⇒ 00:00 en Argentina
+const GROUND = 30; // y de un mundo plano de test
 
 // ---- extracción de los bloques marcados con `new Function` (patrón avatar-held.mjs) ----
 const HORA_AR_START = '/* hora-ar:start */', HORA_AR_END = '/* hora-ar:end */';
-// Devuelve { horaAr, FMT_AR } del bloque marcado de `src` (null si el bloque no existe).
 function loadHoraAr(src) {
   const i = src.indexOf(HORA_AR_START), j = src.indexOf(HORA_AR_END);
   if (i < 0 || j < 0 || j < i) return null;
   return new Function(src.slice(i, j + HORA_AR_END.length) + '\n;return { horaAr, FMT_AR };')();
 }
-// La zona debe ser la de Argentina. `resolvedOptions()` devuelve el alias canónico
-// `America/Buenos_Aires`, no el id de entrada: se toleran ambos nombres.
 const ZONA_AR = ['America/Buenos_Aires', 'America/Argentina/Buenos_Aires'];
 const srvSrc = fs.readFileSync(path.join(serverDir, 'app.js'), 'utf8');
+const rtSrc = fs.readFileSync(path.join(serverDir, 'bot-runtime.js'), 'utf8');
 
-// ---- bot: módulo PURO, sin red (createHunter con `log` capturado) ----
-const HUNTER = require(path.join(root, 'bot', 'cazador.js'));
-const botSrc = fs.readFileSync(path.join(root, 'bot', 'cazador.js'), 'utf8');
-const GROUND = 30; // y de un mundo plano de test
+// Runtime con mundo plano y una presa a 1.5 u (dentro del umbral de golpe).
+function runtimeAt(epoch, { log } = {}) {
+  const store = new MemoryStore({ now: () => epoch });
+  const rt = BotRuntime.create({
+    store,
+    world: { W: 208, H: 40, surface: 10, topSolidY: () => GROUND, freeForMob: () => true },
+    env: {}, now: () => epoch, ...(log ? { log } : {}), warn: () => {},
+    getPlayers: () => [{ id: 2, name: 'Presa', pos: [102, GROUND, 100.5], dead: 0, mode: 'player', admin: false, bot: false, permissions: {} }],
+    broadcast: () => {}, sendToPlayer: () => {},
+  });
+  const bot = rt.spawn({
+    id: 1, name: 'OPSX-bot', behavior: 'cazador', skin: 'robot', hp: 10,
+    damage: 6, reach: 4.6, speed: 28.8, flying: true, takesDamage: false,
+  });
+  bot.pos = [100.5, GROUND, 100.5];
+  return rt;
+}
 
 // ---- server real: createApp EN PROCESO con log capturado ----
 const lines = [];
-const appLines = [];
 function startServer(env) {
   return startApp({
     users: [{ username: 'TZProbe', password: 'password-123' }],
     env,
-    log: (...a) => { const s = a.join(' '); lines.push(s); appLines.push(s); },
-    warn: (...a) => { lines.push(a.join(' ')); appLines.push(a.join(' ')); },
+    log: (...a) => { lines.push(a.join(' ')); },
+    warn: (...a) => { lines.push(a.join(' ')); },
   });
 }
 
 try {
-  // ==================== 1.1 helper horaAr en server.js (contrato determinista) ====================
+  // ==================== 1.1 helper horaAr en app.js (contrato determinista) ====================
   {
     const H = loadHoraAr(srvSrc);
-    ok(!!H && typeof H.horaAr === 'function', 'server.js define el bloque hora-ar con horaAr()');
+    ok(!!H && typeof H.horaAr === 'function', 'app.js define el bloque hora-ar con horaAr()');
     if (H) {
       const got = H.horaAr(EPOCH_2353);
       ok(got === '[23:53] ', `horaAr(UTC 02:53) ⇒ '[23:53] ' (Argentina UTC−3) → ${JSON.stringify(got)}`);
-      // medianoche: fija que `hour12:false` no renderice el quirk `24:00`
       const mid = H.horaAr(EPOCH_0000);
       ok(mid === '[00:00] ', `horaAr(UTC 03:00) ⇒ '[00:00] ' (medianoche, sin quirk 24:00) → ${JSON.stringify(mid)}`);
-      // contrato de formato: prefijo completo, con el espacio final
       ok(/^\[\d{2}:\d{2}\] $/.test(got) && /^\[\d{2}:\d{2}\] $/.test(mid),
         'el prefijo cumple /^\\[\\d{2}:\\d{2}\\] $/ (HH:MM 24 h + espacio final)');
-      // la zona del formatter es la de Argentina (tolerando el alias canónico)
       const tz = H.FMT_AR && H.FMT_AR.resolvedOptions && H.FMT_AR.resolvedOptions().timeZone;
       ok(ZONA_AR.includes(tz), `la zona del formatter es la de Argentina (${tz})`);
     }
@@ -93,116 +104,67 @@ try {
       const c = await connect(s.wsUrl(), { headers: { Cookie: cookie } });
       c.ws.send(JSON.stringify({ t: 'hello', name: 'TZProbe', mode: 'player', skin: 'human' }));
       const join = await until(() => lines.find(l => /^\[(\d{2}:\d{2})\] (➕ TZProbe \(player\) — \d+ conectados)$/.test(l)));
-      const joinM = join && join.match(/^\[(\d{2}:\d{2})\] (➕ TZProbe \(player\) — \d+ conectados)$/);
       ok(!!join, 'unión: la línea de log lleva `[HH:MM] ` con el texto original intacto detrás');
-      if (joinM) ok(/^\d{2}:\d{2}$/.test(joinM[1]), `unión: el prefijo es una hora HH:MM (${joinM[1]})`);
       try { c.ws.close(); } catch (e) {}
       const leave = await until(() => lines.find(l => /^\[(\d{2}:\d{2})\] (➖ TZProbe — \d+ conectados)$/.test(l)));
       ok(!!leave, 'salida: la línea de log lleva `[HH:MM] ` con el texto original intacto detrás');
     } finally { await s.close(); }
   }
 
-  // ==================== 2.1 helper horaAr en bot/cazador.js (mismo contrato) ====================
+  // ==================== 2.1 helper horaAr en bot-runtime.js (mismo contrato) ====================
   {
-    const H = loadHoraAr(botSrc);
-    ok(!!H && typeof H.horaAr === 'function', 'bot/cazador.js define el bloque hora-ar con horaAr()');
+    const H = loadHoraAr(rtSrc);
+    ok(!!H && typeof H.horaAr === 'function', 'bot-runtime.js define el bloque hora-ar con horaAr()');
     if (H) {
       const got = H.horaAr(EPOCH_2353);
-      ok(got === '[23:53] ', `horaAr del bot (UTC 02:53) ⇒ '[23:53] ' → ${JSON.stringify(got)}`);
+      ok(got === '[23:53] ', `horaAr del runtime (UTC 02:53) ⇒ '[23:53] ' → ${JSON.stringify(got)}`);
     }
-    ok(typeof HUNTER.horaAr === 'function', 'bot/cazador.js exporta horaAr en module.exports');
+    ok(typeof BotRuntime.horaAr === 'function', 'bot-runtime.js exporta horaAr en module.exports');
   }
 
-  // ==================== 2.1 comportamiento: golpe del bot (log inyectado) ====================
+  // ==================== 2.2 comportamiento: golpe del bot (log inyectado) ====================
   {
-    const logs = [], sent = [];
-    const h = HUNTER.createHunter({
-      send: (f) => sent.push(f), log: (s) => logs.push(String(s)),
-      now: () => EPOCH_2353, spawn: [100.5, GROUND, 100.5],
-    });
-    // presa viva no-admin a 1.5 u (dentro de CHASE_STOP ⇒ no se mueve y golpea en el tick)
-    h.handle({ t: 'welcome', id: 1, players: [{ id: 2, name: 'Presa', mode: 'player', hp: 10, dead: 0, pos: [102, GROUND, 100.5] }] });
-    h.tick(0.05);
+    const logs = [];
+    const rt = runtimeAt(EPOCH_2353, { log: (...a) => logs.push(a.join(' ')) });
+    rt.tick(0.05);
     const golpe = logs.find(l => l.includes('golpe a'));
-    ok(!!golpe, 'el bot loguea el golpe (escenario de sanidad)');
+    ok(!!golpe, 'el runtime loguea el golpe (escenario de sanidad)');
     if (golpe) {
       const m = golpe.match(/^\[(\d{2}:\d{2})\] (⚔️  golpe a Presa \(d=1\.50, seq=1\))$/);
       ok(!!m, 'golpe: la línea empieza con `[HH:MM] ` y el texto original queda intacto detrás');
       if (m) ok(m[1] === '23:53', `golpe: el prefijo es la hora de Argentina (${m[1]})`);
     }
-    ok(sent.some(f => f.t === 'hit'), 'el golpe realmente salió por la red (sanidad del escenario)');
+    rt.close();
   }
 
-  // ============= 2.3 anti-drift server↔bot (misma salida por epoch) + medianoche del bot =============
+  // ============= 2.3 anti-drift app↔runtime (misma salida por epoch) + medianoche =============
   {
-    const S = loadHoraAr(srvSrc), B = loadHoraAr(botSrc);
-    ok(!!S && !!B, 'anti-drift: existen las dos copias del helper (server y bot)');
+    const S = loadHoraAr(srvSrc), B = loadHoraAr(rtSrc);
+    ok(!!S && !!B, 'anti-drift: existen las dos copias del helper (app y runtime)');
     if (S && B) {
-      // epochs variados: mismo instante ⇒ salida byte a byte idéntica en ambas copias
       const epochs = [EPOCH_2353, EPOCH_0000, Date.UTC(2026, 11, 31, 23, 59), Date.UTC(2027, 0, 1, 6, 30)];
       const drift = epochs.filter(e => S.horaAr(e) !== B.horaAr(e));
       ok(drift.length === 0, `anti-drift: las dos copias coinciden para el mismo epoch (${epochs.length} casos)`);
       const mid = B.horaAr(EPOCH_0000);
-      ok(mid === '[00:00] ', `medianoche del bot (UTC 03:00) ⇒ '[00:00] ' → ${JSON.stringify(mid)}`);
+      ok(mid === '[00:00] ', `medianoche del runtime (UTC 03:00) ⇒ '[00:00] ' → ${JSON.stringify(mid)}`);
     }
   }
 
-  // ====== 3.1 comportamiento: el logger POR DEFECTO del bot no antepone `[bot]` ======
-  // Levanta el bot REAL (`bot/index.js`) con un WebSocket falso y SIN inyectar `log`
-  // (⇒ usa el logger por defecto) y captura `console.log`. Es el único camino que
-  // prueba el comportamiento REAL del logger por defecto: el test de `createHunter`
-  // (2.1) inyecta `log`, así que no ve el cableado de `index.js`. La hora DEBE ser el
-  // primer carácter de la línea (pedido del usuario), sin ningún tag delante.
+  // ====== 3.1 comportamiento: el logger POR DEFECTO del runtime no antepone `[bot]` ======
   {
-    const { createBotClient } = require(path.join(root, 'bot', 'index.js'));
-    // Mundo plano inyectado (determinismo: sin terreno que trabe el pathing).
-    const flatWorld = () => ({
-      W: 208, H: 40, topSolidY: () => GROUND, blocked: () => false, set() {},
-      findSpawn: () => [100.5, GROUND, 100.5],
-    });
-    // WebSocket falso: sólo la superficie que usa el cableado (on/send/close/terminate).
-    let fire = null, sock = null;
-    class FakeWS {
-      constructor() {
-        this.readyState = FakeWS.OPEN;
-        this.handlers = {};
-        this.opened = false;
-        sock = this;
-        fire = (ev, ...args) => { for (const f of (this.handlers[ev] || [])) f(...args); };
-        setTimeout(() => { this.opened = true; fire('open'); }, 0); // `open` async, como el real
-      }
-      on(ev, fn) { (this.handlers[ev] = this.handlers[ev] || []).push(fn); return this; }
-      send() {}
-      close() {}
-      terminate() {}
-    }
-    FakeWS.OPEN = 1;
-
     const origLog = console.log;
-    const lines = [];
-    console.log = (...a) => { lines.push(a.map(x => (typeof x === 'string' ? x : String(x))).join(' ')); };
-    let client = null, opened = null;
+    const captured = [];
+    console.log = (...a) => { captured.push(a.map(x => (typeof x === 'string' ? x : String(x))).join(' ')); };
+    let rt = null;
     try {
-      client = createBotClient({
-        url: 'ws://fake', name: 'OPSX-bot', WebSocket: FakeWS,
-        worldBuilder: flatWorld, now: () => EPOCH_2353, mvMs: 100000, // ticker fuera del test
-      });
-      client.start();
-      opened = await until(() => sock && sock.opened); // `open` ya despachado (dentro de la captura)
-      // welcome con una presa a 1.5 u (dentro de CHASE_STOP ⇒ golpea en el tick, sin acercarse)
-      if (opened) fire('message', JSON.stringify({
-        t: 'welcome', id: 1,
-        players: [{ id: 2, name: 'Presa', mode: 'player', hp: 10, dead: 0, pos: [102, GROUND, 100.5] }],
-      }));
-      await until(() => client.getBot());
-      if (client.getBot()) client.getBot().tick(0.05);
+      rt = runtimeAt(EPOCH_2353); // sin `log` inyectado ⇒ logger por defecto
+      rt.tick(0.05);
     } finally {
       console.log = origLog; // restaurar ANTES de asertar (los `ok` usan console.log)
-      try { client && client.stop(); } catch (e) {}
+      try { rt && rt.close(); } catch (e) {}
     }
-    ok(!!opened, 'bot real: el WebSocket falso emitió `open` y el bot quedó cableado');
-    const golpe = lines.find(l => l.includes('golpe a'));
-    ok(!!golpe, 'bot real + logger por defecto: loguea el golpe');
+    const golpe = captured.find(l => l.includes('golpe a'));
+    ok(!!golpe, 'runtime real + logger por defecto: loguea el golpe');
     if (golpe) {
       ok(/^\[\d{2}:\d{2}\] ⚔️  golpe a Presa \(d=1\.50, seq=1\)$/.test(golpe),
         `la línea del golpe EMPIEZA con [HH:MM] y no lleva ningún tag delante → ${JSON.stringify(golpe)}`);

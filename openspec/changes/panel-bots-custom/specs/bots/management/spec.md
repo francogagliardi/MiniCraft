@@ -25,6 +25,16 @@ El sistema SHALL persistir cada bot en una tabla `bots` con `id`, `name`, `behav
 - **WHEN** un admin crea un bot
 - **THEN** `created_by` apunta a esa cuenta y, si la cuenta se borra, el bot sigue existiendo con `created_by` nulo
 
+#### Scenario: Allowlist de comportamientos ampliada
+
+- **WHEN** el server arranca y corre la migración forward-only `004-bot-behaviors.sql`
+- **THEN** el CHECK `bots_behavior_allow` acepta `guardian` y `neutral` además de `cazador` y `merodeador`, sin reescribir la migración 003 ya aplicada
+
+#### Scenario: Comportamiento fuera de la allowlist
+
+- **WHEN** se intenta guardar una fila con un comportamiento que no está en la allowlist
+- **THEN** la base rechaza la escritura y el bot no se crea
+
 ### Requirement: Nombre de bot válido y único
 
 El nombre de un bot SHALL tener entre 3 y 16 caracteres, coincidir con `^[A-Za-z0-9_-]+$` y ser único sin distinguir mayúsculas. El nombre SHALL ser el que se muestra en el juego y en el roster.
@@ -75,7 +85,7 @@ El sistema SHALL aceptar `hp` entero de 1 a 100, `damage` entero de 0 a 20, `rea
 
 ### Requirement: Vuelo y recepción de daño como configuración
 
-Cada bot SHALL tener dos flags booleanos estrictos: `flying` (movimiento) y `takes_damage` (vulnerabilidad). Volar MUST NOT tratarse como un comportamiento, y un valor no booleano MUST rechazarse.
+Cada bot SHALL tener dos flags booleanos estrictos: `flying` (movimiento) y `takes_damage` (vulnerabilidad ante jugadores **y criaturas**). Volar MUST NOT tratarse como un comportamiento, y un valor no booleano MUST rechazarse.
 
 #### Scenario: Vuelo desactivado
 
@@ -85,7 +95,7 @@ Cada bot SHALL tener dos flags booleanos estrictos: `flying` (movimiento) y `tak
 #### Scenario: Bot invulnerable
 
 - **WHEN** un admin configura un bot con `takes_damage:false`
-- **THEN** los golpes de los jugadores no le bajan la vida
+- **THEN** los golpes de los jugadores y de las criaturas no le bajan la vida
 
 #### Scenario: Flag no booleano
 
@@ -94,17 +104,22 @@ Cada bot SHALL tener dos flags booleanos estrictos: `flying` (movimiento) y `tak
 
 ### Requirement: Catálogo extensible de comportamientos
 
-El sistema SHALL exponer un catálogo de comportamientos registrados en código con al menos `cazador` y `merodeador`, y MUST rechazar un comportamiento que no esté registrado. Sumar un comportamiento MUST requerir solo registrarlo, sin cambiar el modelo ni la API.
+El sistema SHALL exponer un catálogo de comportamientos registrados en código con al menos `cazador`, `merodeador`, `guardian` y `neutral`, cada uno con su etiqueta en español, si es hostil y contra qué ataca (`attacksPlayers` y `attacksEnemies`). MUST rechazar un comportamiento que no esté registrado. Sumar un comportamiento MUST requerir solo registrarlo, sin cambiar el modelo ni la API.
 
 #### Scenario: Catálogo disponible
 
 - **WHEN** un admin consulta el listado de bots
-- **THEN** recibe los comportamientos `cazador` y `merodeador` con su etiqueta en español y si son hostiles
+- **THEN** recibe los comportamientos `cazador`, `merodeador`, `guardian` y `neutral` con su etiqueta en español, su hostilidad y si atacan jugadores o criaturas
 
 #### Scenario: Comportamiento desconocido
 
-- **WHEN** un admin envía `behavior:"guardian"`
+- **WHEN** un admin envía `behavior:"fantasma"`
 - **THEN** la respuesta es `422 invalid_behavior` y no se crea el bot
+
+#### Scenario: Guardián y neutral con la misma ficha
+
+- **WHEN** un admin crea un bot `guardian` o `neutral` sin enviar el resto de la configuración
+- **THEN** el alta aplica los defaults de ese comportamiento y acepta los mismos campos `hp`, `damage`, `reach`, `speed`, `flying` y `takes_damage` que los demás
 
 ### Requirement: Catálogo de aspectos para bots
 

@@ -28,8 +28,6 @@ services:
       # ni se versiona; en Easypanel va como secreto. Si falta, no hay admin.
       ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
-      # Credencial de servicio del bot (server y bot usan el MISMO valor).
-      BOT_TOKEN: ${BOT_TOKEN:-}
       # 1 en producción HTTPS (Easypanel); 0 en dev local por HTTP.
       COOKIE_SECURE: ${COOKIE_SECURE:-0}
       # 1 solo detrás de un proxy propio que sanee X-Forwarded-For.
@@ -46,21 +44,6 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    restart: unless-stopped
-
-  # Bot cazador: un CLIENTE más, autenticado con BOT_TOKEN (sin cookie).
-  # Sin BOT_TOKEN el proceso sale con error claro en vez de entrar anónimo.
-  minicraft-bot:
-    build:
-      context: .
-      dockerfile: Dockerfile.bot
-    image: minicraft-bot:latest
-    environment:
-      SERVER_URL: ws://minicraft:3000
-      BOT_NAME: OPSX-bot
-      BOT_SKIN: ${BOT_SKIN:-robot}
-      BOT_TOKEN: ${BOT_TOKEN:-}
-    depends_on: [minicraft]
     restart: unless-stopped
 
 volumes:

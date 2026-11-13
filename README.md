@@ -16,6 +16,8 @@ chiquito en Node.js con WebSocket.
 - 🛠 **Modo admin**: vuela, pica instantáneo, inmune al daño (rol admin de la cuenta)
 - 🛂 **Panel `/admin`**: CRUD de cuentas, permisos por usuario (`bot_ignore`, `fly`,
   `instant_break`), activar/desactivar, reset de contraseña y auditoría append-only
+- 🤖 **Bots desde `/admin`**: crear, configurar, lanzar y detener hasta 5 bots
+  in-process (cazador, merodeador, guardián o neutral), con preset del cazador clásico
 - ⚔️ Espada con cooldown, animación y anillo de recarga + PvP
 - 🐷🐑 Chanchitos y ovejitas acariciables (con corazones)
 - 🎒 Inventario creativo (20 bloques) + hotbar de 9
@@ -32,24 +34,23 @@ MiniCraft/
 ├── lobby.html            ← username, skins y elección de mundo
 ├── admin.html            ← panel de administración (/admin, solo rol admin)
 ├── Dockerfile            ← imagen del server para Easypanel / VPS
-├── Dockerfile.bot        ← imagen del bot cazador (servicio aparte)
-├── docker-compose.yml    ← db + server + bot con persistencia
+├── docker-compose.yml    ← db + server con persistencia
 ├── .dockerignore
-├── bot/
-│   ├── cazador.js        ← lógica pura del bot (presa, golpes, modos)
-│   └── index.js          ← cableado: WebSocket, reconexión y CLI
 ├── server/
 │   ├── server.js         ← bootstrap: env → DB → migraciones → app
-│   ├── app.js            ← HTTP estático + API + WebSocket + mundo
+│   ├── app.js            ← HTTP estático + API + WebSocket + mundo + bots
 │   ├── auth.js           ← scrypt, tokens, cookies y validaciones
 │   ├── http-auth.js      ← rutas /api/* y páginas de login/registro/lobby
-│   ├── admin-api.js      ← CRUD admin, guardas, auditoría y gate de /admin
+│   ├── admin-api.js      ← CRUD admin, bots, guardas, auditoría y gate de /admin
+│   ├── bot-config.js     ← límites, defaults, preset y validación de bots
+│   ├── bot-behaviors.js  ← registro de comportamientos + movimiento puro
+│   ├── bot-runtime.js    ← spawn, tick, daño, muerte y roster de bots
 │   ├── permissions.js    ← allowlist y materialización de permisos por usuario
-│   ├── ws-auth.js        ← gate del upgrade (cookie o BOT_TOKEN)
+│   ├── ws-auth.js        ← gate del upgrade (solo cookie de sesión)
 │   ├── db.js             ← Pool PostgreSQL + transacciones
 │   ├── migrate.js        ← runner de migraciones SQL
-│   ├── migrations/       ← esquema versionado (001-auth.sql, 002-admin-permissions.sql)
-│   ├── store-pg.js       ← users/sessions/admin_audit sobre PostgreSQL
+│   ├── migrations/       ← esquema versionado (001, 002 y 003-bots.sql)
+│   ├── store-pg.js       ← users/sessions/admin_audit/bots sobre PostgreSQL
 │   ├── user-tool.mjs     ← crear/cambiar contraseña/listar/activar cuentas
 │   ├── package.json
 │   └── README.md         ← deploy clásico en VPS
@@ -64,8 +65,8 @@ solitario sin cuentas).
 **Multijugador local con Docker:**
 
 ```bash
-# La primera vez, definí una contraseña de admin y un token de bot:
-ADMIN_PASSWORD=admin-local-12345 BOT_TOKEN=dev-bot-token-1234567890 docker compose up --build -d
+# La primera vez, definí una contraseña de admin:
+ADMIN_PASSWORD=admin-local-12345 docker compose up --build -d
 ```
 
 Abrí http://localhost:3000, creá una cuenta en `/register` o entrá con
@@ -120,81 +121,93 @@ gravedad, el daño de caída y la vida no cambian** con el aspecto. La cámara `
 ## 🐳 Docker
 
 ```bash
-# build + run (db + server + bot; mundo en volumen)
-ADMIN_PASSWORD=admin-local-12345 BOT_TOKEN=dev-bot-token-1234567890 docker compose up --build -d
-# solo server (+ db)
-ADMIN_PASSWORD=admin-local-12345 docker compose up --build -d minicraft
+# build + run (db + server; mundo en volumen)
+ADMIN_PASSWORD=admin-local-12345 docker compose up --build -d
 # ver logs
 docker compose logs -f
 # parar
 docker compose down
 ```
 
-`docker compose up --build -d` levanta **tres** servicios: `db` (PostgreSQL 16,
-volumen `minicraft-db`, sin puertos públicos), `minicraft` (el server, espera el
-healthcheck de la DB) y `minicraft-bot` (el bot cazador, un cliente aparte).
-Para inspeccionar la base: `docker compose exec db psql -U minicraft`.
+`docker compose up --build -d` levanta **dos** servicios: `db` (PostgreSQL 16,
+volumen `minicraft-db`, sin puertos públicos) y `minicraft` (el server, espera el
+healthcheck de la DB). Los bots corren **dentro** del server: no hay un servicio
+aparte. Para inspeccionar la base: `docker compose exec db psql -U minicraft`.
 
 Variables principales (todas con default seguro en compose, salvo las
 credenciales): `DATABASE_URL`, `ADMIN_USERNAME`, `ADMIN_PASSWORD`,
-`BOT_TOKEN`, `COOKIE_SECURE`, `TRUST_PROXY`, `REGISTRATION_ENABLED`, `PORT`.
-Sin `BOT_TOKEN` el bot sale con error claro; el server sigue funcionando para
-usuarios. En **dev por HTTP** dejá `COOKIE_SECURE=0`; en producción HTTPS,
-`COOKIE_SECURE=1`.
+`COOKIE_SECURE`, `TRUST_PROXY`, `REGISTRATION_ENABLED`, `PORT`. En **dev por
+HTTP** dejá `COOKIE_SECURE=0`; en producción HTTPS, `COOKIE_SECURE=1`.
 
-## 🤖 Bot cazador (24/7)
+## 🤖 Bots desde `/admin`
 
-Un **robot humanoide** (`skin:'robot'`) entra como un cliente de **servicio**,
-autenticado con `BOT_TOKEN` (sin cookie, modo `player`, **nunca** admin), a
-perseguir y fulminar jugadores. Es un **huésped de solo lectura**: nunca rompe
-ni pone bloques (cero `edit`).
+Los bots ya no son un proceso aparte ni usan `BOT_TOKEN`: corren dentro del
+server, aparecen como avatares normales y se administran desde **`/admin` →
+Bots**. No hay auto-seed: el primer deploy no crea ninguno y el roster arranca
+sin bots.
 
-- **A quién caza:** a cualquier jugador **no-admin** vivo. **Nunca** ataca admins.
-- **Cómo se mueve:** **vuela y atraviesa bloques** (no-clip, siempre activo, sin
-  interruptor): paredes, techos, pisos, construcciones cerradas, cuevas y torres no
-  lo frenan. Ajusta su altura a la del objetivo (presa, admin o spawn) para
-  alcanzarlo aunque esté arriba o abajo, y sólo lo limita el borde del mundo. Va a
-  **28.8 u/s** (3× su velocidad anterior y 6× la caminata de 4.8 del jugador).
-- **Cómo mata:** dos toques de `dmg: 6` separados ≥0.65 s (6+6=12 > 10 de vida), así
-  respeta la ventana de invulnerabilidad de 0.6 s del cliente: la víctima **ve dos
-  golpes rápidos** y muere en ~0.65 s. Es **invulnerable** (reporta siempre 10/0).
-- **Sin presas:** vuelve al punto de aparición y se queda quieto ahí (sigue latiendo).
-- **Comandos de chat (solo admin):** el bot autoriza por el **flag `admin:true` del
-  server** o por el rol admin de su roster, nunca por nombre (un impostor no lo comanda).
+- **Crear:** “Nuevo bot” o **“Preset cazador clásico”** (precarga `cazador`,
+  `robot`, vida 10, daño 6, alcance 4.6, velocidad 28.8, vuela y no recibe daño;
+  el preset **no crea** nada: solo completa el formulario).
+- **Configurar:** nombre visible (3–16, `^[A-Za-z0-9_-]+$`), comportamiento
+  (`cazador`, `merodeador`, `guardián` o `neutral`), aspecto del catálogo (incluye
+  `robot`), vida 1–100, daño 0–20, alcance 1–10, velocidad 1–30, vuelo y
+  recepción de daño (jugadores y criaturas). El formulario muestra debajo de
+  vida/daño/alcance/velocidad la referencia de un jugador normal. La edición de
+  un bot activo se aplica en caliente y reinicia su vida.
+- **Lanzar/Detener:** el bot nace detenido. **Máximo 5 activos a la vez**; los
+  activos vuelven solos al reiniciar el contenedor. Detenerlo conserva la
+  configuración y libera el cupo.
+- **Borrar:** pide escribir el nombre exacto. Si está activo, la opción
+  **“Detener y borrar”** lo hace en una sola acción (borrar un activo suelto
+  responde `409 bot_active`).
+- **Comportamientos:** `cazador` persigue y golpea al jugador vivo, no-admin y
+  sin `bot_ignore`; `merodeador` deambula en un radio amplio (6–24 bloques) y
+  nunca ataca; `guardián` defiende una zona de 16 bloques alrededor de su origen
+  peleando contra criaturas, patrulla dentro de la zona y nunca ataca jugadores;
+  `neutral` deambula y, si lo golpean (jugador o criatura), persigue y pelea
+  contra el atacante por 10 segundos; al salir del combate vuelve a caminar.
+  **Ningún bot ataca a un administrador ni a una cuenta con `bot_ignore`.** Los
+  golpes respetan el `reach` y 650 ms entre toques.
+- **Deambular:** el destino se valida antes de fijarlo (celda dentro del mundo,
+  con suelo, cuerpo de dos bloques libre y desnivel de a un bloque como máximo),
+  así que un bot no elige la copa de un árbol ni el interior de un tronco. Si el
+  destino es inalcanzable lo suelta a los ~2 s y elige otro; tras dos intentos
+  fallidos busca uno cercano (2–6 bloques) para salir de un rincón y, cuando
+  vuelve a avanzar, retoma su radio normal.
+- **Vuelo ON/OFF:** con vuelo vuela libre en 3D y atraviesa bloques (el destino
+  solo se valida contra el borde del mundo); sin vuelo camina con colisión,
+  gravedad y auto-escalón de un bloque, con un **rodeo simple** cuando el paso
+  directo está bloqueado (prueba los costados y, si no hay paso, se rinde con ese
+  objetivo a los ~3,5 s en vez de quedarse trabado). No hay pathfinding A*: un
+  laberinto cerrado puede vencerlo.
+- **Vida y muerte:** la vida del bot es server-authoritative. Con “recibe daño”
+  activo pierde 2 por golpe de espada o el daño de una criatura; al llegar a 0
+  difunde su `leave`, queda inactivo en la base y **no reaparece** hasta que el
+  admin lo lance otra vez. Con “recibe daño” desactivado es inmune (`hitok` con
+  daño 0) y las criaturas tampoco le bajan la vida.
+- **Criaturas:** los zombis también pueden perseguir y golpear bots, con
+  prioridad para los jugadores humanos; sin jugadores conectados no generan
+  oleada.
+- **Auditoría:** `bot.create`, `bot.update`, `bot.start`, `bot.stop`,
+  `bot.delete` y `bot.death` quedan en `/admin` → Auditoría.
 
-| Comando | Efecto |
-|---|---|
-| `sigueme` (o `seguime`) | Sigue al admin que lo ordenó; si ese admin se va, vuelve a cazar |
-| `espera` | Se clava donde está (turreta): mata a quien se le acerque. No vuelve al spawn |
+### Retiro del bot externo y `BOT_TOKEN`
 
-El match es **exacto** (trim + sin distinguir mayúsculas, sin prefijo): el mensaje debe
-ser exactamente el comando. El bot anuncia por chat los cambios de modo y las kills.
+El bot externo (`minicraft-bot`, `Dockerfile.bot`, `bot/`) y su credencial de
+servicio se retiraron. El upgrade WebSocket **solo acepta cookie de sesión**: un
+cliente viejo que mande `Authorization: Bearer` recibe `401`. Si `BOT_TOKEN`
+sigue seteada, el server avisa **una vez** al arrancar y la ignora (nunca la
+loguea).
 
-**Local:**
+**Después del deploy, hacé estos pasos operativos en Easypanel:**
 
-```bash
-# BOT_TOKEN es obligatorio (el mismo valor que usa el server)
-BOT_TOKEN=dev-bot-token-1234567890 SERVER_URL=ws://localhost:3000 node bot/index.js
-```
-
-**Variables de entorno (bot):**
-
-| Var | Default | Qué hace |
-|---|---|---|
-| `SERVER_URL` | `ws://minicraft:3000` | WebSocket del server (interno en compose; en Easypanel `wss://tu-dominio`) |
-| `BOT_TOKEN` | *(obligatorio)* | Credencial de servicio; debe coincidir con la del server |
-| `BOT_NAME` | `OPSX-bot` | Nombre con el que entra al mundo |
-| `BOT_SKIN` | `robot` | Aspecto con el que se presenta: `robot`, `human`, `fat`, `giant`, `small` o `zombie` (un valor desconocido se dibuja como humano) |
-
-En Docker, `docker-compose.yml` pasa `BOT_SKIN` al contenedor del bot con
-`BOT_SKIN: ${BOT_SKIN:-robot}`: `BOT_SKIN=giant docker compose up --build -d`
-levanta el bot gigante sin editar el compose.
-
-**Easypanel (segundo servicio):** el server se despliega igual que antes; agregá un
-**segundo App** apuntando al mismo repo pero con **Build → Dockerfile** =
-`Dockerfile.bot`, sin dominios ni volumen, y en **Environment** poné
-`SERVER_URL=wss://minicraft.francogagliardi.me` y (opcional) `BOT_NAME`. El bot
-reconecta solo con backoff, así que sobrevive a los redeploys del server.
+1. **Detené o borrá la App `minicraft-bot`** para que no quede un bot legacy
+   reintentando (recibe `401` y ensucia los logs).
+2. Quitá `BOT_TOKEN` del entorno de la App del server.
+3. En GitHub, borrá el secret `EASYPANEL_BOT_WEBHOOK` (el workflow ya no lo usa).
+4. Entrá a `/admin` → Bots → “Preset cazador clásico” → creá el primero →
+   Lanzar.
 
 ## ☁️ Deploy en Easypanel (VPS)
 
@@ -205,7 +218,6 @@ reconecta solo con backoff, así que sobrevive a los redeploys del server.
    - `DATABASE_URL` = la cadena de tu PostgreSQL (interno de Easypanel o externo)
    - `ADMIN_PASSWORD` = contraseña del admin inicial (**solo el primer deploy**;
      después puede removerse: un reinicio no rota nada)
-   - `BOT_TOKEN` = token de servicio del bot (mismo valor en la app del bot)
    - `COOKIE_SECURE=1` y `TRUST_PROXY=1` (Easypanel sirve HTTPS detrás de proxy)
    - `REGISTRATION_ENABLED=1` (o `0` para cerrar el registro público)
    - **NO** agregues `ADMIN_KEY`/`ADMIN_KEY_HASH`: ya no se usan. Si quedaron,
@@ -228,12 +240,9 @@ cuentas existentes y el login no se ven afectados.
 3. Para activarlo: en Easypanel copiá la **Deploy Webhook URL** de la app
    y guardala en GitHub → repo **Settings → Secrets and variables →
    Actions** → secret `EASYPANEL_DEPLOY_WEBHOOK`.
-4. **El bot es una app aparte** (mismo repo, build con `Dockerfile.bot`): su
-   imagen **no** la buildea el webhook del server. Copiá la Deploy Webhook URL
-   de la app del bot y guardala como secret `EASYPANEL_BOT_WEBHOOK`; el workflow
-   le pega a los dos. *(Si en cambio desplegás los dos servicios con el
-   `docker-compose.yml` de la raíz, es **una sola app**: no configures el webhook
-   del bot, porque ya queda cubierto.)*
+4. **No hay app de bot:** los bots corren in-process y se administran en
+   `/admin`. Después del deploy, detené/borrá la App `minicraft-bot` si existía
+   y borrá el secret `EASYPANEL_BOT_WEBHOOK`.
 5. Sin esos secrets el deploy se omite (no falla) y desplegás a mano.
 
 <!-- test deploy webhook: 2026-10-02 -->
@@ -281,7 +290,9 @@ cuentas existentes y el login no se ven afectados.
 | `DATABASE_URL` | *(obligatoria)* | PostgreSQL de usuarios y sesiones |
 | `ADMIN_USERNAME` | `admin` | Cuenta admin que crea el bootstrap; queda reservada en el registro |
 | `ADMIN_PASSWORD` | *(vacío)* | Contraseña del admin **solo en el primer arranque**. Si falta o tiene <8, no se crea admin (avisa sin exponer nada). Nunca se loguea |
-| `BOT_TOKEN` | *(vacío)* | Credencial de servicio del bot (`Authorization: Bearer`). Sin ella el bot no entra |
+| `BOTS_ENABLED` | `1` | `0` apaga el runtime de bots (útil en una réplica secundaria) |
+| `BOTS_TICK_MS` | `50` | Cadencia del tick de bots (ms) |
+| `BOTS_SNAP_MS` | `100` | Cadencia de los snapshots `pm` de bots (ms) |
 | `COOKIE_SECURE` | `0` (`1` si `NODE_ENV=production`) | Agrega `Secure` a la cookie de sesión. **1** en HTTPS |
 | `TRUST_PROXY` | `0` | Usa el primer `X-Forwarded-For` para el rate limit. Solo detrás de un proxy propio |
 | `REGISTRATION_ENABLED` | `1` | `1`/`true` abierto; `0`/`false` cerrado; otro valor → cerrado + warning |
@@ -373,7 +384,7 @@ te quedaste sin admin). No aplica las guardas de self/último admin: es una
 operación de operador, no el camino normal.
 
 **Migración desde el deploy viejo:** creá la base, seteá
-`DATABASE_URL`/`ADMIN_PASSWORD`/`BOT_TOKEN`, deployá (las migraciones corren
+`DATABASE_URL`/`ADMIN_PASSWORD`, deployá (las migraciones corren
 solas) y **borrá `ADMIN_KEY` y `ADMIN_KEY_HASH`** del entorno. Si quedan, el
 server las ignora y registra un único aviso, sin imprimir sus valores. Las
 cuentas se crean con `/register` o con la CLI. **Rollback:** volver a la imagen
@@ -394,21 +405,20 @@ cd server && npm test
 - **Permisos y admin** (`permissions.mjs`, `admin.mjs`, `admin-ws.mjs`):
   allowlist/materialización, CRUD administrativo, guardas de self y último
   admin, auditoría, rate limit, CSRF, gate de `/admin`, `perm` en caliente,
-  descarte del `hit` del bot y cierre de sockets por revocación.
-- **Integración DB** (`auth-db.mjs`, `admin-db.mjs`): migraciones idempotentes
-  (001 y 002), unicidad case-insensitive, hash de sesión, registro transaccional
-  y carrera de usernames, bootstrap del admin, JSONB de permisos, auditoría con
-  `ON DELETE SET NULL`, cascada de sesiones y carrera de guardas con advisory
-  lock. Corre solo si `TEST_DATABASE_URL` está definida; en CI
-  `REQUIRE_DB_TESTS=1` la exige.
+  descarte del daño de bots a protegidos y cierre de sockets por revocación.
+- **Bots** (`bots-config.mjs`, `bots-behaviors.mjs`, `bots-runtime.mjs`,
+  `bots-api.mjs`, `bots-db.mjs`, `bots-static.mjs`): validación y preset,
+  comportamientos/movimiento puro, roster y combate en las dos direcciones,
+  API administrativa, migración 003 con CHECKs/unicidad/cupo y panel estático.
+- **Integración DB** (`auth-db.mjs`, `admin-db.mjs`, `bots-db.mjs`): migraciones
+  idempotentes (001, 002 y 003), unicidad case-insensitive, hash de sesión,
+  registro transaccional y carrera de usernames, bootstrap del admin, JSONB de
+  permisos, auditoría con `ON DELETE SET NULL`, cascada de sesiones, carrera de
+  guardas y de cupo de bots con advisory lock. Corre solo si `TEST_DATABASE_URL`
+  está definida; en CI `REQUIRE_DB_TESTS=1` la exige.
 - **Protocolo** (`test/protocol.mjs`): levanta `createApp` + `MemoryStore`
   en proceso, autentica por `POST /api/login` y verifica welcome, movimiento,
   bloques, daño PvP, muerte, chat, sueño y zombis.
-- **Bot cazador** (`test/bot-cazador.mjs`): cablea el bot con `BOT_TOKEN` y
-  clientes falsos — mata a un no-admin con **dos toques separados** (el cliente
-  falso emula la ventana de 0.6 s), ignora admins, `sigueme`/`espera`,
-  seguridad por id/flag admin, invulnerabilidad, vuelo/no-clip, reconexión,
-  cero `edit` y `skin:'robot'`.
 
 `npm test` local corre **sin Docker**: los unitarios usan `MemoryStore` y la
 integración de DB se omite con aviso. En CI corre con PostgreSQL 16 y la exige.

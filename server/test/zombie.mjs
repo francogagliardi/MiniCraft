@@ -372,6 +372,66 @@ const P = (id, x, y, z, dead = 0) => ({ id, pos: [x, y, z], dead });
   ok(total >= 3, 'la horda inicial tenía 3-4');
 }
 
+// ============================ 4.13 bots como objetivos ============================
+{
+  const BOT = (id, x, y, z, extra = {}) => ({ id, pos: [x, y, z], dead: 0, bot: true, ...extra });
+
+  // Un zombi sin jugadores adquiere al bot dentro del radio.
+  const h = mkHorde(); const z = addZ(h, { x: 50.5, z: 50.5 });
+  h.tick(0.05, { night: false, now: 0, players: [], bots: [BOT(-3, 50.5, 13, 51.2)] });
+  ok(z.target === -3, `adquiere un bot como objetivo (target ${z.target})`);
+
+  // Prioridad: con un humano y un bot dentro del radio gana el humano aunque el id del bot sea menor.
+  const hp = mkHorde(); const zp = addZ(hp, { x: 50.5, z: 50.5 });
+  hp.tick(0.05, { night: false, now: 0, players: [P(7, 50.5, 13, 51.2)], bots: [BOT(-9, 50.5, 13, 50.8)] });
+  ok(zp.target === 7, `con humano y bot en el radio prioriza al humano (target ${zp.target})`);
+
+  // Un bot muerto no se adquiere.
+  const hd = mkHorde(); const zd = addZ(hd, { x: 50.5, z: 50.5 });
+  hd.tick(0.05, { night: false, now: 0, players: [], bots: [BOT(-3, 50.5, 13, 51.2, { dead: 1 })] });
+  ok(zd.target === null, 'un bot muerto nunca se adquiere');
+
+  // El golpe al bot viaja como phit con su id negativo.
+  const ha = mkHorde(); addZ(ha, { i: 31, x: 50.5, z: 50.5 });
+  const ra = ha.tick(0.05, { night: false, now: 100000, players: [], bots: [BOT(-3, 50.5, 13, 51.2)] });
+  const ev = ra.events.find(e => e.t === 'phit');
+  ok(!!ev && ev.to === -3 && ev.fromId === 31 && ev.dmg === Z.ZOMBIE_DMG,
+    'el zombi emite phit contra el bot con el id negativo del bot');
+
+  // Sin jugadores no hay oleada nueva aunque haya bots.
+  const hn = mkHorde(flat(12), seeded(1));
+  hn.tick(0.05, { night: true, now: 0, players: [], bots: [BOT(-3, 100.5, 13, 100.5)] });
+  ok(hn.zombies.length === 0, 'spawnWave sigue contando solo jugadores (sin humanos no hay oleada)');
+
+  // El jugador sigue funcionando cuando también hay bots.
+  const hm = mkHorde(); const zm = addZ(hm, { x: 50.5, z: 50.5 });
+  hm.tick(0.05, { night: false, now: 0, players: [P(7, 50.5, 13, 51.2)], bots: [] });
+  ok(zm.target === 7, 'el comportamiento con solo jugadores no cambia');
+
+  // Si el humano muere, el zombi pasa a perseguir al bot que sigue vivo.
+  const hs = mkHorde(); const zs = addZ(hs, { x: 50.5, z: 50.5 });
+  hs.tick(0.05, { night: false, now: 0, players: [P(7, 50.5, 13, 51.2, 1)], bots: [BOT(-3, 50.5, 13, 50.8)] });
+  ok(zs.target === -3, 'con el humano muerto adquiere al bot (respaldo)');
+}
+
+// ============================ 4.14 daño del servidor a la criatura ============================
+{
+  const h = mkHorde(); addZ(h, { i: 5, x: 50.5, z: 50.5, hp: 6 });
+  ok(typeof h.damageZombie === 'function', 'la horda expone damageZombie');
+  const dz = (id, dmg, now) => (typeof h.damageZombie === 'function' ? h.damageZombie(id, dmg, now) : null);
+  const a = dz(5, 2, 1000);
+  ok(a && a.hp === 4 && a.dead === 0, 'damageZombie descuenta el daño indicado');
+  const b = dz(5, 10, 1500);
+  ok(b && b.hp === 0 && b.dead === 1, 'damageZombie marca la criatura como muerta al agotar su vida');
+  ok(h.zombies.find(z => z.i === 5).deadAt === 1500, 'damageZombie registra el instante de la muerte');
+  ok(dz(5, 2, 2000) === null, 'damageZombie ignora una criatura ya muerta');
+  ok(dz(999, 2, 2000) === null, 'damageZombie ignora un id inexistente');
+  const hz = mkHorde(); addZ(hz, { i: 6, hp: 6 });
+  ok((typeof hz.damageZombie === 'function' ? hz.damageZombie(6, 0, 1000) : null) === null &&
+    hz.zombies.find(z => z.i === 6).hp === 6,
+    'damageZombie con daño 0 no cambia la vida');
+}
+
 // ============================ 5.x cableado del servidor ============================
 // Estáticos: el server crea la horda, la tickea con dt real y cablea los eventos a
 // los `ws`; conserva el patrón del ciclo que exige static.mjs y no persiste zombis.
@@ -384,6 +444,9 @@ const P = (id, x, y, z, dead = 0) => ({ id, pos: [x, y, z], dead });
   ok(/phaseNow\(\)\s*>=\s*NIGHT_START/.test(srv), 'server conserva isNight() = phaseNow() >= NIGHT_START (static.mjs §8d)');
   ok(/(?:setInterval|every)\([^)]*ZOMBIE_TICK_MS/.test(srv), 'server corre el tick en un setInterval(…, ZOMBIE_TICK_MS)');
   ok(/horde\.tick\s*\(/.test(srv), 'server llama horde.tick(...)');
+  ok(/bots:\s*botTargets/.test(srv), 'server pasa los bots como objetivos al tick de la horda');
+  ok(/ev\.to\s*<\s*0/.test(srv) && /applyEnemyHit\s*\(/.test(srv),
+    'server rutea los golpes de criaturas contra bots a bots.applyEnemyHit');
   ok(/Math\.min\(\s*0\.1/.test(srv), 'server clampa dt a 0.1 s (stall)');
   ok(/t:\s*'phit'/.test(srv) && /send\(/.test(srv), 'server cablea los eventos de tick a send(ws, …)');
   ok(/t:\s*'zs'/.test(srv) && /z:\s*zLast/.test(srv), "server difunde { t:'zs', z:[…] }");

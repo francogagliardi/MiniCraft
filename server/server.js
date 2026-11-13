@@ -6,7 +6,7 @@ const { createApp } = require('./app.js');
 const { createDb } = require('./db.js');
 const { createPgStore } = require('./store-pg.js');
 const { runMigrations } = require('./migrate.js');
-const { bootstrapAdmin, warnLegacyAdmin } = require('./admin-bootstrap.js');
+const { bootstrapAdmin, warnLegacyAdmin, warnLegacyBotToken } = require('./admin-bootstrap.js');
 const CFG = require('./env-config.js');
 
 const env = process.env;
@@ -16,6 +16,7 @@ const CLEANUP_EVERY_MS = 6 * 60 * 60 * 1000;
 async function main() {
   // Las variables legacy ya no autentican; se avisa una vez sin exponer valores.
   warnLegacyAdmin(env, console.warn);
+  warnLegacyBotToken(env, console.warn);
 
   if (!env.DATABASE_URL) {
     console.error('❌ falta DATABASE_URL: el server necesita PostgreSQL para autenticar.');

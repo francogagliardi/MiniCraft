@@ -13,14 +13,38 @@ export class MemoryStore {
     this.users = [];
     this.sessions = [];
     this.audit = [];
+    this.bots = [];
     this.nextUserId = 1;
     this.nextSessionId = 1;
     this.nextAuditId = 1;
+    this.nextBotId = 1;
     this.now = opts.now || (() => new Date());
     this.closed = false;
     this.failNext = null; // { op, error } para simular caídas puntuales (tests)
     this._txQueue = Promise.resolve(); // serializa transacciones (como el advisory lock)
     this._seed(opts.users || []);
+    this._seedBots(opts.bots || []);
+  }
+
+  _seedBots(list) {
+    for (const b of list) {
+      this.bots.push({
+        id: this.nextBotId++,
+        name: b.name,
+        behavior: b.behavior || 'cazador',
+        skin: b.skin || 'human',
+        hp: b.hp ?? 10,
+        damage: b.damage ?? 0,
+        reach: b.reach ?? 4.6,
+        speed: b.speed ?? 6,
+        takesDamage: b.takesDamage === true,
+        flying: b.flying === true,
+        active: b.active === true,
+        createdBy: b.createdBy ?? null,
+        createdAt: b.createdAt || this.now(),
+        updatedAt: b.updatedAt || this.now(),
+      });
+    }
   }
 
   _seed(list) {
@@ -167,7 +191,134 @@ export class MemoryStore {
       if (String(e.actorUserId) === String(id)) e.actorUserId = null;
       if (String(e.targetUserId) === String(id)) e.targetUserId = null;
     }
+    // FK bots.created_by ON DELETE SET NULL.
+    for (const b of this.bots) {
+      if (String(b.createdBy) === String(id)) b.createdBy = null;
+    }
     return true;
+  }
+
+  // ---- bots (misma interfaz que store-pg.js) ----
+  _bot(id) {
+    return this.bots.find(b => String(b.id) === String(id)) || null;
+  }
+
+  _botView(b) {
+    return b ? { ...b } : null;
+  }
+
+  async listBots({ active } = {}) {
+    this._maybeFail('listBots');
+    const list = active === true ? this.bots.filter(b => b.active === true)
+      : active === false ? this.bots.filter(b => b.active !== true)
+        : this.bots;
+    return list.slice().sort((a, b) => a.id - b.id).map(b => this._botView(b));
+  }
+
+  async getBotById(id) {
+    this._maybeFail('getBotById');
+    return this._botView(this._bot(id));
+  }
+
+  async getBotByName(name) {
+    this._maybeFail('getBotByName');
+    const key = String(name || '').toLowerCase();
+    return this._botView(this.bots.find(b => b.name.toLowerCase() === key));
+  }
+
+  async createBot(data = {}) {
+    this._maybeFail('createBot');
+    if (this.bots.some(b => b.name.toLowerCase() === String(data.name).toLowerCase())) {
+      const e = new Error('nombre de bot tomado');
+      e.code = 'BOT_NAME_TAKEN';
+      throw e;
+    }
+    const bot = {
+      id: this.nextBotId++,
+      name: data.name,
+      behavior: data.behavior || 'cazador',
+      skin: data.skin || 'human',
+      hp: data.hp ?? 10,
+      damage: data.damage ?? 0,
+      reach: data.reach ?? 4.6,
+      speed: data.speed ?? 6,
+      takesDamage: data.takesDamage === true,
+      flying: data.flying === true,
+      active: data.active === true,
+      createdBy: data.createdBy ?? null,
+      createdAt: this.now(),
+      updatedAt: this.now(),
+    };
+    this.bots.push(bot);
+    return this._botView(bot);
+  }
+
+  async updateBot(id, patch = {}) {
+    this._maybeFail('updateBot');
+    const bot = this._bot(id);
+    if (!bot) return null;
+    if (patch.name !== undefined) {
+      const clash = this.bots.some(b => String(b.id) !== String(id) &&
+        b.name.toLowerCase() === String(patch.name).toLowerCase());
+      if (clash) {
+        const e = new Error('nombre de bot tomado');
+        e.code = 'BOT_NAME_TAKEN';
+        throw e;
+      }
+      bot.name = patch.name;
+    }
+    if (patch.behavior !== undefined) bot.behavior = patch.behavior;
+    if (patch.skin !== undefined) bot.skin = patch.skin;
+    if (patch.hp !== undefined) bot.hp = patch.hp;
+    if (patch.damage !== undefined) bot.damage = patch.damage;
+    if (patch.reach !== undefined) bot.reach = Math.round(+patch.reach * 10) / 10;
+    if (patch.speed !== undefined) bot.speed = Math.round(+patch.speed * 10) / 10;
+    if (patch.takesDamage !== undefined) bot.takesDamage = patch.takesDamage === true;
+    if (patch.flying !== undefined) bot.flying = patch.flying === true;
+    bot.updatedAt = this.now();
+    return this._botView(bot);
+  }
+
+  async deleteBot(id) {
+    this._maybeFail('deleteBot');
+    const idx = this.bots.findIndex(b => String(b.id) === String(id));
+    if (idx < 0) return false;
+    this.bots.splice(idx, 1);
+    return true;
+  }
+
+  async stopBot(id) {
+    this._maybeFail('stopBot');
+    const bot = this._bot(id);
+    if (!bot) return null;
+    bot.active = false;
+    bot.updatedAt = this.now();
+    return this._botView(bot);
+  }
+
+  async countActiveBots() {
+    this._maybeFail('countActiveBots');
+    return this.bots.filter(b => b.active === true).length;
+  }
+
+  // Igual que store-pg: serializa con la cola y valida el cupo en la misma sección
+  // crítica (en Postgres lo hace pg_advisory_xact_lock).
+  async startBot(id) {
+    this._maybeFail('startBot');
+    const run = async () => {
+      const bot = this._bot(id);
+      if (!bot) return { status: 'not_found', bot: null };
+      if (bot.active === true) return { status: 'already_active', bot: this._botView(bot) };
+      if (this.bots.filter(b => b.active === true).length >= 5) {
+        return { status: 'limit', bot: this._botView(bot) };
+      }
+      bot.active = true;
+      bot.updatedAt = this.now();
+      return { status: 'started', bot: this._botView(bot) };
+    };
+    const p = this._txQueue.then(run, run);
+    this._txQueue = p.then(() => {}, () => {});
+    return p;
   }
 
   async insertAudit({ actorUserId = null, targetUserId = null, action, details = {} }) {
@@ -198,9 +349,11 @@ export class MemoryStore {
         users: this.users.map(u => ({ ...u, permissions: { ...u.permissions } })),
         sessions: this.sessions.map(s => ({ ...s })),
         audit: this.audit.map(a => ({ ...a, details: { ...a.details } })),
+        bots: this.bots.map(b => ({ ...b })),
         nextUserId: this.nextUserId,
         nextSessionId: this.nextSessionId,
         nextAuditId: this.nextAuditId,
+        nextBotId: this.nextBotId,
       };
       try {
         return await fn(this);
@@ -208,9 +361,11 @@ export class MemoryStore {
         this.users = snapshot.users;
         this.sessions = snapshot.sessions;
         this.audit = snapshot.audit;
+        this.bots = snapshot.bots;
         this.nextUserId = snapshot.nextUserId;
         this.nextSessionId = snapshot.nextSessionId;
         this.nextAuditId = snapshot.nextAuditId;
+        this.nextBotId = snapshot.nextBotId;
         throw e;
       }
     };

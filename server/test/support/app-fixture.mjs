@@ -14,7 +14,7 @@ export async function startApp(opts = {}) {
   const { hashPassword } = require('../../auth.js');
   const { MemoryStore } = await import('./memory-store.mjs');
 
-  const store = opts.store || new MemoryStore();
+  const store = opts.store || new MemoryStore({ bots: opts.bots || [] });
   for (const u of opts.users || []) {
     await store.createUser({
       username: u.username,
@@ -32,6 +32,10 @@ export async function startApp(opts = {}) {
     TOD_INTERVAL_MS: '60000',
     ZOMBIE_TICK_MS: '60000',
     ZOMBIE_SNAP_MS: '60000',
+    // Bots: por defecto el runtime no late durante los tests funcionales; los
+    // tests de bots lo avanzan con `app.bots.tick(dt)` o pisan el env.
+    BOTS_TICK_MS: '60000',
+    BOTS_SNAP_MS: '60000',
     // Auth: los tests funcionales no deben chocar con el bucket real; los tests
     // de rate limit lo pisan a propósito con valores chicos.
     LOGIN_RATE_CAPACITY: '1000',
@@ -43,15 +47,15 @@ export async function startApp(opts = {}) {
     ADMIN_RATE_REFILL_PER_SEC: '10000',
     ...(opts.env || {}),
   };
-  if (opts.botToken !== undefined) env.BOT_TOKEN = opts.botToken;
-  else if (env.BOT_TOKEN === undefined) env.BOT_TOKEN = 'test-bot-token';
-
   const app = createApp({
     env, store, staticDir: opts.staticDir,
     log: opts.log, warn: opts.warn,
+    now: opts.now,
     // Nunca el world.json real del repo: cada app de test usa un archivo temporal.
     worldFile: opts.worldFile || path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'mc-world-')), 'world.json'),
   });
+  // El boot de bots es asíncrono (lee la base): ningún test debe correr antes.
+  if (app.bots && app.bots.ready) await app.bots.ready;
   const addr = await app.listen(0, '127.0.0.1');
   const port = addr.port;
   const base = `http://127.0.0.1:${port}`;

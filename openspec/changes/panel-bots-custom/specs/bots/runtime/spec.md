@@ -103,12 +103,22 @@ Un bot con `flying:true` SHALL moverse como un punto libre en 3D, sin colisión 
 
 ### Requirement: Caminata con colisión y gravedad
 
-Un bot con `flying:false` SHALL caminar sobre el terreno con gravedad, colisión y auto-escalón de un bloque, y MUST NOT atravesar bloques, paredes ni techos. Su altura SHALL seguir el suelo disponible.
+Un bot con `flying:false` SHALL caminar sobre el terreno con gravedad, colisión y auto-escalón de un bloque, y MUST NOT atravesar bloques, paredes ni techos. Su altura SHALL seguir el suelo disponible. Cuando el paso directo está bloqueado SHALL intentar un rodeo simple por los costados (±90°) y, si tampoco hay paso, aplicar gravedad. Un bot MUST NOT teletransportarse ni atravesar bloques para alcanzar su objetivo.
 
 #### Scenario: Una pared lo frena
 
 - **WHEN** un bot caminante persigue a una presa separada por una pared
 - **THEN** no la atraviesa y se desplaza por el terreno disponible
+
+#### Scenario: Rodea un obstáculo
+
+- **WHEN** el paso directo está bloqueado por un tronco o una pared con espacio alrededor
+- **THEN** el bot se aparta de costado y llega al objetivo sin atravesar ningún bloque
+
+#### Scenario: Bloqueo sin salida
+
+- **WHEN** no existe ningún paso posible (pozo, laberinto cerrado)
+- **THEN** no atraviesa bloques, suelta ese objetivo a los ~3,5 s y vuelve a deambular en vez de empujar para siempre
 
 #### Scenario: Cae desde una altura
 
@@ -122,8 +132,27 @@ Un bot con `flying:false` SHALL caminar sobre el terreno con gravedad, colisión
 
 #### Scenario: Sin pathfinding
 
-- **WHEN** el camino requiere rodear una construcción grande
-- **THEN** el bot puede quedarse trabado y el sistema lo tolera como límite conocido
+- **WHEN** el camino requiere resolver un laberinto grande
+- **THEN** el rodeo simple puede no encontrar la salida y el sistema lo tolera como límite conocido, sin que el bot quede empujando contra el mismo bloque
+
+### Requirement: Persecución cuando el objetivo está a otra altura
+
+Un bot SHALL seguir navegando hacia su objetivo mientras la diferencia vertical sea mayor que 2.5, aunque la distancia horizontal ya esté dentro del umbral de golpe. MUST NOT detenerse en ese caso: un bot volador SHALL alinear la altura y un caminante SHALL seguir intentando acercarse o rodear. El daño MUST seguir exigiendo alcance horizontal y `|dy| ≤ 2.5`.
+
+#### Scenario: Objetivo sobre una torre
+
+- **WHEN** la presa está a ≤3.8 bloques en horizontal pero a más de 2.5 en vertical
+- **THEN** el bot sigue navegando y no se detiene sin poder golpear
+
+#### Scenario: Objetivo sobre un árbol
+
+- **WHEN** un guardián queda debajo de una criatura que está por encima de su ventana de altura
+- **THEN** no le aplica daño y sigue acomodándose en vez de congelarse
+
+#### Scenario: Vuelo
+
+- **WHEN** el bot vuela y el objetivo cambia de altura
+- **THEN** alinea su altura con el objetivo y llega al alcance
 
 ### Requirement: Presas nunca administradores ni bots
 
@@ -189,17 +218,186 @@ Un bot hostil SHALL atacar cuando su objetivo está dentro de su `reach` horizon
 
 ### Requirement: El merodeador es pacífico
 
-Un bot con comportamiento `merodeador` SHALL deambular dentro de una zona alrededor de su punto de origen, con pausas, y MUST NOT atacar a ningún jugador aunque tenga `damage` mayor que cero.
+Un bot con comportamiento `merodeador` SHALL deambular dentro de un radio amplio de 6 a 24 bloques alrededor de su punto de origen, con pausas, y MUST NOT atacar a ningún jugador ni criatura aunque tenga `damage` mayor que cero.
 
 #### Scenario: Deambula sin atacar
 
 - **WHEN** un jugador se acerca a un merodeador
 - **THEN** el bot sigue deambulando y no le emite daño
 
+#### Scenario: Recorre más mundo
+
+- **WHEN** el merodeador elige un destino
+- **THEN** lo hace dentro de un radio de 6 a 24 bloques de su origen y no se queda dando vueltas en un par de bloques
+
 #### Scenario: Vuelve a su zona
 
 - **WHEN** el merodeador se aleja demasiado de su punto de origen
 - **THEN** elige destinos que lo mantienen dentro de la zona
+
+#### Scenario: Tampoco ataca criaturas
+
+- **WHEN** una criatura se acerca a un merodeador con `damage` mayor que cero
+- **THEN** el bot no le aplica daño
+
+### Requirement: Destino de deambular válido
+
+Un bot que deambula SHALL elegir destinos sobre celdas transitables: dentro del mundo y, si camina, con suelo, cuerpo de dos bloques libre y un desnivel de a lo sumo un bloque. MUST muestrear varios candidatos y descartar los inválidos, y MUST NOT fijar ningún destino si todos fallan. Un bot con `flying:true` MUST validar solo el borde del mundo y la zona del comportamiento.
+
+#### Scenario: Bosque denso
+
+- **WHEN** un bot camina por un bosque donde la mayoría de las columnas tienen árboles
+- **THEN** elige destinos en celdas libres a nivel del suelo y nunca en la copa de un árbol ni dentro de un tronco
+
+#### Scenario: Mundo sin celdas libres
+
+- **WHEN** todas las celdas candidatas están ocupadas por bloques
+- **THEN** no fija ningún destino, se queda quieto con una pausa corta y reintenta en el tick siguiente
+
+#### Scenario: Vuelo
+
+- **WHEN** el bot vuela
+- **THEN** el destino se valida solo contra el borde del mundo y el bot se mueve aunque el terreno esté bloqueado
+
+### Requirement: Reset del deambular cuando no avanza
+
+Un bot caminante que deambula SHALL abandonar su destino cuando no logra acercarse a él en aproximadamente dos segundos, limpiar además el estado de rodeo (`detour`) y dejar que el comportamiento elija otro destino. Después de dos resets seguidos SHALL elegir un destino cercano de 2 a 6 bloques para salir de un rincón y, cuando vuelva a avanzar, SHALL restaurar el radio normal de deambulación.
+
+#### Scenario: Empuja contra un árbol
+
+- **WHEN** el destino elegido es una celda libre pero inalcanzable y el bot lleva ~2 s sin acercarse
+- **THEN** suelta ese destino, limpia el rodeo y elige otro en vez de empujar para siempre
+
+#### Scenario: Rincón cerrado
+
+- **WHEN** el bot acumula dos destinos inalcanzables seguidos
+- **THEN** el siguiente destino queda a 2–6 bloques de su posición actual para poder salir del rincón
+
+#### Scenario: Vuelve a moverse
+
+- **WHEN** el bot retoma el avance hacia su destino
+- **THEN** el contador de resets vuelve a cero y el radio de deambulación recupera su valor normal
+
+### Requirement: El guardián defiende su zona de las criaturas
+
+Un bot con comportamiento `guardian` SHALL patrullar y defender una zona de radio 16 alrededor de su punto de origen, elegir la criatura viva más cercana dentro de esa zona, perseguirla y atacarla. MUST NOT atacar a ningún jugador, ni siquiera si un jugador lo golpea, ni perseguir criaturas fuera de su zona. Sin criaturas SHALL patrullar dentro de su zona (4 a 16 bloques) con destinos válidos y SHALL volver a su origen cuando quedó fuera de ella.
+
+#### Scenario: Criatura dentro de la zona
+
+- **WHEN** una criatura entra en el radio de guardia
+- **THEN** el guardián la persigue y la ataca con su `damage`
+
+#### Scenario: Sin enemigos patrulla
+
+- **WHEN** no hay criaturas en la zona
+- **THEN** el guardián se mueve y deambula dentro de sus 16 bloques en vez de quedarse clavado en el centro
+
+#### Scenario: Destino de patrulla inalcanzable
+
+- **WHEN** el guardián elige un destino de patrulla al que no puede llegar
+- **THEN** lo cambia a los ~2 s en vez de quedarse empujando contra el mismo bloque
+
+#### Scenario: Jugador al lado
+
+- **WHEN** un jugador se acerca al guardián, con o sin criaturas cerca
+- **THEN** el guardián no le emite ningún golpe
+
+#### Scenario: Criatura fuera de la zona
+
+- **WHEN** la única criatura está más lejos que el radio de guardia
+- **THEN** el guardián no la persigue y vuelve a su origen
+
+#### Scenario: El guardián recibe un golpe de jugador
+
+- **WHEN** un jugador golpea a un guardián
+- **THEN** el guardián no cambia de objetivo ni contraataca al jugador
+
+### Requirement: El neutral solo responde a quien lo golpea
+
+Un bot con comportamiento `neutral` SHALL deambular como el merodeador y MUST NOT atacar por iniciativa propia. Cuando un jugador o una criatura lo golpea, SHALL perseguir y pelear contra ese atacante durante una ventana de 10 segundos y después volver a deambular. MUST NOT responder a un admin ni a un jugador con `bot_ignore`, y si lo golpea otro atacante SHALL cambiar al más reciente.
+
+#### Scenario: Sin aggro deambula
+
+- **WHEN** un jugador se acerca a un neutral que no fue golpeado
+- **THEN** el bot deambula y no ataca
+
+#### Scenario: Vuelve a caminar tras el combate
+
+- **WHEN** el atacante muere, desaparece o la ventana de 10 s expira
+- **THEN** el neutral reinicia su deambulación al entrar en combate, elige un destino nuevo al salir y vuelve a moverse en vez de quedarse quieto
+
+#### Scenario: Golpe de un jugador
+
+- **WHEN** un jugador sin `bot_ignore` golpea a un neutral
+- **THEN** el bot lo persigue y le responde con su `damage`, incluso si es inmune
+
+#### Scenario: Golpe de una criatura
+
+- **WHEN** una criatura golpea a un neutral
+- **THEN** el bot persigue y ataca a esa criatura
+
+#### Scenario: La ventana expira
+
+- **WHEN** pasan 10 segundos desde el último golpe recibido y el atacante sigue vivo
+- **THEN** el neutral deja de perseguirlo y vuelve a deambular
+
+#### Scenario: El atacante desaparece
+
+- **WHEN** el atacante muere, se desconecta o la criatura desaparece
+- **THEN** el neutral limpia el aggro y vuelve a deambular
+
+#### Scenario: Golpe de un admin o protegido
+
+- **WHEN** un admin o un jugador con `bot_ignore` golpea a un neutral
+- **THEN** el bot no lo persigue ni le responde
+
+### Requirement: Daño de los bots a las criaturas
+
+El runtime SHALL poder dañar criaturas con el `damage` configurado del bot, validando alcance horizontal, diferencia de altura y una cadencia mínima de 650 ms contra la misma criatura. El daño MUST aplicarse en el servidor sobre la horda y MUST NOT emitirse si `damage` es cero. Solo los comportamientos que atacan criaturas o un neutral en retaliación contra esa criatura pueden hacerlo.
+
+#### Scenario: Golpe a una criatura
+
+- **WHEN** un guardián con `damage:6` alcanza a una criatura
+- **THEN** la horda descuenta 6 de vida y la criatura muere si llega a cero
+
+#### Scenario: Fuera de alcance
+
+- **WHEN** la criatura está más lejos que el `reach` configurado
+- **THEN** el bot no le aplica daño
+
+#### Scenario: Daño cero
+
+- **WHEN** un bot tiene `damage:0`
+- **THEN** persigue o deambula pero no daña criaturas
+
+#### Scenario: Cadencia contra criaturas
+
+- **WHEN** el bot ya golpeó a la misma criatura y no pasaron 650 ms
+- **THEN** no vuelve a dañarla
+
+### Requirement: Las criaturas pueden atacar a los bots
+
+La horda SHALL considerar a los bots activos como objetivos válidos además de los jugadores, con prioridad para los jugadores humanos y sin que los bots cuenten para el spawn de la oleada. Un golpe de criatura a un bot MUST aplicarse en el servidor, y su muerte MUST seguir el mismo ciclo que la muerte por jugador (despawn, `active:false` y auditoría `bot.death`).
+
+#### Scenario: Criatura sin jugadores cerca
+
+- **WHEN** una criatura detecta a un bot dentro de su radio y no hay jugadores
+- **THEN** lo persigue y le emite su `phit`
+
+#### Scenario: Humano y bot en el radio
+
+- **WHEN** hay un jugador humano y un bot dentro del radio de la criatura
+- **THEN** la criatura prioriza al humano aunque el id del bot sea menor
+
+#### Scenario: El bot muere por una criatura
+
+- **WHEN** el daño de una criatura agota la vida de un bot con `takes_damage:true`
+- **THEN** el bot desaparece, queda `active:false` y se audita `bot.death`
+
+#### Scenario: Sin jugadores no hay oleada
+
+- **WHEN** es de noche y hay bots activos pero ningún jugador
+- **THEN** no se genera una oleada nueva
 
 ### Requirement: Daño de bots validado por el servidor
 

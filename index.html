@@ -2477,8 +2477,8 @@ function findSpawn(){
   const sx=W/2|0, sz=W/2|0;
   const box=playerBox(mySkin);
   // Spawn preferido: 108 · 16 · 117 (topbar), validado por aspecto antes del espiral.
-  // El guardia `typeof spawnPrefOk === 'function'` deja que la réplica aislada del bot
-  // (bot-cazador.mjs, que no inyecta spawnPrefOk) siga usando el espiral y conserve la paridad.
+  // El guard `typeof spawnPrefOk === 'function'` mantiene compatibilidad con réplicas
+  // aisladas de esta función que no inyectan el predicado y deben seguir usando el espiral.
   if(typeof spawnPrefOk === 'function' && spawnPrefOk(SPAWN_PREF.x, SPAWN_PREF.y, SPAWN_PREF.z, box.r, box.h, { get, solidAt, collidesAt }))
     return new THREE.Vector3(SPAWN_PREF.x, SPAWN_PREF.y, SPAWN_PREF.z);
   const need=Math.max(4,Math.ceil(box.h));
@@ -2907,7 +2907,7 @@ function makeAvatar(id, name, admin, skin, opts){
     bar.scale.set(1.15,.16,1); bar.position.y=avatarBarY(spec); bar.renderOrder=10; g.add(bar);
   }
   scene.add(g);
-  const a={ id, name, admin, skin: sid, g, mats, armL, armR, legL, legR, hp:10, dead:false, deadK:0, barC, barTex, bar,
+  const a={ id, name, admin, skin: sid, g, mats, armL, armR, legL, legR, hp:10, maxHp:10, dead:false, deadK:0, barC, barTex, bar,
     target:new THREE.Vector3(), yaw:0, t:Math.random()*10, flash:0,
     sword:handSword, pick:handPick, held:0, seq:0, seqSeen:0, swingK:1 };
   if(hud) drawBar(a);
@@ -2916,7 +2916,7 @@ function makeAvatar(id, name, admin, skin, opts){
 function drawBar(a){
   if(!a.barC) return;
   const x=a.barC.getContext('2d');
-  const f=Math.max(0,Math.min(1,a.hp/10));
+  const f=Math.max(0,Math.min(1,a.hp/(a.maxHp||10)));
   x.clearRect(0,0,72,10);
   x.fillStyle='rgba(10,15,25,.65)'; x.fillRect(0,0,72,10);
   x.fillStyle=f>.5?'#57d95e':f>.25?'#ffca4f':'#ff5544';
@@ -2927,6 +2927,9 @@ function addRemote(p){
   if(remotes.has(p.id)) return;
   // aspecto (`skin`): guarda para clientes viejos sin el campo ⇒ avatar humano por defecto
   const a=makeAvatar(p.id,p.name,p.mode==='admin', typeof p.skin==='string'?p.skin:'');
+  // maxHp aditivo: los bots pueden tener más de 10 de vida; un cliente viejo que
+  // no lo conoce cae al 10 histórico.
+  a.maxHp = Number.isFinite(p.maxHp) ? p.maxHp : 10;
   if(Number.isFinite(p.hp)){ a.hp=p.hp; drawBar(a); }
   if(p.dead===1){ a.dead=true; a.deadK=1; }
   a.g.position.set(p.pos[0],p.pos[1],p.pos[2]);
@@ -3804,6 +3807,7 @@ function setupNetHandlers(){
         if(PM_BUFFER){ a.pmBuf.push({ p:m.p, yaw:m.yaw, held:m.held, seq:m.seq, skin:m.skin, t:performance.now() });
           if(a.pmBuf.length>PM_BUF_MAX) a.pmBuf.splice(0,a.pmBuf.length-PM_BUF_MAX); }
         else applyPm(a,m);
+        if(Number.isFinite(m.maxHp)&&m.maxHp!==a.maxHp){ a.maxHp=m.maxHp; drawBar(a); }
         if(Number.isFinite(m.hp)&&m.hp!==a.hp){ a.hp=m.hp; drawBar(a); }
         if((m.dead===1)!==a.dead){ a.dead=m.dead===1; } } }
     else if(m.t==='pedit'){ const was=get(m.x,m.y,m.z); rawSet(m.x,m.y,m.z,m.v);
@@ -3853,7 +3857,7 @@ function setupNetHandlers(){
       const hm=document.getElementById('hitm'); hm.style.display='block';
       clearTimeout(hm._t); hm._t=setTimeout(()=>hm.style.display='none',160);
       tone(1250,900,.07,'square',.13);
-      if(a) spawnDmgNum(a.g.position.x,a.g.position.y+avatarDamageY(skinSpec(a.skin)),a.g.position.z,'-'+m.dmg,'#ffb14f');
+      if(a) { if(m.dmg > 0) spawnDmgNum(a.g.position.x,a.g.position.y+avatarDamageY(skinSpec(a.skin)),a.g.position.z,'-'+m.dmg,'#ffb14f'); }
     }
     else if(m.t==='zs'){ applyZsList(m.z); }
     else if(m.t==='zhitok'){

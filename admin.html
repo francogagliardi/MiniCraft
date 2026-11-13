@@ -144,6 +144,12 @@
   fieldset input[type="checkbox"] { width: 22px; height: 22px; min-height: 22px; }
   .dialog-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; flex-wrap: wrap; }
   .field-error, .form-error { color: var(--danger); font-size: 13px; margin: 8px 0 0; }
+  .field-error { margin: 4px 0 0; }
+  /* Referencias de jugador y ayudas: discretas y legibles en ambos temas. */
+  .field-hint { display: block; color: var(--dim); font-size: 12px; line-height: 1.4; margin: 4px 0 0; }
+  .bot-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 14px; }
+  @media (max-width: 620px) { .bot-grid { grid-template-columns: 1fr; } }
+  .bot-preset-row { display: flex; justify-content: flex-start; margin-top: 6px; }
   .danger-copy { color: var(--danger); font-weight: 700; }
   .readonly { background: var(--panel-2); color: var(--dim); }
   @media (max-width: 820px) {
@@ -177,6 +183,46 @@
 <main>
   <div class="status" id="status" role="status" aria-live="polite"></div>
   <div class="alert" id="alert" role="alert" hidden></div>
+
+  <section class="panel" aria-labelledby="botsTitle">
+    <div class="panel-head">
+      <h2 id="botsTitle">Bots</h2>
+      <div class="head-actions">
+        <span class="tag" id="botsCount">0/5 activos</span>
+        <button class="primary" id="newBotBtn" type="button">Nuevo bot</button>
+      </div>
+    </div>
+    <p class="note">Los bots corren dentro del servidor y se ven como avatares normales. Podés crearlos, editarlos,
+      lanzarlos, detenerlos y borrarlos. Máximo cinco activos a la vez; el bot usa su propia vida y daño y nunca
+      ataca a los administradores ni a quien tenga “El bot no te ataca”.</p>
+    <p class="status" id="botsStatus" role="status" aria-live="polite"></p>
+    <div class="error-box" id="botsLoadError" hidden>
+      <p>No se pudo cargar la lista de bots.</p>
+      <button class="ghost" id="botsRetryBtn" type="button">Reintentar</button>
+    </div>
+    <p class="empty" id="botsEmpty" hidden>Todavía no hay bots. Creá el primero con “Nuevo bot” o el preset del cazador clásico.</p>
+    <div class="table-wrap">
+      <table id="botsTable">
+        <thead>
+          <tr>
+            <th scope="col">Nombre</th>
+            <th scope="col">Comportamiento</th>
+            <th scope="col">Aspecto</th>
+            <th scope="col">Vida</th>
+            <th scope="col">Daño</th>
+            <th scope="col">Alcance</th>
+            <th scope="col">Velocidad</th>
+            <th scope="col">Vuelo</th>
+            <th scope="col">Recibe daño</th>
+            <th scope="col">Estado</th>
+            <th scope="col">Acciones</th>
+          </tr>
+        </thead>
+        <tbody id="botsBody"></tbody>
+      </table>
+    </div>
+    <p class="row-note" id="botsLimitNote" hidden>Hay cinco bots activos: detené uno para poder lanzar otro.</p>
+  </section>
 
   <section class="panel" aria-labelledby="usersTitle">
     <div class="panel-head">
@@ -299,6 +345,82 @@
   </form>
 </dialog>
 
+<!-- Alta / edición de bot -->
+<dialog id="botDialog" aria-labelledby="botDialogTitle">
+  <form id="botForm" novalidate autocomplete="off">
+    <h2 id="botDialogTitle">Nuevo bot</h2>
+    <p class="note">El bot nace detenido: después de crearlo usá “Lanzar” para que aparezca en el juego.</p>
+    <div class="bot-grid">
+      <label>Nombre
+        <input id="botName" type="text" autocomplete="off" data-lpignore="true" data-1p-ignore="true" required
+          minlength="3" maxlength="16" pattern="[A-Za-z0-9_-]{3,16}" placeholder="OPSX-bot">
+        <span class="field-error" id="botNameError" role="alert" hidden></span>
+      </label>
+      <label>Comportamiento
+        <select id="botBehavior" aria-describedby="botBehaviorHelp"></select>
+        <span class="field-hint" id="botBehaviorHelp"></span>
+        <span class="field-error" id="botBehaviorError" role="alert" hidden></span>
+      </label>
+      <label>Aspecto
+        <select id="botSkin"></select>
+        <span class="field-error" id="botSkinError" role="alert" hidden></span>
+      </label>
+      <label>Vida
+        <input id="botHp" type="number" min="1" max="100" step="1" value="10">
+        <span class="field-hint" id="botHpHint">Jugador normal: 10 de vida.</span>
+        <span class="field-error" id="botHpError" role="alert" hidden></span>
+      </label>
+      <label>Daño
+        <input id="botDamage" type="number" min="0" max="20" step="1" value="6">
+        <span class="field-hint" id="botDamageHint">Jugador normal: 6 a jugadores (2 golpes) · 2 a criaturas.</span>
+        <span class="field-error" id="botDamageError" role="alert" hidden></span>
+      </label>
+      <label>Alcance
+        <input id="botReach" type="number" min="1" max="10" step="0.1" value="4.6">
+        <span class="field-hint" id="botReachHint">Jugador normal: 4.6.</span>
+        <span class="field-error" id="botReachError" role="alert" hidden></span>
+      </label>
+      <label>Velocidad
+        <input id="botSpeed" type="number" min="1" max="30" step="0.1" value="6">
+        <span class="field-hint" id="botSpeedHint">Jugador normal: 4.8.</span>
+        <span class="field-error" id="botSpeedError" role="alert" hidden></span>
+      </label>
+    </div>
+    <fieldset>
+      <legend>Movimiento y daño recibido</legend>
+      <label><input type="checkbox" id="botFlying"> Vuela libre en 3D (sin colisión)</label>
+      <label><input type="checkbox" id="botTakesDamage"> Recibe daño (jugadores y criaturas)</label>
+    </fieldset>
+    <div class="bot-preset-row">
+      <button class="ghost" type="button" id="botPresetBtn">Preset cazador clásico</button>
+    </div>
+    <p class="form-error" id="botFormError" role="alert" hidden></p>
+    <div class="dialog-actions">
+      <button class="ghost" type="button" data-close>Cancelar</button>
+      <button class="primary" type="submit" id="botSaveBtn">Crear bot</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Borrado de bot -->
+<dialog id="botDeleteDialog" aria-labelledby="botDeleteTitle">
+  <form id="botDeleteForm" novalidate autocomplete="off">
+    <h2 id="botDeleteTitle">Borrar bot</h2>
+    <p class="note">Vas a borrar el bot <b id="botDeleteName"></b>.</p>
+    <p class="danger-copy" id="botDeleteActive" hidden>Este bot está en el juego: detenelo y borralo en la misma acción.</p>
+    <p class="note">Esta acción es definitiva: la configuración se elimina y el bot no vuelve al reiniciar.</p>
+    <label>Escribí <b id="botDeleteConfirmName"></b> para confirmar
+      <input id="botDeleteConfirm" type="text" autocomplete="off" data-lpignore="true" data-1p-ignore="true">
+    </label>
+    <p class="form-error" id="botDeleteError" role="alert" hidden></p>
+    <div class="dialog-actions">
+      <button class="ghost" type="button" data-close>Cancelar</button>
+      <button class="danger" type="button" id="botDeleteStopBtn" hidden>Detener y borrar</button>
+      <button class="danger" type="submit" id="botDeleteBtn" disabled>Borrar bot</button>
+    </div>
+  </form>
+</dialog>
+
 <script>
 (function () {
   'use strict';
@@ -346,7 +468,16 @@
   // ---- textos y constantes ----
   const SKIN_LABELS = {
     human: 'Humano', fat: 'Gordo', giant: 'Gigante', small: 'Pequeño',
-    zombie: 'Zombi', mujer: 'Mujer', moreno: 'Piel oscura', gojo: 'Gojo',
+    zombie: 'Zombi', mujer: 'Mujer', moreno: 'Piel oscura', gojo: 'Gojo', robot: 'Robot',
+  };
+  const BEHAVIOR_LABELS = {
+    cazador: 'Cazador', merodeador: 'Merodeador', guardian: 'Guardián', neutral: 'Neutral',
+  };
+  const BEHAVIOR_HELP = {
+    cazador: 'Persigue y ataca a los jugadores. Nunca ataca admins ni cuentas protegidas.',
+    merodeador: 'Deambula por su zona y nunca ataca.',
+    guardian: 'Defiende una zona de 16 bloques alrededor de su origen: pelea contra criaturas y nunca ataca a jugadores.',
+    neutral: 'Deambula; si lo golpean (jugador o criatura), persigue y pelea contra el atacante por 10 segundos y después vuelve a deambular.',
   };
   const PERM_LABELS = [
     ['bot_ignore', 'El cazador lo ignora'],
@@ -362,6 +493,12 @@
     'user.deactivate': 'Cuenta desactivada',
     'user.delete': 'Cuenta borrada',
     'user.guard_rejected': 'Acción rechazada',
+    'bot.create': 'Bot creado',
+    'bot.update': 'Bot editado',
+    'bot.start': 'Bot lanzado',
+    'bot.stop': 'Bot detenido',
+    'bot.delete': 'Bot borrado',
+    'bot.death': 'Bot destruido',
   };
   const ERROR_MESSAGES = {
     invalid_request: 'El pedido no es válido. Revisá los datos.',
@@ -381,6 +518,17 @@
     admin_required: 'Tu cuenta ya no tiene permisos de administración.',
     rate_limited: 'Hiciste demasiadas acciones seguidas: esperá un momento.',
     unavailable: 'El servicio no está disponible. Probá de nuevo.',
+    invalid_bot_name: 'El nombre debe tener 3 a 16 caracteres: letras, números, guion y guion bajo.',
+    invalid_behavior: 'Ese comportamiento no existe.',
+    invalid_hp: 'La vida debe ser un entero entre 1 y 100.',
+    invalid_damage: 'El daño debe ser un entero entre 0 y 20.',
+    invalid_reach: 'El alcance debe ir de 1 a 10 con paso de 0.1.',
+    invalid_speed: 'La velocidad debe ir de 1 a 30 con paso de 0.1.',
+    invalid_flag: 'Ese valor debe estar activado o desactivado.',
+    bot_name_taken: 'Ese nombre ya está en uso.',
+    bot_not_found: 'Ese bot ya no existe.',
+    bot_active: 'Detené el bot antes de borrarlo.',
+    bot_limit_reached: 'Ya hay cinco bots activos: detené uno para lanzar otro.',
   };
   const DATE_FMT = new Intl.DateTimeFormat('es-AR', { dateStyle: 'short', timeStyle: 'short' });
 
@@ -394,8 +542,21 @@
   const deleteBtn = $('deleteBtn');
   const deleteConfirm = $('deleteConfirm');
 
+  const botsBody = $('botsBody');
+  const botsCount = $('botsCount');
+  const botsStatus = $('botsStatus');
+  const botsLoadError = $('botsLoadError');
+  const botsEmpty = $('botsEmpty');
+  const botsLimitNote = $('botsLimitNote');
+
   let me = null;
   let users = [];
+  let bots = [];
+  let botCatalog = { behaviors: [], skins: [] };
+  let botLimits = { maxActive: 5 };
+  let botCatalogReady = false;
+  let editingBot = null;
+  let deleteBotTarget = null;
   let editing = null;
   let passwordTarget = null;
   let deleteTarget = null;
@@ -459,7 +620,7 @@
 
   async function refresh() {
     hideAlert();
-    setStatus('Cargando cuentas y auditoría…');
+    setStatus('Cargando cuentas, bots y auditoría…');
     try {
       const [list, audit] = await Promise.all([
         api('/api/admin/users'),
@@ -471,10 +632,168 @@
       loadError.hidden = true;
       emptyState.hidden = users.length !== 0;
       setStatus('');
+      await loadBots();
     } catch (e) {
       if (e && e.code && e.code !== 'network') return; // ya se mostró / redirigió
       loadError.hidden = false;
       setStatus('No se pudieron cargar los datos.', true);
+    }
+  }
+
+  // ---- bots ----
+  async function loadBots() {
+    try {
+      const res = await api('/api/admin/bots');
+      bots = Array.isArray(res.bots) ? res.bots : [];
+      botLimits = res.limits && Number.isFinite(res.limits.maxActive) ? res.limits : { maxActive: 5 };
+      if (res.catalog) botCatalog = res.catalog;
+      botCatalogReady = false;
+      populateBotCatalog();
+      renderBots();
+      botsLoadError.hidden = true;
+    } catch (e) {
+      if (e && e.code === 'unauthorized') return;
+      if (e && e.code === 'admin_required') return;
+      botsLoadError.hidden = false;
+      setBotStatus('No se pudieron cargar los bots.', true);
+    }
+  }
+
+  function setBotStatus(text, isErr) {
+    botsStatus.textContent = text || '';
+    botsStatus.classList.toggle('err', !!isErr);
+    if (text) setStatus(text, isErr);
+  }
+
+  function populateBotCatalog() {
+    if (botCatalogReady) return;
+    const behaviorSel = $('botBehavior');
+    const skinSel = $('botSkin');
+    if (Array.isArray(botCatalog.behaviors) && botCatalog.behaviors.length) {
+      behaviorSel.textContent = '';
+      for (const b of botCatalog.behaviors) {
+        const opt = document.createElement('option');
+        opt.value = b.id;
+        opt.textContent = b.label || BEHAVIOR_LABELS[b.id] || b.id;
+        behaviorSel.append(opt);
+      }
+    }
+    if (Array.isArray(botCatalog.skins) && botCatalog.skins.length) {
+      skinSel.textContent = '';
+      for (const id of botCatalog.skins) {
+        const opt = document.createElement('option');
+        opt.value = id;
+        opt.textContent = SKIN_LABELS[id] || id;
+        skinSel.append(opt);
+      }
+    }
+    botCatalogReady = true;
+    updateBehaviorHelp();
+  }
+
+  function updateBehaviorHelp() {
+    const help = $('botBehaviorHelp');
+    if (!help) return;
+    const id = $('botBehavior').value;
+    help.textContent = BEHAVIOR_HELP[id] || 'Elegí cómo se comporta el bot.';
+  }
+
+  const botActiveCount = () => bots.filter(b => b.active === true).length;
+
+  function botStatusCell(bot) {
+    if (!bot.active) return tag('Detenido', 'off');
+    const rt = bot.runtime;
+    const hp = rt && Number.isFinite(rt.hp) ? ` · ${rt.hp}/${bot.hp} de vida` : '';
+    const wrap = document.createElement('span');
+    wrap.append(tag('Activo', 'on'));
+    const note = document.createElement('span');
+    note.className = 'row-note';
+    note.textContent = 'En el juego' + hp;
+    wrap.append(note);
+    return wrap;
+  }
+
+  function botActionButton(label, action, bot, cls) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'small ' + (cls || 'ghost');
+    b.textContent = label;
+    b.dataset.action = action;
+    b.dataset.id = String(bot.id);
+    return b;
+  }
+
+  function renderBots() {
+    populateBotCatalog();
+    botsBody.textContent = '';
+    const max = botLimits.maxActive || 5;
+    botsCount.textContent = `${botActiveCount()}/${max} activos`;
+    botsEmpty.hidden = bots.length !== 0;
+    botsLimitNote.hidden = botActiveCount() < max;
+
+    for (const bot of bots) {
+      const tr = document.createElement('tr');
+
+      const name = cell('Nombre');
+      name.className = 'username';
+      name.textContent = bot.name;
+      tr.append(name);
+
+      const behavior = cell('Comportamiento');
+      behavior.textContent = BEHAVIOR_LABELS[bot.behavior] || bot.behavior;
+      tr.append(behavior);
+
+      const skin = cell('Aspecto');
+      skin.textContent = SKIN_LABELS[bot.skin] || bot.skin;
+      tr.append(skin);
+
+      const hp = cell('Vida');
+      hp.textContent = String(bot.hp);
+      tr.append(hp);
+
+      const damage = cell('Daño');
+      damage.textContent = String(bot.damage);
+      tr.append(damage);
+
+      const reach = cell('Alcance');
+      reach.textContent = String(bot.reach);
+      tr.append(reach);
+
+      const speed = cell('Velocidad');
+      speed.textContent = String(bot.speed);
+      tr.append(speed);
+
+      const flying = cell('Vuelo');
+      flying.append(tag(bot.flying ? 'Sí' : 'No', bot.flying ? 'on' : ''));
+      tr.append(flying);
+
+      const takes = cell('Recibe daño');
+      takes.append(tag(bot.takesDamage ? 'Sí' : 'No', bot.takesDamage ? 'on' : ''));
+      tr.append(takes);
+
+      const state = cell('Estado');
+      state.append(botStatusCell(bot));
+      tr.append(state);
+
+      const actions = cell('Acciones');
+      const row = document.createElement('div');
+      row.className = 'row-actions';
+      if (bot.active) {
+        row.append(botActionButton('Detener', 'stop', bot));
+      } else {
+        const launch = botActionButton('Lanzar', 'start', bot);
+        if (botActiveCount() >= max) {
+          launch.disabled = true;
+          launch.title = `Ya hay ${max} bots activos: detené uno para lanzar otro`;
+        }
+        row.append(launch);
+      }
+      row.append(botActionButton('Editar', 'edit', bot));
+      row.append(botActionButton('Borrar', 'delete', bot, 'danger'));
+      actions.append(row);
+      tr.append(actions);
+
+      botsBody.append(tr);
     }
   }
 
@@ -533,10 +852,20 @@
       const wrap = document.createElement('div');
       wrap.className = 'perms';
       let any = false;
+      // Los poderes del admin son implícitos: se muestran como etiqueta aunque
+      // no tenga permisos explícitos marcados.
+      if (u.role === 'admin') {
+        wrap.append(tag('Administrador', 'admin'));
+        const note = document.createElement('span');
+        note.className = 'row-note';
+        note.textContent = 'Poderes implícitos';
+        wrap.append(note);
+        any = true;
+      }
       for (const [key, label] of PERM_LABELS) {
         if (u.permissions && u.permissions[key] === true) { wrap.append(tag(label, 'on')); any = true; }
       }
-      if (!any) {
+      if (!any && u.role !== 'admin') {
         const span = document.createElement('span');
         span.textContent = 'Sin permisos';
         wrap.append(span);
@@ -568,9 +897,295 @@
     }
   }
 
+  // ---- diálogo de bots ----
+  const BOT_FIELD_IDS = ['name', 'behavior', 'skin', 'hp', 'damage', 'reach', 'speed'];
+  const botFieldEl = (field) => $('bot' + field.charAt(0).toUpperCase() + field.slice(1) + 'Error');
+
+  function clearBotErrors() {
+    for (const f of BOT_FIELD_IDS) {
+      const el = botFieldEl(f);
+      if (el) { el.textContent = ''; el.hidden = true; }
+    }
+    $('botFormError').textContent = '';
+    $('botFormError').hidden = true;
+  }
+
+  function showBotFieldError(field, message) {
+    const el = botFieldEl(field);
+    if (el) {
+      el.textContent = message;
+      el.hidden = false;
+      return true;
+    }
+    return false;
+  }
+
+  function showBotErrors(err) {
+    const code = err && err.code;
+    const list = err && err.details && Array.isArray(err.details.errors) ? err.details.errors : null;
+    if (list) {
+      for (const e of list) showBotFieldError(e.field, t(e.code));
+    } else if (err && err.details && err.details.field) {
+      showBotFieldError(err.details.field, t(code));
+    }
+    $('botFormError').textContent = t(code);
+    $('botFormError').hidden = false;
+  }
+
+  function resetBotForm() {
+    $('botForm').reset();
+    clearBotErrors();
+    $('botName').readOnly = false;
+    $('botName').classList.remove('readonly');
+  }
+
+  function openBotCreate(opener) {
+    editingBot = null;
+    resetBotForm();
+    populateBotCatalog();
+    $('botDialogTitle').textContent = 'Nuevo bot';
+    $('botName').value = '';
+    $('botBehavior').value = 'cazador';
+    $('botSkin').value = 'robot';
+    $('botHp').value = '10';
+    $('botDamage').value = '6';
+    $('botReach').value = '4.6';
+    $('botSpeed').value = '28.8';
+    $('botFlying').checked = true;
+    $('botTakesDamage').checked = false;
+    updateBehaviorHelp();
+    $('botSaveBtn').textContent = 'Crear bot';
+    openDialog($('botDialog'), opener);
+    $('botName').focus();
+  }
+
+  function openBotEdit(bot, opener) {
+    editingBot = bot;
+    resetBotForm();
+    populateBotCatalog();
+    $('botDialogTitle').textContent = 'Editar ' + bot.name;
+    $('botName').value = bot.name;
+    $('botBehavior').value = bot.behavior;
+    $('botSkin').value = bot.skin;
+    $('botHp').value = String(bot.hp);
+    $('botDamage').value = String(bot.damage);
+    $('botReach').value = String(bot.reach);
+    $('botSpeed').value = String(bot.speed);
+    $('botFlying').checked = bot.flying === true;
+    $('botTakesDamage').checked = bot.takesDamage === true;
+    updateBehaviorHelp();
+    $('botSaveBtn').textContent = 'Guardar cambios';
+    openDialog($('botDialog'), opener);
+    $('botName').focus();
+  }
+
+  function applyHunterPreset() {
+    clearBotErrors();
+    $('botBehavior').value = 'cazador';
+    $('botSkin').value = 'robot';
+    $('botHp').value = '10';
+    $('botDamage').value = '6';
+    $('botReach').value = '4.6';
+    $('botSpeed').value = '28.8';
+    $('botFlying').checked = true;
+    $('botTakesDamage').checked = false;
+    updateBehaviorHelp();
+    setBotStatus('Preset cazador clásico cargado: revisá el nombre y confirmá para crear el bot.');
+  }
+
+  function botFormValues() {
+    const num = (id) => {
+      const raw = $(id).value.trim();
+      return raw === '' ? NaN : Number(raw);
+    };
+    const tenth = (v) => Number.isFinite(v) && Math.abs(v * 10 - Math.round(v * 10)) < 1e-9;
+    return {
+      name: $('botName').value.trim(),
+      behavior: $('botBehavior').value,
+      skin: $('botSkin').value,
+      hp: num('botHp'),
+      damage: num('botDamage'),
+      reach: num('botReach'),
+      speed: num('botSpeed'),
+      flying: $('botFlying').checked,
+      takesDamage: $('botTakesDamage').checked,
+      __tenth: tenth,
+    };
+  }
+
+  function validateBotForm(values) {
+    clearBotErrors();
+    let ok = true;
+    if (!/^[A-Za-z0-9_-]{3,16}$/.test(values.name)) {
+      showBotFieldError('name', t('invalid_bot_name')); ok = false;
+    }
+    if (!botCatalog.behaviors.some(b => b.id === values.behavior)) {
+      showBotFieldError('behavior', t('invalid_behavior')); ok = false;
+    }
+    if (!botCatalog.skins.includes(values.skin)) {
+      showBotFieldError('skin', t('invalid_skin')); ok = false;
+    }
+    if (!Number.isInteger(values.hp) || values.hp < 1 || values.hp > 100) {
+      showBotFieldError('hp', t('invalid_hp')); ok = false;
+    }
+    if (!Number.isInteger(values.damage) || values.damage < 0 || values.damage > 20) {
+      showBotFieldError('damage', t('invalid_damage')); ok = false;
+    }
+    if (!values.__tenth(values.reach) || values.reach < 1 || values.reach > 10) {
+      showBotFieldError('reach', t('invalid_reach')); ok = false;
+    }
+    if (!values.__tenth(values.speed) || values.speed < 1 || values.speed > 30) {
+      showBotFieldError('speed', t('invalid_speed')); ok = false;
+    }
+    return ok;
+  }
+
+  $('newBotBtn').addEventListener('click', (e) => openBotCreate(e.currentTarget));
+  $('botsRetryBtn').addEventListener('click', () => loadBots());
+  $('botPresetBtn').addEventListener('click', () => applyHunterPreset());
+  $('botBehavior').addEventListener('change', updateBehaviorHelp);
+
+  $('botForm').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const values = botFormValues();
+    if (!validateBotForm(values)) { setBotStatus('Revisá los campos marcados.', true); return; }
+    const config = {
+      name: values.name, behavior: values.behavior, skin: values.skin,
+      hp: values.hp, damage: values.damage, reach: values.reach, speed: values.speed,
+      flying: values.flying, takesDamage: values.takesDamage,
+    };
+    setBotStatus(editingBot ? 'Guardando cambios…' : 'Creando bot…');
+    try {
+      if (editingBot) {
+        const body = {};
+        for (const key of Object.keys(config)) {
+          if (config[key] !== editingBot[key]) body[key] = config[key];
+        }
+        if (!Object.keys(body).length) {
+          closeDialog($('botDialog'));
+          setBotStatus('No había cambios para guardar.');
+          return;
+        }
+        await api('/api/admin/bots/' + encodeURIComponent(editingBot.id), { method: 'PATCH', body });
+        closeDialog($('botDialog'));
+        setBotStatus('Cambios guardados.');
+      } else {
+        await api('/api/admin/bots', { method: 'POST', body: config });
+        closeDialog($('botDialog'));
+        setBotStatus('Bot creado: usá Lanzar para que aparezca en el juego.');
+      }
+      await loadBots();
+    } catch (e) {
+      if (e && e.code === 'unauthorized') return;
+      showBotErrors(e);
+      setBotStatus(t(e && e.code), true);
+    }
+  });
+
+  function openBotDelete(bot, opener) {
+    deleteBotTarget = bot;
+    $('botDeleteForm').reset();
+    $('botDeleteError').textContent = '';
+    $('botDeleteError').hidden = true;
+    $('botDeleteName').textContent = bot.name;
+    $('botDeleteConfirmName').textContent = bot.name;
+    $('botDeleteConfirm').value = '';
+    $('botDeleteBtn').disabled = true;
+    $('botDeleteStopBtn').disabled = true;
+    $('botDeleteActive').hidden = !bot.active;
+    $('botDeleteStopBtn').hidden = !bot.active;
+    $('botDeleteBtn').hidden = bot.active === true;
+    openDialog($('botDeleteDialog'), opener);
+    $('botDeleteConfirm').focus();
+  }
+
+  function botDeleteConfirmed() {
+    return deleteBotTarget && $('botDeleteConfirm').value === deleteBotTarget.name;
+  }
+
+  $('botDeleteConfirm').addEventListener('input', () => {
+    const okName = botDeleteConfirmed();
+    $('botDeleteBtn').disabled = !okName;
+    $('botDeleteStopBtn').disabled = !okName;
+  });
+
+  async function deleteBot({ stopFirst = false } = {}) {
+    if (!botDeleteConfirmed()) return;
+    const errEl = $('botDeleteError');
+    errEl.hidden = true;
+    setBotStatus(stopFirst ? 'Deteniendo y borrando…' : 'Borrando bot…');
+    try {
+      if (stopFirst) {
+        await api('/api/admin/bots/' + encodeURIComponent(deleteBotTarget.id) + '/stop', { method: 'POST' });
+      }
+      await api('/api/admin/bots/' + encodeURIComponent(deleteBotTarget.id), { method: 'DELETE' });
+      closeDialog($('botDeleteDialog'));
+      setBotStatus('Bot borrado definitivamente.');
+      await loadBots();
+    } catch (e) {
+      if (e && e.code === 'unauthorized') return;
+      if (e && e.code === 'bot_active') {
+        errEl.textContent = t('bot_active');
+        errEl.hidden = false;
+        setBotStatus(t('bot_active'), true);
+        await loadBots();
+        return;
+      }
+      errEl.textContent = t(e && e.code);
+      errEl.hidden = false;
+      setBotStatus(t(e && e.code), true);
+    }
+  }
+
+  $('botDeleteForm').addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    if (!botDeleteConfirmed()) return;
+    if (deleteBotTarget && deleteBotTarget.active) return; // debe usar "Detener y borrar"
+    deleteBot({ stopFirst: false });
+  });
+
+  $('botDeleteStopBtn').addEventListener('click', () => deleteBot({ stopFirst: true }));
+
+  botsBody.addEventListener('click', async (ev) => {
+    const btn = ev.target.closest('button[data-action]');
+    if (!btn || btn.disabled) return;
+    const bot = bots.find(b => String(b.id) === String(btn.dataset.id));
+    if (!bot) return;
+    if (btn.dataset.action === 'edit') return openBotEdit(bot, btn);
+    if (btn.dataset.action === 'delete') return openBotDelete(bot, btn);
+    if (btn.dataset.action === 'start') {
+      setBotStatus('Lanzando ' + bot.name + '…');
+      try {
+        await api('/api/admin/bots/' + encodeURIComponent(bot.id) + '/start', { method: 'POST' });
+        setBotStatus(bot.name + ' está en el juego.');
+        await loadBots();
+      } catch (e) {
+        if (e && e.code === 'unauthorized') return;
+        setBotStatus(t(e && e.code), true);
+        await loadBots();
+      }
+      return;
+    }
+    if (btn.dataset.action === 'stop') {
+      setBotStatus('Deteniendo ' + bot.name + '…');
+      try {
+        await api('/api/admin/bots/' + encodeURIComponent(bot.id) + '/stop', { method: 'POST' });
+        setBotStatus(bot.name + ' quedó detenido.');
+        await loadBots();
+      } catch (e) {
+        if (e && e.code === 'unauthorized') return;
+        setBotStatus(t(e && e.code), true);
+        await loadBots();
+      }
+    }
+  });
+
   // ---- auditoría ----
   function detailSummary(entry) {
     const d = entry.details || {};
+    if (String(entry.action || '').startsWith('bot.')) {
+      return d.botName ? 'Bot: ' + d.botName + (d.behavior ? ' (' + d.behavior + ')' : '') : '';
+    }
     if (entry.action === 'user.guard_rejected') {
       return 'Motivo: ' + (d.reason === 'guard_last_admin'
         ? 'el sistema debe conservar un admin activo'

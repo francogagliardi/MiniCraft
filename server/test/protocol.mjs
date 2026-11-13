@@ -57,14 +57,10 @@ async function userSession(app, username, password, helloExtra = {}) {
   return { ws: r.ws, m, seen };
 }
 
-async function botSession(app, name, skin, helloExtra = {}) {
-  const r = await connect(app.wsUrl(), { headers: { Authorization: 'Bearer test-bot-token' } });
-  if (r.status !== 101) throw new Error('upgrade bot rechazado ' + r.status);
-  const seen = [];
-  r.ws.on('message', (raw) => { try { seen.push(JSON.parse(raw.toString())); } catch (e) {} });
-  r.ws.send(JSON.stringify({ t: 'hello', name, skin, bot: true, ...helloExtra }));
-  const m = await waitWelcome(seen);
-  return { ws: r.ws, m, seen };
+// El bot de servicio se retiró: una sesión de cookie que intente declararse
+// `bot:true` es un usuario normal (el hello no otorga identidad de bot).
+async function spoofedBotSession(app, name) {
+  return userSession(app, name, 'password-123', { bot: true });
 }
 
 const USERS = [
@@ -256,12 +252,13 @@ try {
       'world.json sin campos de ciclo/reloj (' + (w ? Object.keys(w).join(',') : 'sin archivo') + ')');
   }
 
-  // 9. sueño: welcome, rechazo diurno y bot de servicio
+  // 9. sueño: welcome, rechazo diurno y hello con bot:true ignorado
   {
-    const zzz = await botSession(FIX, 'BotZzz', 'robot');
+    const zzz = await spoofedBotSession(FIX, 'BotZzz');
     ok(Array.isArray(zzz.m.sleeping) && typeof zzz.m.sleepNeed === 'number', 'welcome trae sleeping + sleepNeed');
-    const expected = zzz.m.players.filter(p => p.mode === 'player' && !p.dead).length;
-    ok(zzz.m.sleepNeed === expected, `el bot no suma al quórum (need=${zzz.m.sleepNeed}, reales=${expected})`);
+    const expected = zzz.m.players.filter(p => p.mode === 'player' && !p.dead).length + 1;
+    ok(zzz.m.sleepNeed === expected,
+      `un usuario de cookie con bot:true cuenta como real (need=${zzz.m.sleepNeed}, reales=${expected})`);
     const diurno = await userSession(FIX, 'Diurno', 'password-123');
     const nD = diurno.seen.length;
     diurno.ws.send(JSON.stringify({ t: 'sleep', x: 10, y: 10, z: 10 }));
@@ -285,8 +282,7 @@ try {
       ok(true, 'server nocturno de prueba levanta');
       const h1 = await userSession(app3, 'Somnia', 'password-123');
       const h2 = await userSession(app3, 'Rem', 'password-123');
-      const bot3 = await botSession(app3, 'BotNoche', 'robot');
-      ok(h2.m.sleepNeed === 2, `need excluye al bot (${h2.m.sleepNeed})`);
+      ok(h2.m.sleepNeed === 2, `need cuenta solo a los dos jugadores reales (${h2.m.sleepNeed})`);
       const n1 = h1.seen.length;
       h1.ws.send(JSON.stringify({ t: 'sleep', x: 10, y: 10, z: 10 }));
       const on1 = await waitFor(h1.seen, m => m.t === 'sleep' && m.id === h1.m.id && m.on === true, n1);
@@ -305,8 +301,8 @@ try {
       ok(!!dawn && dawn.v >= 0 && dawn.v < 0.1, `el tod salta al amanecer (${dawn && dawn.v})`);
       const chatDawn = await waitFor(h2.seen, m => m.t === 'chat' && /Amaneció/.test(m.text || ''), n2);
       ok(!!chatDawn, 'aviso de amanecer por chat');
-      ok(bot3.m.sleepNeed === 2, `el bot no bloquea el salto (need=${bot3.m.sleepNeed})`);
-      for (const c of [h1, h2, bot3]) try { c.ws.close(); } catch (e) {}
+      ok(h2.m.sleepNeed === 2, `sin bots el quórum es de dos (need=${h2.m.sleepNeed})`);
+      for (const c of [h1, h2]) try { c.ws.close(); } catch (e) {}
     } finally { await app3.close(); }
   }
 

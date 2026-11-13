@@ -9,6 +9,8 @@ const Skins = require('./skins.js');
 const RL = require('./rate-limit.js');
 const CFG = require('./env-config.js');
 const Permissions = require('./permissions.js');
+const BotConfig = require('./bot-config.js');
+const Behaviors = require('./bot-behaviors.js');
 
 const BODY_LIMIT = 8 * 1024;
 const RATE_LOG_MS = 10000;
@@ -32,6 +34,17 @@ const ERRORS = {
   admin_required: 'Se requiere rol de administrador',
   rate_limited: 'Demasiadas acciones: esperá un momento',
   unavailable: 'Servicio no disponible, intentá de nuevo',
+  invalid_bot_name: 'El nombre del bot debe tener 3 a 16 caracteres: letras, números, guion y guion bajo',
+  invalid_behavior: 'Ese comportamiento no existe',
+  invalid_hp: 'La vida debe ser un entero entre 1 y 100',
+  invalid_damage: 'El daño debe ser un entero entre 0 y 20',
+  invalid_reach: 'El alcance debe ir de 1 a 10 con paso de 0.1',
+  invalid_speed: 'La velocidad debe ir de 1 a 30 con paso de 0.1',
+  invalid_flag: 'Ese valor debe ser verdadero o falso',
+  bot_name_taken: 'Ese nombre de bot ya está en uso',
+  bot_not_found: 'Ese bot no existe',
+  bot_active: 'Detené el bot antes de borrarlo',
+  bot_limit_reached: 'Ya hay cinco bots activos: detené uno para lanzar otro',
 };
 
 const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -52,6 +65,7 @@ function createAdminRouter({
   currentSession: injectedSession, sameOrigin: injectedSameOrigin,
   readJson: injectedReadJson, clientIp: injectedClientIp,
   secure = CFG.cookieSecure(env), derivations,
+  bots = null,
 } = {}) {
   const adminLimiter = RL.createAdminLimiter({ env, now });
   const trustProxy = CFG.trustProxy(env);
@@ -581,6 +595,268 @@ function createAdminRouter({
     return true;
   }
 
+  // ---- bots: helpers y handlers (change panel-bots-custom) ----
+  function botRuntimeState(row) {
+    if (!row || !row.active || !bots || typeof bots.runtimeState !== 'function') return null;
+    return bots.runtimeState(row.id);
+  }
+
+  function botDetails(errors) {
+    const first = errors[0] || { field: null, reason: 'valor inválido' };
+    return { details: { field: first.field, reason: first.reason, errors } };
+  }
+
+  function sendValidation(res, errors) {
+    sendError(res, 422, errors[0].code, botDetails(errors));
+  }
+
+  async function botNameInUse(name) {
+    if (await store.getUserByUsername(name)) return true;
+    return !!(await store.getBotByName(name));
+  }
+
+  async function auditBot(session, action, bot, extra = {}) {
+    await store.insertAudit({
+      actorUserId: session.user.id, targetUserId: null, action,
+      details: {
+        botId: bot.id, botName: bot.name, behavior: bot.behavior, ...extra,
+        actorUsername: session.user.username,
+      },
+    });
+  }
+
+  // ---- GET /api/admin/bots ----
+  async function handleBotsList(req, res) {
+    const session = await requireAdmin(req, res);
+    if (!session) return true;
+    if (rateLimited(req, res, 'admin:bots:list')) return true;
+    try {
+      const rows = await store.listBots();
+      sendJson(res, 200, {
+        bots: rows.map(row => BotConfig.botView(row, botRuntimeState(row))),
+        limits: { maxActive: BotConfig.BOT_LIMITS.maxActive },
+        catalog: { behaviors: Behaviors.listBehaviors(), skins: BotConfig.BOT_SKINS },
+      });
+    } catch (e) {
+      warn('   ⚠️ admin: error al listar bots: ' + (e && e.message));
+      sendError(res, 503, 'unavailable');
+    }
+    return true;
+  }
+
+  // ---- POST /api/admin/bots ----
+  async function handleBotCreate(req, res) {
+    const session = await requireAdmin(req, res);
+    if (!session) return true;
+    if (!originOk(req)) { sendError(res, 403, 'invalid_request'); return true; }
+    if (rateLimited(req, res, 'admin:bots:create')) return true;
+    const parsed = await readBody(req);
+    if (parsed.status) { sendError(res, parsed.status, parsed.error); return true; }
+
+    const norm = BotConfig.normalizeBotInput(parsed.body || {});
+    if (!norm.ok) { sendValidation(res, norm.errors); return true; }
+
+    try {
+      const outcome = await store.withTransaction(async (tx) => {
+        if (await tx.getBotByName(norm.value.name)) return { taken: true };
+        if (await tx.getUserByUsername(norm.value.name)) return { taken: true };
+        const created = await tx.createBot({ ...norm.value, createdBy: session.user.id });
+        await tx.insertAudit({
+          actorUserId: session.user.id, targetUserId: null, action: 'bot.create',
+          details: {
+            botId: created.id, botName: created.name, behavior: created.behavior,
+            actorUsername: session.user.username,
+          },
+        });
+        return { created };
+      });
+      if (outcome.taken) {
+        sendError(res, 409, 'bot_name_taken', { details: { field: 'name', reason: 'ese nombre ya está en uso' } });
+        return true;
+      }
+      log(`   🤖 admin ${session.user.username} → bot.create ${outcome.created.name}`);
+      sendJson(res, 201, { bot: BotConfig.botView(outcome.created, botRuntimeState(outcome.created)) });
+    } catch (e) {
+      if (e && e.code === 'BOT_NAME_TAKEN') {
+        sendError(res, 409, 'bot_name_taken', { details: { field: 'name', reason: 'ese nombre de bot ya está en uso' } });
+        return true;
+      }
+      warn('   ⚠️ admin: error al crear bot: ' + (e && e.message));
+      sendError(res, 503, 'unavailable');
+    }
+    return true;
+  }
+
+  // ---- PATCH /api/admin/bots/:id ----
+  async function handleBotPatch(req, res, rawId) {
+    const session = await requireAdmin(req, res);
+    if (!session) return true;
+    if (!originOk(req)) { sendError(res, 403, 'invalid_request'); return true; }
+    if (rateLimited(req, res, 'admin:bots:patch')) return true;
+    const id = parseId(rawId);
+    if (!id) { sendError(res, 400, 'invalid_request'); return true; }
+    const parsed = await readBody(req);
+    if (parsed.status) { sendError(res, parsed.status, parsed.error); return true; }
+    const body = parsed.body || {};
+
+    const norm = BotConfig.normalizeBotInput(body, { partial: true });
+    if (!norm.ok) { sendValidation(res, norm.errors); return true; }
+    const changes = Object.keys(norm.value);
+    if (!changes.length) { sendError(res, 400, 'invalid_request'); return true; }
+    // `active` nunca entra en `value` (normalize lo marca invalid_field).
+
+    if (norm.value.name && await botNameInUse(norm.value.name)) {
+      const current = await store.getBotById(id);
+      if (!current) { sendError(res, 404, 'bot_not_found'); return true; }
+      if (current.name.toLowerCase() !== norm.value.name.toLowerCase()) {
+        sendError(res, 409, 'bot_name_taken', { details: { field: 'name', reason: 'ese nombre ya está en uso' } });
+        return true;
+      }
+    }
+
+    let outcome;
+    try {
+      outcome = await store.withTransaction(async (tx) => {
+        const current = await tx.getBotById(id);
+        if (!current) return { notFound: true };
+        const updated = await tx.updateBot(id, norm.value);
+        await tx.insertAudit({
+          actorUserId: session.user.id, targetUserId: null, action: 'bot.update',
+          details: {
+            botId: updated.id, botName: updated.name, behavior: updated.behavior,
+            before: BotConfig.botView(current), after: BotConfig.botView(updated),
+            actorUsername: session.user.username,
+          },
+        });
+        return { updated, wasActive: current.active === true };
+      });
+    } catch (e) {
+      if (e && e.code === 'BOT_NAME_TAKEN') {
+        sendError(res, 409, 'bot_name_taken', { details: { field: 'name', reason: 'ese nombre de bot ya está en uso' } });
+        return true;
+      }
+      warn('   ⚠️ admin: error al editar bot: ' + (e && e.message));
+      sendError(res, 503, 'unavailable');
+      return true;
+    }
+
+    if (outcome.notFound) { sendError(res, 404, 'bot_not_found'); return true; }
+    // Edición en caliente: se reemplaza el avatar (leave + join) y la vida vuelve
+    // a su hp configurado, para que el panel y el juego muestren lo mismo.
+    if (outcome.wasActive && bots) {
+      try { bots.stop(id); bots.spawn(outcome.updated); }
+      catch (e) { warn('   ⚠️ admin: no se pudo aplicar la edición en caliente: ' + (e && e.message)); }
+    }
+    log(`   🤖 admin ${session.user.username} → bot.update ${outcome.updated.name}`);
+    sendJson(res, 200, { bot: BotConfig.botView(outcome.updated, botRuntimeState(outcome.updated)) });
+    return true;
+  }
+
+  // ---- DELETE /api/admin/bots/:id ----
+  async function handleBotDelete(req, res, rawId) {
+    const session = await requireAdmin(req, res);
+    if (!session) return true;
+    if (!originOk(req)) { sendError(res, 403, 'invalid_request'); return true; }
+    if (rateLimited(req, res, 'admin:bots:delete')) return true;
+    const id = parseId(rawId);
+    if (!id) { sendError(res, 400, 'invalid_request'); return true; }
+
+    let outcome;
+    try {
+      outcome = await store.withTransaction(async (tx) => {
+        const target = await tx.getBotById(id);
+        if (!target) return { notFound: true };
+        if (target.active === true) return { active: true };
+        await tx.insertAudit({
+          actorUserId: session.user.id, targetUserId: null, action: 'bot.delete',
+          details: {
+            botId: target.id, botName: target.name, behavior: target.behavior,
+            actorUsername: session.user.username,
+          },
+        });
+        await tx.deleteBot(target.id);
+        return { target };
+      });
+    } catch (e) {
+      warn('   ⚠️ admin: error al borrar bot: ' + (e && e.message));
+      sendError(res, 503, 'unavailable');
+      return true;
+    }
+    if (outcome.notFound) { sendError(res, 404, 'bot_not_found'); return true; }
+    if (outcome.active) {
+      sendError(res, 409, 'bot_active', { details: { field: 'active', reason: 'detené el bot antes de borrarlo' } });
+      return true;
+    }
+    log(`   🗑️  admin ${session.user.username} → bot.delete ${outcome.target.name}`);
+    sendNoContent(res);
+    return true;
+  }
+
+  // ---- POST /api/admin/bots/:id/start | stop ----
+  async function handleBotStart(req, res, rawId) {
+    const session = await requireAdmin(req, res);
+    if (!session) return true;
+    if (!originOk(req)) { sendError(res, 403, 'invalid_request'); return true; }
+    if (rateLimited(req, res, 'admin:bots:start')) return true;
+    const id = parseId(rawId);
+    if (!id) { sendError(res, 400, 'invalid_request'); return true; }
+
+    let outcome;
+    try { outcome = await store.startBot(id); }
+    catch (e) {
+      warn('   ⚠️ admin: error al lanzar bot: ' + (e && e.message));
+      sendError(res, 503, 'unavailable');
+      return true;
+    }
+    if (outcome.status === 'not_found') { sendError(res, 404, 'bot_not_found'); return true; }
+    if (outcome.status === 'limit') { sendError(res, 409, 'bot_limit_reached'); return true; }
+    if (outcome.status === 'already_active') {
+      sendJson(res, 200, { bot: BotConfig.botView(outcome.bot, botRuntimeState(outcome.bot)) });
+      return true;
+    }
+
+    // Persistido como activo: recién ahora se materializa en el mundo. Si el spawn
+    // falla (config corrupta), se revierte para no dejar activo sin runtime.
+    try {
+      if (bots) bots.spawn(outcome.bot);
+    } catch (e) {
+      warn('   ⚠️ admin: no se pudo spawnear el bot: ' + (e && e.message));
+      try { await store.stopBot(id); } catch (e2) { /* se loguea el 503 igual */ }
+      sendError(res, 503, 'unavailable');
+      return true;
+    }
+    try { await auditBot(session, 'bot.start', outcome.bot); }
+    catch (e) { warn('   ⚠️ admin: no se pudo auditar bot.start: ' + (e && e.message)); }
+    log(`   🤖 admin ${session.user.username} → bot.start ${outcome.bot.name}`);
+    sendJson(res, 200, { bot: BotConfig.botView(outcome.bot, botRuntimeState(outcome.bot)) });
+    return true;
+  }
+
+  async function handleBotStop(req, res, rawId) {
+    const session = await requireAdmin(req, res);
+    if (!session) return true;
+    if (!originOk(req)) { sendError(res, 403, 'invalid_request'); return true; }
+    if (rateLimited(req, res, 'admin:bots:stop')) return true;
+    const id = parseId(rawId);
+    if (!id) { sendError(res, 400, 'invalid_request'); return true; }
+
+    let bot;
+    try { bot = await store.stopBot(id); }
+    catch (e) {
+      warn('   ⚠️ admin: error al detener bot: ' + (e && e.message));
+      sendError(res, 503, 'unavailable');
+      return true;
+    }
+    if (!bot) { sendError(res, 404, 'bot_not_found'); return true; }
+    try { if (bots) bots.stop(id); }
+    catch (e) { warn('   ⚠️ admin: no se pudo detener el runtime del bot: ' + (e && e.message)); }
+    try { await auditBot(session, 'bot.stop', bot); }
+    catch (e) { warn('   ⚠️ admin: no se pudo auditar bot.stop: ' + (e && e.message)); }
+    log(`   🤖 admin ${session.user.username} → bot.stop ${bot.name}`);
+    sendJson(res, 200, { bot: BotConfig.botView(bot, botRuntimeState(bot)) });
+    return true;
+  }
+
   async function route(req, res) {
     const method = req.method || 'GET';
     let urlPath;
@@ -612,6 +888,24 @@ function createAdminRouter({
     if (urlPath === '/api/admin/audit') {
       if (method !== 'GET') { sendError(res, 404, 'invalid_request'); return true; }
       return handleAudit(req, res);
+    }
+    if (urlPath === '/api/admin/bots') {
+      if (method === 'GET') return handleBotsList(req, res);
+      if (method === 'POST') return handleBotCreate(req, res);
+      sendError(res, 404, 'invalid_request');
+      return true;
+    }
+    let bm = urlPath.match(/^\/api\/admin\/bots\/([^/]+)\/(start|stop)$/);
+    if (bm) {
+      if (method !== 'POST') { sendError(res, 404, 'invalid_request'); return true; }
+      return bm[2] === 'start' ? handleBotStart(req, res, bm[1]) : handleBotStop(req, res, bm[1]);
+    }
+    bm = urlPath.match(/^\/api\/admin\/bots\/([^/]+)$/);
+    if (bm) {
+      if (method === 'PATCH') return handleBotPatch(req, res, bm[1]);
+      if (method === 'DELETE') return handleBotDelete(req, res, bm[1]);
+      sendError(res, 404, 'invalid_request');
+      return true;
     }
     if (urlPath.startsWith('/api/admin/')) {
       sendError(res, 404, 'invalid_request');

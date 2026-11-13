@@ -1,8 +1,8 @@
 'use strict';
-// Gate de autenticación del upgrade WebSocket: cookie de sesión para usuarios y
-// `Authorization: Bearer <BOT_TOKEN>` para el bot de servicio (tiempo constante).
+// Gate de autenticación del upgrade WebSocket: SOLO cookie de sesión de usuario.
+// La credencial de servicio del bot se retiró con el change panel-bots-custom:
+// los bots corren in-process y no abren sockets ni se autentican.
 const A = require('./auth.js');
-const CFG = require('./env-config.js');
 const Permissions = require('./permissions.js');
 
 const REASONS = { 401: 'Unauthorized', 503: 'Service Unavailable' };
@@ -14,26 +14,8 @@ function reject(socket, status) {
   try { socket.destroy(); } catch (e) {}
 }
 
-function bearer(req) {
-  const raw = req.headers.authorization;
-  if (typeof raw !== 'string') return null;
-  const m = raw.match(/^Bearer\s+(.+)$/i);
-  return m ? m[1].trim() : '';
-}
-
 function createWsGate({ store, env = process.env, now = () => Date.now(), log = () => {}, warn = () => {} } = {}) {
-  const token = CFG.botToken(env);
-
   async function authenticate(req) {
-    const header = req.headers.authorization;
-    if (typeof header === 'string' && header.length > 0) {
-      const got = bearer(req);
-      // Un Bearer inválido NO cae a cookie: es un cliente de servicio mal configurado.
-      if (!token) return { status: 401 };
-      if (!got || !A.tokensEqual(got, token)) return { status: 401 };
-      return { kind: 'bot' };
-    }
-
     const cookies = A.parseCookies(req.headers.cookie);
     const sid = cookies[A.SESSION_COOKIE];
     if (!sid) return { status: 401 };
@@ -77,7 +59,7 @@ function createWsGate({ store, env = process.env, now = () => Date.now(), log = 
     return A.isSessionActive(found.session, found.user, now());
   }
 
-  return { authenticate, handleUpgrade, revalidate, hasBotToken: !!token };
+  return { authenticate, handleUpgrade, revalidate };
 }
 
 module.exports = { createWsGate, reject };

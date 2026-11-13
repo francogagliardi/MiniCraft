@@ -28,10 +28,6 @@ function trustProxy(env = process.env) {
   return v === '1' || v === 'true';
 }
 
-function botToken(env = process.env) {
-  return str(env.BOT_TOKEN);
-}
-
 function adminUsername(env = process.env) {
   return str(env.ADMIN_USERNAME) || 'admin';
 }
@@ -41,4 +37,4 @@ function migrationsAuto(env = process.env) {
   return !(v === '0' || v === 'false');
 }
 
-module.exports = { registrationEnabled, cookieSecure, trustProxy, botToken, adminUsername, migrationsAuto };
+module.exports = { registrationEnabled, cookieSecure, trustProxy, adminUsername, migrationsAuto };

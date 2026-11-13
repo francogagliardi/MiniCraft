@@ -13,9 +13,9 @@ const Sleep = require('./sleep.js');
 const Zombie = require('./zombie.js');
 const Skins = require('./skins.js');
 const Permissions = require('./permissions.js');
+const BotRuntime = require('./bot-runtime.js');
 
 const DEFAULT_SKIN = 'human';
-const RATE_WARN_MS = 10000;
 
 // Número por env con default (knobs del limitador, overridables en tests).
 const envNum = (v, d) => (v === undefined || v === '' || !Number.isFinite(+v)) ? d : +v;
@@ -140,15 +140,33 @@ function save() {
   // ---- jugadores ----
   const players = new Map(); // ws -> {id, name, mode, admin, pos, ...}
   let nextId = 1;
-  let lastBotHitWarn = 0;
 
-  // El descarte del hit del bot es por diseño; se loguea como máximo cada 10 s.
-  function botHitWarn() {
-    const t = now();
-    if (t - lastBotHitWarn < RATE_WARN_MS) return;
-    lastBotHitWarn = t;
-    warn('   ⚠️ bot: hit descartado por bot_ignore');
-  }
+  // ---- bots in-process (change panel-bots-custom) ----
+  // Mapa propio: NUNCA entran al Map `players`, así heartbeat, idle-kick,
+  // revalidación y quórum de sueño siguen operando solo sobre sockets reales.
+  const botWorld = {
+    W: WG.WG_W, H: WG.WG_H, surface: WG.WG_SURFACE,
+    topSolidY: (x, z) => WG.topSolidY(world, x, z),
+    freeForMob: (x, y, z) => WG.freeForMob(world, x, y, z),
+  };
+  const bots = BotRuntime.create({
+    store, world: botWorld, env, now, log, warn,
+    getPlayers: () => [...players.values()].map(p => ({
+      id: p.id, name: p.name, pos: p.pos, dead: p.dead || 0, mode: p.mode,
+      admin: p.admin === true, bot: p.bot === true, skin: p.skin,
+      permissions: p.permissions,
+      botIgnore: !!(p.permissions && p.permissions.bot_ignore === true),
+    })),
+    // Las criaturas son objetivos de guardián/neutral: el runtime solo lee su
+    // estado y el daño lo aplica la horda de forma server-side.
+    getZombies: () => horde.zombies
+      .filter(z => !z.dead)
+      .map(z => ({ i: z.i, pos: [z.x, z.y, z.z], hp: z.hp, dead: z.dead })),
+    damageZombie: (id, dmg, t) => horde.damageZombie(id, dmg, t),
+    broadcast,
+    sendToPlayer: (id, frame) => { const ws = wsById(id); if (ws) send(ws, frame); },
+  });
+  bots.ready = bots.boot();
 
   // ---- HTTP ----
   // Router de auth (se inyecta o se construye desde el store). Si no hay router,
@@ -156,7 +174,7 @@ function save() {
   let auth = opts.auth || null;
   if (!auth && store) {
     auth = require('./http-auth.js').createAuthRouter({
-      store, env, staticDir: STATIC, now: () => now(), log, warn,
+      store, env, staticDir: STATIC, now: () => now(), log, warn, bots,
       onSessionRevoked: (userId) => closeUserSockets(userId),
       onPermissionsChanged: (userId, permissions) => applyPermissionsChange(userId, permissions),
     });
@@ -197,15 +215,12 @@ function save() {
   let gate = opts.wsGate || null;
   if (!gate && store) gate = require('./ws-auth.js').createWsGate({ store, env, now, log, warn });
 
-  // Identidad autoritativa: usuario desde la sesión del gate; bot desde BOT_NAME/BOT_SKIN.
+  // Identidad autoritativa: siempre desde la sesión de usuario del gate.
   let resolveIdentity = opts.resolveIdentity || null;
   if (!resolveIdentity && store) {
     resolveIdentity = (m, ws) => {
       const a = ws.auth;
       if (!a) return null;
-      if (a.kind === 'bot') {
-        return { name: m.name, skin: m.skin, mode: 'player', admin: false, bot: true, permissions: {} };
-      }
       const isAdmin = a.role === 'admin';
       const permissions = Permissions.materializePermissions(a.permissions);
       return {
@@ -309,6 +324,18 @@ function save() {
     return null;
   }
 
+  // Entrada de roster de un jugador real (histórica + flag aditivo bot_ignore).
+  function playerEntry(p) {
+    return {
+      id: p.id, name: p.name, mode: p.mode, hp: p.hp ?? 10, dead: p.dead ?? 0,
+      pos: p.pos, yaw: p.yaw, pitch: p.pitch, held: p.held ?? 0, seq: p.seq ?? 0,
+      skin: p.skin ?? DEFAULT_SKIN,
+      ...(p.permissions && p.permissions.bot_ignore ? { botIgnore: true } : {}),
+    };
+  }
+  // Los bots activos viajan como avatares fake (id negativo, bot:true, maxHp).
+  const botEntries = () => bots.list().map(BotRuntime.botEntry);
+
   const timers = [];
   const every = (ms, fn) => { const t = setInterval(fn, ms); if (t.unref) t.unref(); timers.push(t); return t; };
 
@@ -346,9 +373,18 @@ function save() {
     ztPrev = t;
     const arr = [];
     for (const p of players.values()) arr.push({ id: p.id, pos: p.pos, dead: p.dead || 0 });
-    const res = horde.tick(dt, { night: isNight(), now: t, players: arr });
+    // Los bots son objetivos válidos de las criaturas: viajan aparte y con
+    // prioridad menor que los humanos dentro de la adquisición de la horda.
+    const botTargets = bots.list().map((b) => ({ id: b.id, pos: b.pos, dead: b.dead ? 1 : 0, bot: true }));
+    const res = horde.tick(dt, { night: isNight(), now: t, players: arr, bots: botTargets });
     zLast = res.zs;
     for (const ev of res.events) {
+      if (ev.t === 'phit' && ev.to < 0) {
+        // Golpe de una criatura a un bot: no hay socket, lo aplica el runtime.
+        const bot = bots.getById(ev.to);
+        if (bot) bots.applyEnemyHit(bot, ev.dmg, ev.fromId, t).catch(() => {});
+        continue;
+      }
       const target = wsById(ev.to);
       if (!target) continue;
       if (ev.t === 'phit') send(target, { t: 'phit', from: ev.from, fromId: ev.fromId, dmg: ev.dmg, dx: ev.dx, dz: ev.dz });
@@ -416,12 +452,11 @@ function save() {
           sleepNeed: welcomeQ.need,
           zom: horde.zombies.map(z => ({ i: z.i, p: [z.x, z.y, z.z], yaw: z.yaw, hp: z.hp, dead: z.dead, atk: z.atk || 0 })),
           adminDenied: identity.adminDenied === true,
-          players: [...players.values()].filter(p => p !== me)
-            .map(p => ({ id: p.id, name: p.name, mode: p.mode, hp: p.hp ?? 10, dead: p.dead ?? 0, pos: p.pos, yaw: p.yaw, pitch: p.pitch, held: p.held ?? 0, seq: p.seq ?? 0, skin: p.skin ?? DEFAULT_SKIN, ...(p.permissions.bot_ignore ? { botIgnore: true } : {}) })),
+          players: [...players.values()].filter(p => p !== me).map(playerEntry).concat(botEntries()),
         };
         if (me.profile) welcome.user = { username: me.profile.username, role: me.profile.role, skin: me.profile.skin, permissions: me.permissions };
         send(ws, welcome);
-        broadcast({ t: 'join', id: me.id, name: me.name, mode: me.mode, dead: 0, pos: me.pos, yaw: me.yaw, pitch: me.pitch, held: me.held, seq: me.seq, skin: me.skin, ...(me.permissions.bot_ignore ? { botIgnore: true } : {}) }, ws);
+        broadcast({ t: 'join', ...playerEntry(me) }, ws);
         broadcast({ t: 'chat', from: '🌿', text: `${me.name} se unió (${me.mode === 'admin' ? 'admin 🛠' : 'jugador 🌱'})` }, ws);
         log(horaAr() + `➕ ${me.name} (${me.mode}) — ${players.size} conectados`);
         if (anySleeping()) checkSleep();
@@ -473,11 +508,15 @@ function save() {
       } else if (m.t === 'wake') {
         wakeAndBroadcast(me);
       } else if (m.t === 'hit') {
-        const entry = [...players.entries()].find(([, p]) => p.id === m.id);
-        if (entry && me.bot === true && entry[1].permissions.bot_ignore === true) {
-          botHitWarn();
-          return; // defensa en profundidad: sin `phit` ni `hitok`
+        // Los bots no tienen socket: el server valida alcance/cadencia y aplica
+        // su propio daño fijo. Un id negativo inexistente se descarta.
+        const bot = bots.getById(+m.id);
+        if (bot) {
+          const res = await bots.applyPlayerHit(bot, me, now());
+          send(ws, { t: 'hitok', id: bot.id, dmg: res.dmg, hp: res.hp, dead: res.dead });
+          return;
         }
+        const entry = [...players.entries()].find(([, p]) => p.id === m.id);
         const target = entry ? entry[0] : null;
         if (target) {
           const dmg = Math.min(6, +m.dmg || 2);
@@ -512,6 +551,7 @@ function save() {
   async function close() {
     for (const t of timers) clearInterval(t);
     try { clearInterval(saveTimer); } catch (e) {}
+    try { bots.close(); } catch (e) {}
     save();
     for (const ws of [...wss.clients]) { try { ws.terminate(); } catch (e) {} }
     await new Promise((resolve) => { try { wss.close(() => resolve()); } catch (e) { resolve(); } });
@@ -519,7 +559,7 @@ function save() {
   }
 
   return {
-    httpServer, wss, listeners: players, listen, close, save,
+    httpServer, wss, listeners: players, listen, close, save, bots,
     getPort: () => (httpServer.address() ? httpServer.address().port : null),
     broadcast, send, removePlayer, closeUserSockets, phaseNow, isNight,
     store, env, staticDir: STATIC, worldFile: SAVE_FILE,

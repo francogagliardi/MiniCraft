@@ -69,6 +69,44 @@ El formulario SHALL incluir nombre, comportamiento, skin, vida, daño, alcance, 
 - **WHEN** el admin abre la edición de un bot
 - **THEN** el formulario muestra su configuración actual y guarda solo los campos modificados
 
+### Requirement: Referencias de jugador junto a la configuración
+
+El formulario SHALL mostrar, debajo de Vida, Daño, Alcance y Velocidad, el valor de referencia de un jugador normal: “Jugador normal: 10 de vida.”, “Jugador normal: 6 a jugadores (2 golpes) · 2 a criaturas.”, “Jugador normal: 4.6.” y “Jugador normal: 4.8.”. La referencia SHALL ser un texto secundario discreto, legible en tema claro y oscuro, sin romper el layout ni la accesibilidad.
+
+#### Scenario: Referencias visibles en el alta
+
+- **WHEN** el admin abre el formulario de un bot
+- **THEN** cada uno de los cuatro campos numéricos muestra debajo su referencia de jugador normal
+
+#### Scenario: Referencias en la edición
+
+- **WHEN** el admin edita un bot existente
+- **THEN** las referencias siguen visibles y no reemplazan los valores configurados
+
+#### Scenario: Legibilidad en ambos temas
+
+- **WHEN** el admin cambia entre tema claro y oscuro
+- **THEN** las referencias conservan contraste suficiente y no se confunden con un error de validación
+
+### Requirement: Descripción del comportamiento elegido
+
+El select de comportamiento SHALL llenarse desde el catálogo y SHALL mostrar una descripción en español de la opción elegida que cambie al seleccionar otra, incluyendo qué ataca y a quién no ataca.
+
+#### Scenario: Descripción del guardián
+
+- **WHEN** el admin elige `Guardián`
+- **THEN** el formulario explica que defiende una zona de 16 bloques contra criaturas y que no ataca jugadores
+
+#### Scenario: Descripción del neutral
+
+- **WHEN** el admin elige `Neutral`
+- **THEN** el formulario explica que deambula y que solo responde durante 10 segundos a quien lo golpea
+
+#### Scenario: Catálogo cargado del servidor
+
+- **WHEN** la sección de bots carga el catálogo
+- **THEN** el select ofrece `Cazador`, `Merodeador`, `Guardián` y `Neutral` con sus etiquetas
+
 ### Requirement: Preset del cazador clásico en el formulario
 
 El formulario SHALL ofrecer el botón “Preset cazador clásico” que completa los campos con los valores históricos del cazador sin crear ni guardar el bot, y SHALL usar 28.8 u/s, dentro del máximo de 30 u/s.
@@ -154,3 +192,22 @@ La sección de bots SHALL usar controles de al menos 44 px, foco visible, etique
 
 - **WHEN** el sistema pide movimiento reducido
 - **THEN** las transiciones de la sección se desactivan sin perder información ni foco
+
+### Requirement: Permisos implícitos del administrador en la tabla de usuarios
+
+En la tabla de usuarios de `/admin`, una fila con `role=admin` SHALL mostrar una etiqueta “Administrador” que represente sus poderes implícitos, además de los permisos explícitos que tenga marcados. La etiqueta “Sin permisos” MUST NOT mostrarse para una cuenta administradora.
+
+#### Scenario: Admin sin permisos explícitos
+
+- **WHEN** un administrador no tiene ningún permiso explícito marcado
+- **THEN** su fila muestra “Administrador” con la aclaración de que los poderes son implícitos, sin decir “Sin permisos”
+
+#### Scenario: Admin con permisos explícitos
+
+- **WHEN** un administrador además tiene permisos explícitos
+- **THEN** su fila muestra la etiqueta “Administrador” y las etiquetas de esos permisos
+
+#### Scenario: Usuario común sin permisos
+
+- **WHEN** un usuario con rol jugador no tiene permisos
+- **THEN** su fila sigue mostrando “Sin permisos”

@@ -210,7 +210,9 @@ groundAt(nx, nz, y) → max(topSolidY) de las celdas; null si sube > 1 o el cuer
 moveTo(x, z, dx, dz, speed, dt) → intenta diagonal, después solo-x, después solo-z
 ```
 
-La gravedad se agrega arriba de `groundAt`: si el suelo está por debajo, `y = max(gy, y - speed*dt)`; si `gy - y > 1`, el paso se rechaza. Auto-escalón = el `> 1` de `groundAt`. Sin A*: ante un obstáculo grande el bot puede quedar trabado; se documenta como límite y se tolera (el admin puede volverlo volador o relanzarlo).
+La gravedad se agrega arriba de `groundAt`: si el suelo está por debajo, `y = max(gy, y - speed*dt)`; si `gy - y > 1`, el paso se rechaza. Auto-escalón = el `> 1` de `groundAt`.
+
+**Rodeo simple (sin A*):** si el paso directo no avanza (el deslizamiento de `moveTo` mueve poco y no acerca al objetivo), `moveWalk` prueba las dos perpendiculares (±90°), después hacia atrás y, si no hay paso, aplica gravedad. Recuerda el lado del rodeo ~400–700 ms para no oscilar y lo limpia apenas vuelve a avanzar directo; nunca atraviesa bloques ni teletransporta. Si un caminante persigue y no logra acercarse en ~3,5 s, suelta ese objetivo por 4 s (el guardián reintenta si el enemigo sigue en zona) para no empujar contra un árbol para siempre. El rodeo no garantiza salir de un laberinto: eso sigue documentado como límite.
 
 El radio del cuerpo es fijo (0.3) y la altura 1.8 para todos los bots, aunque el skin sea `giant`/`small`: el bot es server-side y no replica la hitbox del cliente. La diferencia visual no cambia la simulación.
 
@@ -284,7 +286,7 @@ El fixture `server/test/support/app-fixture.mjs` espera `app.bots.ready` para qu
 ## Risks / Trade-offs
 
 - **El cazador clásico corre a 28.8 u/s** → el máximo se fijó en 30 y el preset usa 28.8, conservando la velocidad histórica sin salir del rango validado.
-- **Un bot caminante puede quedar trabado** sin A* → se documenta; el admin puede activar vuelo o relanzarlo. No hay teleport automático para no violar la colisión.
+- **Un bot caminante puede quedar trabado en laberintos** sin A* → el rodeo simple resuelve árboles y paredes con espacio alrededor; en un laberinto cerrado puede no encontrar salida. Los destinos de deambular se validan (celda libre, suelo, desnivel ≤ 1) y, si no se alcanzan en ~2 s, se cambian; con un objetivo de combate se rinde a los ~3,5 s y vuelve a deambular. Así no se congela contra un bloque. El admin puede activar vuelo o relanzarlo. No hay teleport automático para no violar la colisión.
 - **Bots duplicados con más de una réplica del server** → supuesto de réplica única documentado y `BOTS_ENABLED=0` para apagar el runtime donde no corresponda; no se implementa leader election en este change.
 - **Vida del jugador client-authoritative**: el daño del bot puede no aplicarse si el cliente miente → se mantiene el límite conocido; el bot sí es server-authoritative.
 - **El bot legacy sigue reintentando** si no se borra la App de Easypanel → `401` + warning al arrancar + paso operativo explícito en README/AGENTS.
@@ -302,6 +304,23 @@ El fixture `server/test/support/app-fixture.mjs` espera `app.bots.ready` para qu
 5. Verificar roster, ataque, `bot_ignore`, muerte y respawn tras reiniciar el contenedor.
 
 Rollback: volver a la imagen anterior deja el server viejo funcionando (la tabla `bots` es aditiva y la ignora), pero el bot in-process deja de existir y el externo necesitaría `BOT_TOKEN` y su App de vuelta. No hay migración destructiva que deshacer.
+
+## Ajuste por feedback del usuario (mismo change)
+
+Sin abrir un change nuevo, la implementación se amplió con:
+
+- **Metadata de ataque en el registro**: `registerBehavior` acepta `attacksPlayers` y `attacksEnemies` (booleanos, con defaults seguros: nunca atacar). `cazador` ataca jugadores; `merodeador` no ataca; `guardian` ataca solo criaturas; `neutral` no ataca por iniciativa propia. El catálogo HTTP los expone.
+- **Guardián** (`guardian`): criatura viva más cercana dentro de un radio de guardia de 16 alrededor de `home`; persigue y ataca; sin criaturas vuelve a `home` o deambula. Nunca devuelve `attackTargetId` de jugador.
+- **Neutral** (`neutral`): deambula y solo reacciona a un golpe recibido (jugador o criatura) con `aggro { kind, id, until }` de 10 s. El runtime fija el aggro en `applyPlayerHit`/`applyEnemyHit` (incluso con `takesDamage:false`), nunca para admins ni `bot_ignore`; el comportamiento lo consume y lo limpia si el objetivo muere, desaparece o la ventana vence.
+- **Criaturas como objetivos**: `zombie.tick` recibe `bots` además de `players` y adquiere objetivos con prioridad para humanos; `spawnWave` sigue contando solo jugadores. `zombie.js` expone `damageZombie(id, dmg, now)` para el daño server-side de los bots. `app.js` pasa `getZombies`/`damageZombie` al runtime y rutea los `phit` con `to < 0` a `bots.applyEnemyHit`, que aplica vida, muerte (`die` + auditoría) y snapshot.
+- **Migración 004**: `004-bot-behaviors.sql` amplía `bots_behavior_allow` a `('cazador','merodeador','guardian','neutral')` sin editar la 003.
+- **UI**: referencias de jugador debajo de Vida/Daño/Alcance/Velocidad con `.field-hint`, descripción dinámica del comportamiento, etiqueta “Recibe daño (jugadores y criaturas)” y, en la tabla de usuarios, “Administrador” + “Poderes implícitos” en vez de “Sin permisos” para `role=admin`.
+
+## Ajuste por feedback: navegación de los bots
+
+- **Destino de deambular validado**: `pickWanderTarget` muestrea hasta 20 candidatos y los pasa por `wanderCell` (dentro del mundo, columna con suelo, cuerpo de 2 bloques libre en todas las celdas del radio del cuerpo y desnivel ≤ 1 respecto de los pies). La copa de un árbol queda descartada porque exige subir más de un bloque. El volador valida solo el borde y la zona. Si ningún candidato sirve se fija una pausa corta (`WANDER_RETRY_MS`) y se reintenta: nunca se fija un destino sólido.
+- **Reset por falta de avance de deambular**: el runtime mide el acercamiento al destino en cada tick (`nav.dist` previo al movimiento) y, si no mejora `WANDER_PROGRESS = 0.5` bloques en `WANDER_STUCK_MS = 2000`, limpia `bot.wander` y `bot.detour`. El umbral de 0.5 evita confundir el vibrado contra un obstáculo con avance real. El contador de rendición de combate (`STUCK_MIN_MS`) queda separado y no se reinicia por el rodeo lateral.
+- **Radio de escape**: a partir de dos resets seguidos (`wanderResets >= 2`) el destino se muestrea a 2–6 bloques desde la posición actual, validado contra la zona del comportamiento; al volver a acercarse el contador se pone en cero y vuelve el radio normal (6–24 / 4–16).
 
 ## Open Questions
 

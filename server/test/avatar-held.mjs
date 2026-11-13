@@ -79,10 +79,11 @@ const after = (src, marker, len) => { const i = src.indexOf(marker); return i < 
   ok(/m\.t === 'mv'/.test(srv) && /me\.held/.test(srv) && /me\.seq/.test(srv), "handler 'mv' guarda held/seq en me");
   ok(/broadcast\(\{\s*t:\s*'pm'[\s\S]{0,160}held/.test(srv), "el 'pm' relayado incluye held");
   ok(/broadcast\(\{\s*t:\s*'pm'[\s\S]{0,160}seq/.test(srv), "el 'pm' relayado incluye seq");
-  const plMap = after(srv, 'players: [...players.values()]', 340);
+  // El roster de jugadores se arma en `playerEntry` (welcome.players y join).
+  const plMap = after(srv, 'function playerEntry', 420);
   ok(/held/.test(plMap) && /seq/.test(plMap), 'welcome.players incluye held/seq (el recién llegado ve las armas)');
   const join = after(srv, "t: 'join'", 220);
-  ok(/held/.test(join) && /seq/.test(join), 'join incluye held/seq');
+  ok(/playerEntry/.test(join) && /held/.test(plMap) && /seq/.test(plMap), 'join incluye held/seq');
 }
 
 // ============================ 12.7 triangulación (reglas de resync / robustez) ============================

@@ -11,7 +11,6 @@ const ok = (cond, msg) => {
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 const ADMIN_PASSWORD = 'admin-12345';
-const BOT_TOKEN = 'bot-secret-admin-ws';
 const FIX = await startApp({
   users: [
     { username: 'admin', password: ADMIN_PASSWORD, role: 'admin', skin: 'human' },
@@ -20,7 +19,10 @@ const FIX = await startApp({
     { username: 'beto', password: 'correcta-123', role: 'user', skin: 'human' },
     { username: 'carla', password: 'correcta-123', role: 'user', skin: 'fat' },
   ],
-  botToken: BOT_TOKEN,
+  bots: [{
+    name: 'OPSX-bot', behavior: 'cazador', skin: 'robot', hp: 10, damage: 6,
+    reach: 4.6, speed: 28.8, flying: true, takesDamage: false, active: true,
+  }],
 });
 
 const adminCookie = await FIX.login('admin', ADMIN_PASSWORD);
@@ -130,40 +132,47 @@ try {
   }
 
   // ===================================================================
-  // 4.3 bot marcado y descarte del hit contra bot_ignore
+  // 4.3 bot in-process: roster, descarte de daño y golpe inmune
   // ===================================================================
   {
     const ana = await join(await FIX.login('ana', 'correcta-123'));
     const beto = await join(await FIX.login('beto', 'correcta-123'));
+    const runtimeBot = FIX.app.bots.list()[0];
+    ok(!!runtimeBot && runtimeBot.id < 0, 'el bot activo del runtime está en el roster con id negativo');
+    const seen = beto.w.players.find(p => p.name === 'OPSX-bot');
+    ok(seen && seen.bot === true && seen.skin === 'robot', 'welcome.players marca al bot con bot:true y su skin');
 
-    const botConn = await connect(FIX.wsUrl(), { headers: { Authorization: `Bearer ${BOT_TOKEN}` } });
-    ok(botConn.status === 101, 'el bot con BOT_TOKEN válido entra');
-    botConn.ws.send(JSON.stringify({ t: 'hello', name: 'OPSX-bot', skin: 'robot', mode: 'player', bot: true }));
-    const bw = await nextMessage(botConn.ws, 'welcome');
-    ok(bw.admin === false && bw.user === undefined, 'el bot queda sin perfil ni admin');
-    const botId = bw.id;
+    const botId = runtimeBot.id;
+    const near = [runtimeBot.pos[0] + 0.5, runtimeBot.pos[1], runtimeBot.pos[2]];
+    // ana tiene bot_ignore: el cazador no debe emitirle phit ni perseguirlo.
+    ana.ws.send(JSON.stringify({ t: 'mv', p: near, yaw: 0, pitch: 0, hp: 10, dead: 0, held: 0, seq: 0 }));
+    await sleep(30);
+    for (let i = 0; i < 3; i++) FIX.app.bots.tick(0.05);
+    const noPhitAna = await expectNo(ana.ws, m => m.t === 'phit' && m.fromId === botId, 350);
+    ok(noPhitAna, 'el runtime no emite phit contra un jugador con bot_ignore');
 
-    // El bot se identifica en el roster por su id (los clientes de cookie lo ven).
-    const noPhit = expectNo(ana.ws, m => m.t === 'phit' && m.fromId === botId, 600);
-    const noHitok = expectNo(botConn.ws, m => m.t === 'hitok', 600);
-    botConn.ws.send(JSON.stringify({ t: 'hit', id: ana.id, dmg: 6, dx: 1, dz: 0 }));
-    const [noP, noH] = await Promise.all([noPhit, noHitok]);
-    ok(noP, 'el hit del bot contra bot_ignore NO produce phit');
-    ok(noH, 'el hit descartado tampoco responde hitok');
+    // beto no está protegido: recibe el daño configurado del bot.
+    const cur = FIX.app.bots.list()[0];
+    const near2 = [cur.pos[0] + 0.5, cur.pos[1], cur.pos[2]];
+    beto.ws.send(JSON.stringify({ t: 'mv', p: near2, yaw: 0, pitch: 0, hp: 10, dead: 0, held: 0, seq: 0 }));
+    await sleep(30);
+    const phit = waitFor(beto.ws, m => m.t === 'phit' && m.fromId === botId);
+    FIX.app.bots.tick(0.05);
+    const hp = await phit;
+    ok(hp.dmg === 6, 'un golpe legítimo del runtime lleva el daño configurado');
 
-    const phitBeto = waitFor(beto.ws, m => m.t === 'phit' && m.fromId === botId);
-    const hitokBeto = nextMessage(botConn.ws, 'hitok');
-    botConn.ws.send(JSON.stringify({ t: 'hit', id: beto.id, dmg: 99, dx: 0, dz: 1 }));
-    const [hp, hk] = await Promise.all([phitBeto, hitokBeto]);
-    ok(hp.dmg <= 6 && hp.dmg > 0, 'el hit del bot contra otro jugador sí retransmite phit (daño acotado a 6)');
-    ok(hk.id === beto.id, 'el golpe legítimo del bot recibe hitok');
+    // El bot es inmune: el hit del jugador responde dmg 0 y no baja la vida.
+    const immune = waitFor(beto.ws, m => m.t === 'hitok' && m.id === botId);
+    beto.ws.send(JSON.stringify({ t: 'hit', id: botId, dmg: 6, dx: 1, dz: 0 }));
+    const hi = await immune;
+    ok(hi.dmg === 0 && hi.hp === 10, 'el runtime descarta el daño contra un bot takes_damage:false');
 
-    const phitAna = waitFor(ana.ws, m => m.t === 'phit' && m.fromId === beto.id);
-    beto.ws.send(JSON.stringify({ t: 'hit', id: ana.id, dmg: 3, dx: 0, dz: 1 }));
-    const pa = await phitAna;
-    ok(pa.dmg === 3, 'un hit de usuario de cookie contra bot_ignore SÍ se retransmite');
+    // Un usuario de cookie no puede declararse bot (el hello lo ignora).
+    const spoof = await join(await FIX.login('carla', 'correcta-123'), { bot: true });
+    const carlaSeen = beto.w.players.find(p => p.id === spoof.id);
+    ok(!carlaSeen || carlaSeen.bot !== true, 'un usuario de cookie no puede declararse bot');
 
-    ana.ws.close(); beto.ws.close(); botConn.ws.close();
+    ana.ws.close(); beto.ws.close(); spoof.ws.close();
     await sleep(50);
   }
 

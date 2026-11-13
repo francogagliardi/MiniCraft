@@ -278,7 +278,7 @@ try {
   {
     const pkg = JSON.parse(fs.readFileSync(path.join(serverDir, 'package.json'), 'utf8'));
     const s = pkg.scripts.test;
-    const required = ['static', 'avatar', 'migrate', 'terrain', 'water', 'worldgen', 'zombie', 'zombie-client', 'zombie-protocol', 'avatar-held', 'client-robot', 'skins', 'camera', 'cactus', 'bot-cazador', 'lookguard', 'auth', 'rate-limit', 'http-auth', 'register', 'ws-auth', 'admin-retirement', 'auth-db', 'admin-db', 'permissions', 'admin', 'admin-ws', 'enter-chat', 'protocol', 'hora-argentina', 'config', 'bed-sleep', 'lighting', 'stats'];
+    const required = ['static', 'avatar', 'migrate', 'terrain', 'water', 'worldgen', 'zombie', 'zombie-client', 'zombie-protocol', 'avatar-held', 'client-robot', 'skins', 'camera', 'cactus', 'bots-config', 'bots-behaviors', 'bots-runtime', 'bots-api', 'bots-db', 'bots-static', 'lookguard', 'auth', 'rate-limit', 'http-auth', 'register', 'ws-auth', 'admin-retirement', 'auth-db', 'admin-db', 'permissions', 'admin', 'admin-ws', 'enter-chat', 'protocol', 'hora-argentina', 'config', 'bed-sleep', 'lighting', 'stats'];
     const missing = required.filter(n => !new RegExp(`test/${n}\\.mjs`).test(s));
     ok(missing.length === 0, `npm test corre los ${required.length} archivos (faltan: ${missing.join(', ') || 'ninguno'})`);
   }

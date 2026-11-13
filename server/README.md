@@ -15,10 +15,13 @@ Minicraft/
 ├── admin.html        ← panel de administración (/admin)
 └── server/
     ├── server.js     ← bootstrap (env → DB → migraciones → app)
-    ├── app.js        ← HTTP + WebSocket + mundo
-    ├── admin-api.js  ← CRUD admin, guardas, auditoría y gate de /admin
+    ├── app.js        ← HTTP + WebSocket + mundo + bots
+    ├── admin-api.js  ← CRUD admin, bots, guardas, auditoría y gate de /admin
+    ├── bot-config.js ← límites, defaults, preset y validación de bots
+    ├── bot-behaviors.js ← comportamientos + movimiento puro
+    ├── bot-runtime.js← spawn/tick/daño/muerte de bots in-process
     ├── permissions.js← allowlist de permisos por usuario
-    ├── migrations/   ← esquema SQL versionado (001, 002)
+    ├── migrations/   ← esquema SQL versionado (001, 002 y 003-bots.sql)
     ├── user-tool.mjs ← crear/cambiar contraseña/listar/activar cuentas
     ├── package.json
     ├── world.json    ← se crea solo (mundo persistido)
@@ -87,7 +90,9 @@ puerto 3000 ahí también. Si hay router con NAT, redirigí el puerto.
 | `DATABASE_URL` | *(obligatoria)* | PostgreSQL de usuarios y sesiones |
 | `ADMIN_USERNAME` | `admin` | Cuenta admin del bootstrap (reservada en el registro) |
 | `ADMIN_PASSWORD` | *(vacío)* | Contraseña del admin **solo en el primer arranque** |
-| `BOT_TOKEN` | *(vacío)* | Credencial de servicio del bot |
+| `BOTS_ENABLED` | `1` | `0` apaga el runtime de bots |
+| `BOTS_TICK_MS` | `50` | Tick de bots (ms) |
+| `BOTS_SNAP_MS` | `100` | Snapshots `pm` de bots (ms) |
 | `COOKIE_SECURE` | `0` | `1` en HTTPS (agrega `Secure` a la cookie) |
 | `TRUST_PROXY` | `0` | `1` solo detrás de un proxy propio que sanee `X-Forwarded-For` |
 | `REGISTRATION_ENABLED` | `1` | `0` cierra el registro público |
@@ -136,8 +141,9 @@ entre réplicas). Los rechazos se auditan.
 valor no booleano responde `422 invalid_permissions`. Los cambios se difunden en
 caliente por WebSocket (`perm`) y **no** revocan sesiones. Cambiar rol,
 desactivar, resetear contraseña o borrar **sí** revoca sesiones y cierra los
-sockets. `bot_ignore` además descarta en el server los `hit` del bot contra esa
-cuenta. `fly`/`instant_break` se aplican en el cliente (sin anti-cheat).
+sockets. `bot_ignore` además descarta en el server el daño que cualquier bot
+hostil intente aplicar a esa cuenta. `fly`/`instant_break` se aplican en el
+cliente (sin anti-cheat).
 
 **Auditoría:** tabla `admin_audit` append-only con FKs `ON DELETE SET NULL` y
 snapshot de usernames en `details`; registra acciones y rechazos sin
@@ -146,6 +152,86 @@ contraseñas, hashes ni tokens. La API no permite editarla ni borrarla.
 **Migración 002:** `server/migrations/002-admin-permissions.sql` agrega la
 columna `permissions` (default `{}`), su CHECK de objeto JSON y la tabla
 `admin_audit` con índices. El runner existente la aplica una sola vez.
+
+## API de bots (change 3)
+
+Los bots son **in-process**: no abren WebSocket, no tienen sesión y su vida es
+server-authoritative. Se administran solo desde `/admin` o esta API (todas las
+rutas exigen rol admin, `Cache-Control: no-store`, JSON estricto, `Origin`
+propio, body ≤8 KB y rate limit administrativo). El cupo es **5 activos**.
+
+| Método | Ruta | Éxito | Cuerpo |
+|---|---|---|---|
+| `GET` | `/api/admin/bots` | `200` | `{ bots, limits: { maxActive: 5 }, catalog: { behaviors, skins } }` |
+| `POST` | `/api/admin/bots` | `201` | `{ bot }` — nace `active:false` |
+| `PATCH` | `/api/admin/bots/:id` | `200` | `{ bot }` |
+| `DELETE` | `/api/admin/bots/:id` | `204` | — |
+| `POST` | `/api/admin/bots/:id/start` | `200` | `{ bot }` |
+| `POST` | `/api/admin/bots/:id/stop` | `200` | `{ bot }` |
+
+`BotView` = `{ id, name, behavior, skin, hp, damage, reach, speed, takesDamage,
+flying, active, runtime: { online, hp, pos } | null, createdAt, updatedAt }`.
+
+Cuerpo de alta/edición: `name` (3–16, `^[A-Za-z0-9_-]+$`, único sin distinguir
+mayúsculas y contra usernames), `behavior` (`cazador` | `merodeador` |
+`guardian` | `neutral`), `skin` (del catálogo, incluye `robot`), `hp` 1–100
+entero, `damage` 0–20 entero, `reach` 1–10 paso 0.1, `speed` 1–30 paso 0.1,
+`takesDamage` y `flying` booleanos. `active` **no** se edita: se cambia con
+`start`/`stop`. El catálogo agrega `attacksPlayers` y `attacksEnemies` para que
+el panel explique contra qué ataca cada comportamiento.
+
+**Códigos:** `400 invalid_request`, `401 unauthorized`, `403 admin_required`,
+`403` por Origin, `404 bot_not_found`, `409 bot_name_taken|bot_active|
+bot_limit_reached`, `413`, `415`, `422` con `{ error, message, details: { field,
+reason, errors } }` (`invalid_bot_name`, `invalid_behavior`, `invalid_skin`,
+`invalid_hp`, `invalid_damage`, `invalid_reach`, `invalid_speed`,
+`invalid_flag`, `invalid_field`), `429 rate_limited` y `503 unavailable`.
+
+**Auditoría:** `bot.create`, `bot.update` (con `before`/`after`), `bot.start`,
+`bot.stop`, `bot.delete` y `bot.death` (actor nulo). El id/nombre del bot vive en
+`details`; las entradas sobreviven al borrado del bot.
+
+**Migración 003:** `server/migrations/003-bots.sql` crea la tabla `bots` con
+CHECKs de nombre/rangos/allowlists, índice único `lower(name)`, índice parcial
+de activos y FK `created_by ON DELETE SET NULL`. **No crea ningún bot**: el
+primer alta es explícita desde el panel (_Preset cazador clásico_ → crear →
+Lanzar).
+
+**Migración 004:** `server/migrations/004-bot-behaviors.sql` amplía
+`bots_behavior_allow` a `('cazador','merodeador','guardian','neutral')` de forma
+forward-only e idempotente. No reescribe la 003: en un entorno existente el
+runner aplica solo la 004.
+
+**Comportamientos:** `cazador` persigue jugadores; `merodeador` solo deambula en
+un radio de 6–24 bloques y nunca ataca; `guardian` defiende un radio de 16
+alrededor de su origen contra criaturas, patrulla dentro de la zona y nunca ataca
+jugadores; `neutral` deambula y responde al atacante durante 10 s (jugador o
+criatura), reiniciando su deambular al entrar y salir del combate. Las criaturas
+también pueden targetear bots, con prioridad para los humanos.
+
+**Navegación:** los bots con `flying:false` caminan con colisión, gravedad y
+auto-escalón, con un **rodeo simple** (costados ±90°, después atrás) cuando el
+paso directo está bloqueado; no hay A*, así que un laberinto puede vencerlos. Si
+un caminante no logra acercarse a su objetivo en ~3,5 s lo suelta por 4 s y
+vuelve a deambular (el guardián reintenta si el enemigo sigue en zona). Un bot
+que persigue a un objetivo a más de 2.5 de altura sigue navegando en vez de
+detenerse sin poder golpear.
+
+**Deambular:** el destino se valida antes de fijarlo: fuera del mundo nunca y,
+para un caminante, necesita suelo en la columna, el cuerpo de dos bloques libre
+en todas las celdas que ocupa y un desnivel de a lo sumo un bloque respecto de
+sus pies (la copa de un árbol no es destino válido). Se muestrean hasta 20
+candidatos por intento; si ninguno sirve el bot se queda quieto una pausa corta y
+reintenta, sin fijar nunca un destino sólido. El volador valida solo el borde del
+mundo y la zona. Si un caminante deambulando no se acerca a su destino en ~2 s,
+suelta el destino y el rodeo y elige otro; tras dos resets seguidos busca uno
+cercano (2–6 bloques) y, cuando vuelve a avanzar, restaura el radio normal.
+
+**`BOT_TOKEN` legado:** ya no autentica nada. El upgrade WebSocket solo acepta
+cookie de sesión; un `Authorization: Bearer` recibe `401`. Si la variable sigue
+seteada, el server avisa **una vez** al arrancar (sin loguear el valor) y la
+ignora. El bot externo (`minicraft-bot`, `Dockerfile.bot`, `bot/`) fue retirado:
+detené/borrá esa App en Easypanel.
 
 ## Operar cuentas por CLI (emergencia)
 

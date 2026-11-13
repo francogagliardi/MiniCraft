@@ -77,9 +77,15 @@ function createHorde(env) {
     return Math.hypot(dx, dz) <= VIEW_DIST;
   }
 
-  // Adquisición determinista: primer jugador visible ordenando por id.
-  function acquireTarget(z, players) {
-    const sorted = players.slice().sort((a, b) => a.id - b.id);
+  // Adquisición determinista: primer objetivo visible con prioridad para los
+  // jugadores humanos; entre iguales, el menor id. Los bots son objetivos
+  // válidos (change panel-bots-custom) pero nunca desplazan a un humano.
+  function acquireTarget(z, targets) {
+    const sorted = targets.slice().sort((a, b) => {
+      const ab = a && a.bot === true ? 1 : 0;
+      const bb = b && b.bot === true ? 1 : 0;
+      return ab - bb || a.id - b.id;
+    });
     for (const p of sorted) if (visible(z, p)) return p.id;
     return null;
   }
@@ -151,6 +157,8 @@ function createHorde(env) {
   function tick(dt, st) {
     const night = !!st.night, now = +st.now || 0;
     const players = st.players || [];
+    // Objetivos: jugadores + bots (los bots no cuentan para spawnWave).
+    const targets = players.concat(st.bots || []);
     const events = [];
 
     // noche→día: todos pasan a muriendo y se rehabilita el spawn para la próxima noche.
@@ -166,16 +174,16 @@ function createHorde(env) {
       if (z.dead) continue; // el muerto no se mueve ni ataca (solo espera su ventana en el zs)
 
       if (z.target !== null) {
-        const p = players.find(q => q.id === z.target);
+        const p = targets.find(q => q.id === z.target);
         if (!visible(z, p)) { z.target = null; z.wander.tx = null; z.wander.tz = null; }
       }
       if (z.target === null) {
-        z.target = acquireTarget(z, players);
+        z.target = acquireTarget(z, targets);
         if (z.target !== null) { z.wander.tx = null; z.wander.tz = null; }
       }
 
       if (z.target !== null) {
-        const p = players.find(q => q.id === z.target);
+        const p = targets.find(q => q.id === z.target);
         const dx = p.pos[0] - z.x, dz = p.pos[2] - z.z;
         const d = Math.hypot(dx, dz) || 1e-9;
         z.yaw = Math.atan2(dx, dz);
@@ -220,7 +228,18 @@ function createHorde(env) {
     return { ok: true, hp: z.hp, dead: z.dead, z };
   }
 
-  return { tick, spawnWave, hit, zombies };
+  // Daño server-side de un bot a la criatura (change panel-bots-custom). No usa
+  // el cooldown de `hit` (el runtime ya impone su cadencia) y devuelve el estado
+  // resultante, o null si la criatura no existe, ya está muerta o el daño es 0.
+  function damageZombie(zombieId, dmg, now) {
+    const z = zombies.find(q => q.i === zombieId && !q.dead);
+    if (!z || !(dmg > 0)) return null;
+    z.hp -= dmg;
+    if (z.hp <= 0) { z.hp = 0; z.dead = 1; z.deadAt = +now || 0; }
+    return { ok: true, hp: z.hp, dead: z.dead, z };
+  }
+
+  return { tick, spawnWave, hit, damageZombie, zombies };
 }
 
 module.exports = {

@@ -8,7 +8,6 @@ import Sleep from '../sleep.js';
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 const server = fs.readFileSync(path.join(root, 'server', 'app.js'), 'utf8');
-const bot = fs.readFileSync(path.join(root, 'bot', 'index.js'), 'utf8');
 let fails = 0;
 const ok = (cond, msg) => {
   console.log((cond ? '✅ ' : '❌ ') + msg);
@@ -186,16 +185,18 @@ ok(/sleeping:\s*\[/.test(server) && /sleepNeed/.test(server), 'welcome incluye s
 ok(/dawnAdvanceMs\(/.test(server) && /skipNight\(/.test(server), 'server salta al amanecer con el módulo puro');
 ok(/sleepBed/.test(server), 'server recuerda la celda de la cama por durmiente');
 
-// ---------- 4. bot ----------
-ok(/t:\s*'hello'[^;]*bot:\s*true/s.test(bot), 'el bot declara bot:true en el hello');
+// ---------- 4. bots del roster (in-process) ----------
+ok(/bot:\s*true/.test(server), 'el roster marca las entradas de bot con bot:true');
+ok(/Sleep\.quorum\(\[\.\.\.players\.values\(\)\]\)/.test(server),
+  'el quórum se calcula solo sobre jugadores reales (los bots no están en players)');
 
-// ---------- 5. alta en la suite (34 archivos) ----------
+// ---------- 5. alta en la suite (39 archivos) ----------
 {
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'server', 'package.json'), 'utf8'));
   const s = pkg.scripts.test;
   ok(/test\/bed-sleep\.mjs/.test(s), 'npm test da de alta test/bed-sleep.mjs');
   const count = (s.match(/test\/[\w-]+\.mjs/g) || []).length;
-  ok(count === 34, `el script test enumera 34 archivos (${count})`);
+  ok(count === 39, `el script test enumera 39 archivos (${count})`);
 }
 
 if (fails) { console.log(`\n💥 ${fails} chequeo(s) fallaron`); process.exit(1); }

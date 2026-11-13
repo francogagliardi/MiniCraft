@@ -4,6 +4,8 @@
 const Permissions = require('./permissions.js');
 
 const DUPLICATE = 'USERNAME_TAKEN';
+const BOT_DUPLICATE = 'BOT_NAME_TAKEN';
+const BOT_ACTIVE_LIMIT = 5;
 
 function mapUser(row) {
   if (!row) return null;
@@ -77,6 +79,55 @@ function usernameTaken() {
   return e;
 }
 
+// Redondeo a un decimal de los NUMERIC(3,1)/(4,1): el módulo de config ya valida
+// el paso 0.1; acá se garantiza que la fila guardada no derive por float.
+const round1 = (v) => (Number.isFinite(+v) ? Math.round(+v * 10) / 10 : v);
+
+function mapBot(row) {
+  if (!row) return null;
+  return {
+    // BIGSERIAL llega como string desde `pg`: se normaliza a number para que los
+    // ids del runtime, el store y la API sean siempre del mismo tipo.
+    id: Number(row.id),
+    name: row.name,
+    behavior: row.behavior,
+    skin: row.skin,
+    hp: row.hp,
+    damage: row.damage,
+    reach: round1(row.reach),
+    speed: round1(row.speed),
+    takesDamage: row.takes_damage === true,
+    flying: row.flying === true,
+    active: row.active === true,
+    createdBy: row.created_by == null ? null : Number(row.created_by),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function isDuplicateBot(e) {
+  return e && e.code === '23505' && /bots_name_lower_key/.test(String(e.constraint || ''));
+}
+
+function botNameTaken() {
+  const e = new Error('nombre de bot tomado');
+  e.code = BOT_DUPLICATE;
+  return e;
+}
+
+const BOT_COLUMNS = `id, name, behavior, skin, hp, damage, reach, speed,
+  takes_damage, flying, active, created_by, created_at, updated_at`;
+
+function botValues(data = {}) {
+  return [
+    data.name, data.behavior, data.skin, data.hp, data.damage,
+    round1(data.reach), round1(data.speed),
+    data.takesDamage === true, data.flying === true, data.active === true,
+    data.createdBy == null ? null : data.createdBy,
+  ];
+}
+
+
 function createPgStore({ db, now = () => new Date() } = {}) {
   const t = () => now();
 
@@ -111,6 +162,12 @@ function createPgStore({ db, now = () => new Date() } = {}) {
     return {
       async getUserById(id) {
         const r = await query('SELECT * FROM users WHERE id = $1 LIMIT 1', [id]);
+        return mapUser(r.rows[0]);
+      },
+
+      async getUserByUsername(username) {
+        const r = await query(
+          'SELECT * FROM users WHERE lower(username) = lower($1) LIMIT 1', [String(username || '')]);
         return mapUser(r.rows[0]);
       },
 
@@ -181,6 +238,87 @@ function createPgStore({ db, now = () => new Date() } = {}) {
           [actorUserId, targetUserId, action, JSON.stringify(details || {})],
         );
         return mapAuditRow(r.rows[0]);
+      },
+
+      // ---- bots (change panel-bots-custom) ----
+      async getBotById(id) {
+        const r = await query(`SELECT ${BOT_COLUMNS} FROM bots WHERE id = $1 LIMIT 1`, [id]);
+        return mapBot(r.rows[0]);
+      },
+
+      async getBotByName(name) {
+        const r = await query(
+          `SELECT ${BOT_COLUMNS} FROM bots WHERE lower(name) = lower($1) LIMIT 1`, [String(name || '')]);
+        return mapBot(r.rows[0]);
+      },
+
+      async listBots({ active } = {}) {
+        const filter = active === true ? 'WHERE active' : active === false ? 'WHERE NOT active' : '';
+        const r = await query(`SELECT ${BOT_COLUMNS} FROM bots ${filter} ORDER BY id`);
+        return r.rows.map(mapBot);
+      },
+
+      async createBot(data = {}) {
+        try {
+          const r = await query(
+            `INSERT INTO bots (name, behavior, skin, hp, damage, reach, speed,
+                               takes_damage, flying, active, created_by)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+             RETURNING ${BOT_COLUMNS}`,
+            botValues(data),
+          );
+          return mapBot(r.rows[0]);
+        } catch (e) {
+          if (isDuplicateBot(e)) throw botNameTaken();
+          throw e;
+        }
+      },
+
+      // Actualiza solo los campos de configuración presentes (allowlist del router).
+      async updateBot(id, patch = {}) {
+        const sets = [];
+        const params = [id];
+        let n = 1;
+        const put = (col, v) => { sets.push(`${col} = $${++n}`); params.push(v); };
+        if (patch.name !== undefined) put('name', patch.name);
+        if (patch.behavior !== undefined) put('behavior', patch.behavior);
+        if (patch.skin !== undefined) put('skin', patch.skin);
+        if (patch.hp !== undefined) put('hp', patch.hp);
+        if (patch.damage !== undefined) put('damage', patch.damage);
+        if (patch.reach !== undefined) put('reach', round1(patch.reach));
+        if (patch.speed !== undefined) put('speed', round1(patch.speed));
+        if (patch.takesDamage !== undefined) put('takes_damage', patch.takesDamage === true);
+        if (patch.flying !== undefined) put('flying', patch.flying === true);
+        if (!sets.length) {
+          const r = await query(`SELECT ${BOT_COLUMNS} FROM bots WHERE id = $1 LIMIT 1`, [id]);
+          return mapBot(r.rows[0]);
+        }
+        try {
+          const r = await query(
+            `UPDATE bots SET ${sets.join(', ')}, updated_at = now()
+             WHERE id = $1 RETURNING ${BOT_COLUMNS}`, params);
+          return mapBot(r.rows[0]);
+        } catch (e) {
+          if (isDuplicateBot(e)) throw botNameTaken();
+          throw e;
+        }
+      },
+
+      async deleteBot(id) {
+        const r = await query('DELETE FROM bots WHERE id = $1', [id]);
+        return r.rowCount > 0;
+      },
+
+      async stopBot(id) {
+        const r = await query(
+          `UPDATE bots SET active = false, updated_at = now()
+           WHERE id = $1 RETURNING ${BOT_COLUMNS}`, [id]);
+        return mapBot(r.rows[0]);
+      },
+
+      async countActiveBots() {
+        const r = await query('SELECT count(*)::int AS n FROM bots WHERE active');
+        return r.rows[0].n;
       },
     };
   }
@@ -266,6 +404,36 @@ function createPgStore({ db, now = () => new Date() } = {}) {
       });
     },
 
+    // ---- bots: interfaz pública (change panel-bots-custom) ----
+    listBots: (opts) => poolScoped.listBots(opts),
+    getBotById: (id) => poolScoped.getBotById(id),
+    getBotByName: (name) => poolScoped.getBotByName(name),
+    createBot: (data) => poolScoped.createBot(data),
+    updateBot: (id, patch) => poolScoped.updateBot(id, patch),
+    deleteBot: (id) => poolScoped.deleteBot(id),
+    stopBot: (id) => poolScoped.stopBot(id),
+    countActiveBots: () => poolScoped.countActiveBots(),
+
+    // Lanzamiento con cupo: advisory lock dedicado (no el de guardas admin) y
+    // lectura/actualización dentro de la MISMA transacción. Dos lanzamientos
+    // simultáneos se serializan y solo uno puede ocupar el quinto lugar.
+    async startBot(id) {
+      return db.withTransaction(async (client) => {
+        const query = (text, params) => client.query(text, params);
+        await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', ['minicraft:bots-active']);
+        const cur = await query(`SELECT ${BOT_COLUMNS} FROM bots WHERE id = $1 FOR UPDATE`, [id]);
+        if (!cur.rows.length) return { status: 'not_found', bot: null };
+        const bot = mapBot(cur.rows[0]);
+        if (bot.active) return { status: 'already_active', bot };
+        const count = await query('SELECT count(*)::int AS n FROM bots WHERE active');
+        if (count.rows[0].n >= BOT_ACTIVE_LIMIT) return { status: 'limit', bot };
+        const upd = await query(
+          `UPDATE bots SET active = true, updated_at = now()
+           WHERE id = $1 RETURNING ${BOT_COLUMNS}`, [id]);
+        return { status: 'started', bot: mapBot(upd.rows[0]) };
+      });
+    },
+
     async createSession({ userId, tokenHash, expiresAt }) {
       return insertSession((text, params) => db.query(text, params), { userId, tokenHash, expiresAt });
     },
@@ -323,4 +491,4 @@ function createPgStore({ db, now = () => new Date() } = {}) {
   };
 }
 
-module.exports = { createPgStore, DUPLICATE, mapAuditRow };
+module.exports = { createPgStore, DUPLICATE, BOT_DUPLICATE, mapAuditRow, mapBot, round1 };

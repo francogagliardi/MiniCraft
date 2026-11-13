@@ -4,8 +4,10 @@ const A = require('./auth.js');
 const { adminUsername } = require('./env-config.js');
 
 let legacyWarned = false;
+let legacyBotWarned = false;
 
 function resetLegacyWarning() { legacyWarned = false; }
+function resetLegacyBotToken() { legacyBotWarned = false; }
 
 // ADMIN_KEY/ADMIN_KEY_HASH ya no autentican a nadie. Si siguen presentes, se
 // avisa UNA vez por proceso y nunca se loguea el valor.
@@ -18,6 +20,17 @@ function warnLegacyAdmin(env = process.env, warn = console.warn) {
   const names = [hasKey ? 'ADMIN_KEY' : null, hasHash ? 'ADMIN_KEY_HASH' : null].filter(Boolean).join(' y ');
   warn(`   ⚠️ ${names} ya no se usa: el admin ahora es una cuenta con rol admin. ` +
     'Remové esas variables y usá ADMIN_PASSWORD (bootstrap) o server/user-tool.mjs.');
+  return true;
+}
+
+// BOT_TOKEN ya no autentica: los bots son in-process y se administran desde
+// /admin. Se avisa UNA vez por proceso y nunca se loguea el valor.
+function warnLegacyBotToken(env = process.env, warn = console.warn) {
+  if (legacyBotWarned) return false;
+  if (typeof env.BOT_TOKEN !== 'string' || env.BOT_TOKEN === '') return false;
+  legacyBotWarned = true;
+  warn('   ⚠️ BOT_TOKEN ya no se usa: los bots se administran en /admin. ' +
+    'Quitá la variable y detené/borrá la App minicraft-bot en Easypanel.');
   return true;
 }
 
@@ -48,4 +61,7 @@ async function bootstrapAdmin({ store, env = process.env, log = console.log, war
   return true;
 }
 
-module.exports = { bootstrapAdmin, warnLegacyAdmin, resetLegacyWarning, adminUsername };
+module.exports = {
+  bootstrapAdmin, warnLegacyAdmin, warnLegacyBotToken,
+  resetLegacyWarning, resetLegacyBotToken, adminUsername,
+};
