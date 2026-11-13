@@ -146,8 +146,8 @@ const agents = read('AGENTS.md');
   ok(!/EASYPANEL_BOT_WEBHOOK/.test(deploy), 'deploy.yml ya no redeploya el bot');
   ok(!/easypanel_bot_webhook/.test(deploy), 'deploy.yml ya no usa el archivo temporal del bot');
   ok(!/Authorization/i.test(wsAuth), 'ws-auth.js ya no acepta Authorization/Bearer');
-  ok(/Bearer/.test(read('openspec/changes/panel-bots-custom/specs/net/session/spec.md')),
-    'la spec documenta el rechazo de Bearer (sanidad del test)');
+  ok(/Bearer/.test(read('openspec/specs/net/session/spec.md')),
+    'la spec viva documenta el rechazo de Bearer (sanidad del test)');
   ok(!/botToken/.test(envConfig), 'env-config.js ya no exporta botToken');
   ok(!fs.existsSync(path.join(root, 'Dockerfile.bot')), 'Dockerfile.bot fue eliminado');
   ok(!fs.existsSync(path.join(root, 'bot')), 'el directorio bot/ fue eliminado');
