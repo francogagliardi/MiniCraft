@@ -40,8 +40,8 @@
 ## 7. Verificación de integración y QA visual
 
 - [x] 7.1 Correr `cd server && npm test` completo y verificar que toda la suite queda verde sin agregar archivos de test ni cambiar los conteos existentes.
-- [ ] 7.2 Levantar Docker con `ADMIN_PASSWORD=<clave> docker compose up --build -d minicraft`, esperar a que `http://localhost:3000` responda y revisar en el navegador: ambos temas en pausa/configuración/muerte/inventario, tema sincronizado desde el lobby sin destello, HUD legible de día/noche/bajo el agua, crosshair sobre fondos claros y oscuros, 360 px sin scroll horizontal, foco por teclado, reduced-motion y FPS sin caída perceptible.
-- [ ] 7.3 Avisar al usuario el link local y la cuenta admin de esa corrida en la misma línea (`http://localhost:3000 · admin: admin / <clave>` o `admin deshabilitado`), indicar qué mirar y esperar la aprobación explícita antes de cualquier cierre de Docker, commit o push.
+- [x] 7.2 Levantar Docker con `ADMIN_PASSWORD=<clave> docker compose up --build -d minicraft`, esperar a que `http://localhost:3000` responda y revisar en el navegador: ambos temas en pausa/configuración/muerte/inventario, tema sincronizado desde el lobby sin destello, HUD legible de día/noche/bajo el agua, crosshair sobre fondos claros y oscuros, 360 px sin scroll horizontal, foco por teclado, reduced-motion y FPS sin caída perceptible.
+- [x] 7.3 Avisar al usuario el link local y la cuenta admin de esa corrida en la misma línea (`http://localhost:3000 · admin: admin / <clave>` o `admin deshabilitado`), indicar qué mirar y esperar la aprobación explícita antes de cualquier cierre de Docker, commit o push.
 
 ## Feedback de revisión (aplicado)
 
