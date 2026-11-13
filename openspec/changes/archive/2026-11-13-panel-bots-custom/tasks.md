@@ -9,7 +9,7 @@
 ## 1. RED — configuración y catálogos (unit)
 
 - [x] 1.1 Crear `server/test/bots-config.mjs`: `normalizeBotInput` acepta nombre 3–16 con `^[A-Za-z0-9_-]+$`, `hp` entero 1–100, `damage` entero 0–20, `reach` 1–10 con paso 0.1, `speed` 1–30 con paso 0.1, `flying`/`takes_damage` booleanos; rechaza `hp:0`, `hp:101`, `damage:-1`, `damage:21`, `reach:4.65`, `speed:0`, `speed:31`, `flying:"si"`, `takes_damage:1`, nombre de 2/17 y carácter inválido con un código por campo. Verificación: `cd server && node test/bots-config.mjs` falla porque el módulo no existe.
-- [x] 1.2 En `bots-config.mjs`: defaults por comportamiento (`cazador` robot/10/6/4.6/20/vuela/no recibe daño; `merodeador` human/10/0/1/6/camina/no recibe daño), `CLASSIC_HUNTER_PRESET` con velocidad 20, catálogo de skins con `robot` y sin valores inventados, catálogo de comportamientos con `cazador` hostil y `merodeador` pacífico, y rechazo de campos desconocidos. Verificación: falla.
+- [x] 1.2 En `bots-config.mjs`: defaults por comportamiento (`cazador` robot/10/6/4.6/28.8/vuela/no recibe daño; `merodeador` human/10/0/1/6/camina/no recibe daño), `CLASSIC_HUNTER_PRESET` con velocidad 28.8, catálogo de skins con `robot` y sin valores inventados, catálogo de comportamientos con `cazador` hostil y `merodeador` pacífico, y rechazo de campos desconocidos. Verificación: falla.
 - [x] 1.3 Agregar `bots-config.mjs` al inicio de `server/package.json` → `scripts.test` (después de `permissions.mjs`). Verificación: la cadena reporta el fallo esperado.
 
 ## 2. RED — comportamientos y movimiento (unit)
@@ -110,7 +110,7 @@
 - [x] 14.3 `docker-compose.yml`: quitar el servicio `minicraft-bot` y `BOT_TOKEN` del server. `.github/workflows/deploy.yml`: quitar `EASYPANEL_BOT_WEBHOOK`, el archivo temporal y su rama del loop. Verificación: `docker compose config` válido, workflow parseable y 6.3 verde.
 - [x] 14.4 Avisar una sola vez al arrancar si `BOT_TOKEN` está seteada, sin loguear el valor. Verificación: caso unitario del warning y log manual sin el token.
 - [x] 14.5 Actualizar `README.md`, `server/README.md` y `AGENTS.md`: quitar comandos/ variables del bot externo, documentar el retiro de `BOT_TOKEN`, el paso de detener/borrar la App `minicraft-bot` en Easypanel y el nuevo flujo de bots del panel. Verificación: 6.3 verde y revisión desde cero.
-- [ ] 14.6 Verificar que el server sigue arrancando sin `BOT_TOKEN`, que un Bearer legado recibe `401` y que no hay ningún bot legacy reconectando. Verificación: prueba manual en Docker + logs.
+- [x] 14.6 Verificar que el server sigue arrancando sin `BOT_TOKEN`, que un Bearer legado recibe `401` y que no hay ningún bot legacy reconectando. Verificación: prueba manual en Docker + logs (cubierta por 16.1 y 16.4, aprobada por el usuario).
 
 ## 15. Verificación de la suite y e2e
 
@@ -180,13 +180,13 @@
 
 ## 16. Verificación en Docker y aprobación explícita
 
-- [ ] 16.1 `ADMIN_PASSWORD=<clave> docker compose up --build -d` (sin servicio de bot) y esperar healthchecks; confirmar `http://localhost:3000` y `migración aplicada: 003-bots.sql` en los logs.
-- [ ] 16.2 Probar el recorrido completo en el navegador: `/admin` → Bots → “Preset cazador clásico” → crear → Lanzar; el bot aparece con skin de robot y nombre; atacar y matar un bot con `takes_damage`; verificar que un bot inmune no pierde vida; que un admin no recibe daño; que `bot_ignore` protege; que el cazador respeta alcance/velocidad; que un merodeador no ataca; que un bot caminante no atraviesa paredes.
-- [ ] 16.3 Probar el ciclo de vida: detener, editar en caliente, relanzar, quinto bot y sexto rechazado, borrado de inactivo, borrado de activo con “Detener y borrar”, reinicio del contenedor con bots activos (vuelven) y con bots muertos (no vuelven).
-- [ ] 16.4 Revisar logs: sin `BOT_TOKEN`, sin cookies ni secretos; un Bearer legado recibe `401`; los golpes de bots llevan `[HH:MM]` de Argentina; no hay spam de errores por el bot retirado.
-- [ ] 16.5 Avisar al usuario **qué mirar** y pasar en la **misma línea** el link local y la cuenta admin de esa corrida (`http://localhost:3000 · admin: admin / <clave>`), o `admin deshabilitado` si la corrida no tuvo `ADMIN_PASSWORD` válida. La clave es solo dev local y no se commitea.
-- [ ] 16.6 **Esperar aprobación explícita del usuario.** No commitear, no pushear y no archivar antes de esa aprobación.
-- [ ] 16.7 Si el usuario pide cambios: corregir, volver a correr 15.1–15.4, levantar Docker otra vez y repetir 16.1–16.6.
+- [x] 16.1 `ADMIN_PASSWORD=<clave> docker compose up --build -d` (sin servicio de bot) y esperar healthchecks; confirmar `http://localhost:3000` y `migración aplicada: 003-bots.sql` en los logs.
+- [x] 16.2 Probar el recorrido completo en el navegador: `/admin` → Bots → “Preset cazador clásico” → crear → Lanzar; el bot aparece con skin de robot y nombre; atacar y matar un bot con `takes_damage`; verificar que un bot inmune no pierde vida; que un admin no recibe daño; que `bot_ignore` protege; que el cazador respeta alcance/velocidad; que un merodeador no ataca; que un bot caminante no atraviesa paredes.
+- [x] 16.3 Probar el ciclo de vida: detener, editar en caliente, relanzar, quinto bot y sexto rechazado, borrado de inactivo, borrado de activo con “Detener y borrar”, reinicio del contenedor con bots activos (vuelven) y con bots muertos (no vuelven).
+- [x] 16.4 Revisar logs: sin `BOT_TOKEN`, sin cookies ni secretos; un Bearer legado recibe `401`; los golpes de bots llevan `[HH:MM]` de Argentina; no hay spam de errores por el bot retirado.
+- [x] 16.5 Avisar al usuario **qué mirar** y pasar en la **misma línea** el link local y la cuenta admin de esa corrida (`http://localhost:3000 · admin: admin / <clave>`), o `admin deshabilitado` si la corrida no tuvo `ADMIN_PASSWORD` válida. La clave es solo dev local y no se commitea.
+- [x] 16.6 **Esperar aprobación explícita del usuario.** No commitear, no pushear y no archivar antes de esa aprobación.
+- [x] 16.7 Si el usuario pide cambios: corregir, volver a correr 15.1–15.4, levantar Docker otra vez y repetir 16.1–16.6. (No hubo cambios posteriores: el usuario aprobó en la primera verificación en Docker.)
 
 ## Workflow follow-up
 

@@ -114,7 +114,7 @@ El formulario SHALL ofrecer el botón “Preset cazador clásico” que completa
 #### Scenario: Precargar el formulario
 
 - **WHEN** el admin pulsa el preset en un alta vacía
-- **THEN** los campos muestran cazador, robot, vida 10, daño 6, alcance 4.6, velocidad 20, vuelo activo y recepción de daño desactivada
+- **THEN** los campos muestran cazador, robot, vida 10, daño 6, alcance 4.6, velocidad 28.8, vuelo activo y recepción de daño desactivada
 
 #### Scenario: El preset no crea nada
 

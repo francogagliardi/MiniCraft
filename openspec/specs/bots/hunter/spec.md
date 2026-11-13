@@ -1,410 +1,245 @@
 # bots/hunter Specification
 
 ## Purpose
-Define el contrato observable del bot cazador de Minicraft: como un cliente externo más, se presenta con aspecto de robot humanoide, elige a quién persigue y a quién nunca ataca, pelea con reglas acotadas propias, mantiene su sesión viva aun quieto, obedece órdenes de operador con autoridad del server y se opera como servicio reconectante 24/7. Es un huésped de solo lectura: jamás modifica el mundo.
+Define el contrato observable del bot cazador de Minicraft: corre dentro del proceso del servidor, se presenta con el aspecto configurado en el panel y `robot` por defecto, elige a quién persigue y a quién nunca ataca, pelea con reglas acotadas propias, se mueve en vuelo libre o caminando según su configuración y se administra solo desde `/admin`. Es un huésped de solo lectura: jamás modifica el mundo.
 
 ## Requirements
 
 ### Requirement: Aspecto de robot humanoide
 
-El bot SHALL presentarse ante el resto de los jugadores declarando su aspecto en el `hello`, con `robot` como aspecto por defecto, de modo que los demás clientes lo rendericen con ese modelo en vez del avatar humano. Cuando el aspecto configurado sea `robot`, el modelo SHALL ser el robot humanoide existente.
+El cazador SHALL dibujarse con el aspecto configurado en el panel, con `robot` como valor por defecto y el modelo humanoide de robot cuando el aspecto sea `robot`. El nombre y el aspecto SHALL viajar en el roster como los de cualquier avatar.
 
 #### Scenario: Los demás lo ven como robot
 
-- **WHEN** el bot entra al mundo
-- **THEN** su conexión queda marcada con `skin: 'robot'` y los demás jugadores lo reciben así en la lista de conectados
+- **WHEN** un cazador activo tiene `skin:robot`
+- **THEN** su entrada de roster lleva `skin:"robot"` y los demás jugadores lo dibujan con el modelo de robot
+
+#### Scenario: Otro aspecto configurado
+
+- **WHEN** el admin elige `giant` para el cazador
+- **THEN** el bot se presenta con `skin:"giant"` y se dibuja como gigante
 
 #### Scenario: Un cliente que ignora el aspecto no se rompe
 
-- **WHEN** un cliente que no entiende el campo `skin` convive con el bot
-- **THEN** sigue funcionando con normalidad mostrando el avatar por defecto, sin errores
+- **WHEN** un cliente no entiende el campo `skin`
+- **THEN** sigue funcionando con el avatar por defecto, sin errores
 
 ### Requirement: Presa restringida a no-admins vivos
 
-El bot SHALL elegir como presa a cualquier jugador conectado cuyo `mode` no sea `admin`, que no esté muerto (`dead === 0`) y que no tenga `botIgnore === true`, y SHALL NOT atacar nunca a un jugador con `mode === 'admin'` ni a uno con `bot_ignore`, sin importar cuán cerca esté ni cuánto tiempo permanezca al lado.
+El cazador SHALL elegir como presa al jugador conectado vivo, no admin, no bot y sin `bot_ignore` más cercano, y MUST NOT atacar nunca a un admin, a otro bot ni a un jugador con `bot_ignore`, sin importar la distancia ni el tiempo que permanezcan al lado.
 
 #### Scenario: Persigue y fulmina a un no-admin
 
-- **WHEN** un jugador con `mode === 'player'`, vivo y sin `bot_ignore` está conectado
-- **THEN** el bot lo persigue con el objetivo de matarlo
+- **WHEN** un jugador vivo, no admin y sin `bot_ignore` está conectado
+- **THEN** el cazador lo persigue y lo fulmina
 
 #### Scenario: Ignora por completo a un admin
 
-- **WHEN** un jugador con `mode === 'admin'` está pegado al lado del bot
-- **THEN** el bot no le dirige ningún golpe, ni siquiera si no hay otro objetivo disponible
+- **WHEN** un jugador con rol admin está pegado al cazador
+- **THEN** el cazador no le dirige ningún golpe, ni siquiera sin otras presas
 
 #### Scenario: Ignora a un no-admin muerto
 
-- **WHEN** el único no-admin conectado está muerto (`dead === 1`)
-- **THEN** el bot no lo ataca y se comporta como si no tuviera presas
+- **WHEN** el único no-admin conectado está muerto
+- **THEN** el cazador se comporta como si no tuviera presas
 
 #### Scenario: Ignora a un jugador con bot_ignore
 
-- **WHEN** el único jugador no-admin vivo conectado tiene `botIgnore === true`
-- **THEN** el bot no lo persigue, no le emite `hit` y se comporta como si no tuviera presas
+- **WHEN** el único jugador no-admin vivo tiene `bot_ignore`
+- **THEN** el cazador no lo persigue ni le emite daño
 
 #### Scenario: El protegido no bloquea a las demás presas
 
 - **WHEN** conviven un jugador con `bot_ignore` pegado al bot y otro sin el permiso a distancia
-- **THEN** el bot ignora al primero y persigue al segundo con normalidad
+- **THEN** el cazador ignora al primero y persigue al segundo
 
 ### Requirement: Golpe mortal en dos toques separados por la ventana del cliente
 
-El bot SHALL matar a su presa dentro de alcance con `dmg: 6` y SHALL NOT emitir otro `hit` contra la MISMA víctima antes de que pasen al menos 0.65 s del golpe anterior, repitiendo hasta verla muerta (`dead`). Así respeta la ventana de invulnerabilidad de 0.6 s del cliente (`index.html:1565`) y, con 6 + 6 = 12 > 10, la vida pasa de 10 a 0 en ~0.65 s sin margen de reacción. Cada toque avanza `seq` una vez.
+El cazador SHALL emitir su `damage` configurado y SHALL NOT repetir un golpe contra la misma víctima antes de 650 ms, respetando la ventana de invulnerabilidad de 0.6 s del cliente. Con el preset clásico (daño 6) la vida de 10 pasa a 0 en dos toques.
 
 #### Scenario: Dos toques separados bajan la vida a cero
 
-- **WHEN** el bot golpea a un no-admin vivo dentro de alcance
-- **THEN** le envía un `hit` de `dmg: 6`, deja pasar al menos 0.65 s del golpe anterior antes del siguiente `hit` contra el mismo id, y la vida del objetivo pasa de 10 a 0
+- **WHEN** el cazador con `damage:6` golpea a un jugador dentro de alcance
+- **THEN** el primer `phit` aplica 6, espera al menos 650 ms y el segundo lleva la vida a 0
 
 #### Scenario: No dispara dos golpes pegados
 
-- **WHEN** el bot ya golpeó a su presa y todavía no pasó la ventana de invulnerabilidad del cliente
-- **THEN** no emite un segundo `hit` contra esa misma víctima antes de los 0.65 s
+- **WHEN** el cazador ya golpeó a su presa y todavía no pasó la ventana de invulnerabilidad
+- **THEN** no emite un segundo golpe contra esa misma víctima
+
+#### Scenario: Un golpe de daño alto alcanza
+
+- **WHEN** el cazador tiene `damage` mayor o igual a 10
+- **THEN** un solo golpe puede matar y no se espera al segundo
 
 #### Scenario: Un ataque visible por toque
 
-- **WHEN** el bot ejecuta cada uno de los dos toques mortales
-- **THEN** cada toque avanza su contador de gesto una vez, de forma que la víctima ve dos golpes rápidos y reales y no un burst en el mismo instante
+- **WHEN** el cazador ejecuta cada golpe
+- **THEN** difunde un único `phit` por golpe y avanza su contador de gesto una vez, para que la víctima vea golpes separados y no un burst
 
 ### Requirement: Alcance de ataque acotado
 
-El bot SHALL acercarse de verdad a su presa y SHALL NOT emitir un `hit` contra un objetivo que esté a más de 4.6 unidades horizontales, para que la víctima vea al robot al lado antes de morir.
+El cazador SHALL acercarse de verdad a su presa y MUST NOT emitir daño contra un objetivo que esté más lejos que su `reach` horizontal configurado, para que la víctima vea al robot al lado antes de morir.
 
 #### Scenario: No golpea fuera de alcance
 
-- **WHEN** el objetivo está a más de 4.6 unidades horizontales
-- **THEN** el bot no emite ningún `hit` contra él y se limita a acercarse
+- **WHEN** el objetivo está más lejos que el `reach` configurado
+- **THEN** el cazador no emite daño y se limita a acercarse
 
 #### Scenario: Golpea dentro de alcance
 
-- **WHEN** el bot tiene a su presa a 4.6 unidades horizontales o menos
-- **THEN** emite el golpe mortal contra ese objetivo
+- **WHEN** el objetivo está dentro del `reach` configurado
+- **THEN** el cazador emite el golpe
 
 ### Requirement: Invulnerabilidad
 
-El bot SHALL ser inmune a todo daño: SHALL ignorar cada `phit` que reciba, SHALL reportar siempre su vida completa y sin muerte (`hp:10, dead:0`), no SHALL sufrir daño de caída, y si su posición cae por debajo del mundo (`y < -10`) SHALL teletransportarse al punto de aparición.
+El cazador SHALL ser inmune al daño cuando `takes_damage` está desactivado, conservando siempre su vida completa y sin morir. Con `takes_damage` activo SHALL recibir daño server-side, morir al llegar a 0 y quedar inactivo.
 
 #### Scenario: Un golpe recibido no lo mata ni lo hiere
 
-- **WHEN** otro cliente le envía un `hit` al bot
-- **THEN** el bot no muere ni baja su vida y sigue reportando `hp:10, dead:0`
+- **WHEN** un jugador golpea a un cazador con `takes_damage:false`
+- **THEN** el bot no muere, no baja su vida y sigue reportando su vida completa
+
+#### Scenario: Un cazador vulnerable muere
+
+- **WHEN** un jugador agota la vida de un cazador con `takes_damage:true`
+- **THEN** el bot desaparece y queda inactivo en el panel
 
 #### Scenario: Caerse al vacío lo devuelve al spawn
 
-- **WHEN** la posición del bot cae por debajo de `y = -10`
-- **THEN** el bot reaparece en el punto de aparición con su vida completa
-
-### Requirement: Keepalive de movimiento aun quieto
-
-El bot SHALL enviar su estado de movimiento (`mv`) de forma periódica mientras esté conectado, incluso cuando está detenido, para no ser expirado por inactividad; "quedarse quieto" significa no cambiar de posición, no dejar de reportar.
-
-#### Scenario: Quieto pero reportando
-
-- **WHEN** el bot está detenido (por orden o por no tener presas)
-- **THEN** sigue enviando `mv` repetidamente con la misma posición y no es desconectado por inactividad
-
-### Requirement: Máquina de estados y precedencia
-
-El bot SHALL operar en tres modos —CAZA (default: persigue y fulmina a la presa más cercana), ESPERA (posición congelada; mata a quien se le acerque) y SIGUEME (sigue a un admin puntual y fulmina a cualquier no-admin que entre en alcance)—; SHALL tratar `espera` y `sigueme` como órdenes explícitas que ganan sobre el default y que se reemplazan entre sí.
-
-#### Scenario: Modo por defecto caza
-
-- **WHEN** no hay ninguna orden vigente
-- **THEN** el bot está en modo CAZA y persigue a la presa no-admin más cercana
-
-#### Scenario: Espera congela pero es turreta
-
-- **WHEN** el bot está en modo ESPERA
-- **THEN** mantiene su posición fija, no vuelve al spawn y mata a cualquier no-admin que se le acerque a alcance
-
-#### Scenario: Sigueme prioriza al admin objetivo
-
-- **WHEN** el bot está en modo SIGUEME hacia un admin
-- **THEN** su posición converge a la de ese admin y, si un no-admin distinto entra en alcance, lo fulmina sin abandonar al admin
-
-#### Scenario: El admin objetivo se va
-
-- **WHEN** el admin objetivo de SIGUEME se desconecta
-- **THEN** el bot vuelve al comportamiento por defecto (CAZA y, sin presas, al spawn)
-
-#### Scenario: Espera y sigueme se reemplazan
-
-- **WHEN** estando en ESPERA llega una orden de `sigueme` (o viceversa)
-- **THEN** el bot pasa al modo recién ordenado y descarta el anterior
+- **WHEN** la posición del cazador cae por debajo de `y = -10`
+- **THEN** reaparece en su punto de origen sin morir por la caída
 
 ### Requirement: Sin presas vuelve al spawn y se queda quieto
 
-El bot SHALL, cuando no tiene presas en línea, caminar hasta el punto de aparición y quedarse detenido allí, sin dejar de reportar `mv`.
+El cazador SHALL, cuando no tiene presas válidas, desplazarse hasta su punto de origen y quedarse detenido allí, volador o caminante según su configuración.
 
 #### Scenario: Sin presas se retira al spawn
 
-- **WHEN** no hay ningún no-admin vivo conectado
-- **THEN** el bot se desplaza al punto de aparición y permanece quieto allí, manteniendo el keepalive `mv`
+- **WHEN** no hay ningún jugador válido conectado
+- **THEN** el cazador vuelve a su punto de origen y permanece quieto
 
-### Requirement: Comandos de chat solo-admin con autoridad por id del server
+#### Scenario: Vuelve a perseguir
 
-El bot SHALL reconocer exactamente los comandos `sigueme` (y su variante `seguime`) y `espera`, comparando el mensaje completo tras recortar espacios y sin distinguir mayúsculas, y SHALL ejecutarlos solo si el frame de chat trae `admin: true` desde el server o si el id de quien escribe —el asignado por el server— corresponde a una conexión con rol admin. SHALL NOT autorizar por nombre, porque el nombre es suplantable.
-
-#### Scenario: El admin ordena seguir
-
-- **WHEN** una conexión con rol admin escribe exactamente `sigueme` (o `seguime`) por el chat
-- **THEN** el bot pasa a seguir a ese admin
-
-#### Scenario: El admin ordena esperar
-
-- **WHEN** una conexión con rol admin escribe exactamente `espera` por el chat
-- **THEN** el bot queda clavado donde está y pasa a matar a quien se le acerque
-
-#### Scenario: Un impostor con el nombre del admin es ignorado
-
-- **WHEN** una conexión no-admin que usa el mismo nombre que un admin escribe `sigueme` o `espera`
-- **THEN** el bot ignora el comando por completo y conserva su modo
-
-#### Scenario: El flag admin del server manda
-
-- **WHEN** un frame de chat trae `admin: true` pero el mensaje no es exactamente un comando
-- **THEN** el bot no cambia de modo
-
-#### Scenario: No se dispara dentro de una frase
-
-- **WHEN** un mensaje de chat contiene el comando como parte de una frase en vez de ser exactamente el comando
-- **THEN** el bot no cambia de modo
-
-### Requirement: Anuncio de cambios de modo y de muertes
-
-El bot SHALL anunciar por el chat sus cambios de modo cuando ejecuta una orden de admin, y SHALL anunciar cada muerte que provoca, de modo que el operador tenga feedback de su comportamiento.
-
-#### Scenario: Anuncia el cambio de modo
-
-- **WHEN** el bot ejecuta una orden de `sigueme` o `espera` de un admin
-- **THEN** publica por el chat un mensaje indicando el nuevo modo
-
-#### Scenario: Anuncia una muerte
-
-- **WHEN** el bot mata a un no-admin
-- **THEN** publica por el chat un mensaje de la muerte
+- **WHEN** aparece un jugador válido después de un rato en el origen
+- **THEN** el cazador lo detecta y vuelve a perseguirlo
 
 ### Requirement: El bot nunca modifica el mundo
 
-El bot SHALL NOT enviar mensajes `edit` en ningún momento: se une al mundo como huésped de solo lectura y respeta las construcciones existentes.
+El cazador SHALL unirse al mundo como huésped de solo lectura y MUST NOT romper, colocar ni editar bloques en ninguna circunstancia.
 
 #### Scenario: Cero ediciones durante toda la sesión
 
-- **WHEN** el bot persigue, golpea, está detenido o se reconecta
-- **THEN** no envía ningún mensaje `edit`
+- **WHEN** el cazador persigue, golpea, vuelve a su origen o se detiene
+- **THEN** no cambia ningún bloque del mundo
 
-### Requirement: Reconexión con backoff y ejecución como servicio
+#### Scenario: Construcciones intactas
 
-El bot SHALL reconectarse automáticamente tras perder la conexión con el server, con una espera creciente (backoff) que evite martillar el server, y SHALL repetir el `hello` al reconectar para reincorporarse al mundo. SHALL poder ejecutarse como servicio de larga duración 24/7.
-
-#### Scenario: Sobrevive a un cierre iniciado por el server
-
-- **WHEN** el server cierra la conexión del bot (por ejemplo durante un redeploy)
-- **THEN** el bot espera con backoff, se reconecta y vuelve a mandar `hello`, reincorporándose al mundo
-
-#### Scenario: No martilla el server
-
-- **WHEN** el bot no puede conectarse
-- **THEN** reintenta con una espera creciente en lugar de reconectar en un bucle inmediato
+- **WHEN** el cazador atraviesa una construcción volando
+- **THEN** los bloques de la construcción siguen exactamente igual
 
 ### Requirement: Hora de Argentina en el log de golpe del bot
 
-El bot SHALL prefijar su log de consola de **cada golpe** con la hora local de Argentina en formato `[HH:MM]` (24 h, sin segundos) al **inicio de la línea de consola** —sin ningún tag ni texto delante—, correspondiente a la zona `America/Argentina/Buenos_Aires`, y SHALL conservar **intacto** el texto original del mensaje detrás del prefijo. El prefijo SHALL NOT depender de la zona horaria del proceso ni de la env var `TZ`.
+El runtime SHALL prefijar en la consola del servidor cada golpe de un bot con la hora local de Argentina en formato `[HH:MM]` (24 h, zona `America/Argentina/Buenos_Aires`) al inicio de la línea, sin depender de la zona horaria del proceso.
 
 #### Scenario: Golpe a una presa
 
-- **WHEN** el bot ejecuta un ataque contra una presa dentro de alcance
-- **THEN** el log de consola empieza con `[HH:MM] ` y a continuación el texto original `⚔️  golpe a <nombre> (d=<dist>, seq=<seq>)`, sin alterarlo
+- **WHEN** un cazador golpea a un jugador
+- **THEN** la línea de consola empieza con `[HH:MM] ` y sigue con el detalle del golpe
+
+#### Scenario: La hora no depende del contenedor
+
+- **WHEN** el proceso corre con la zona UTC
+- **THEN** el prefijo refleja la hora de Argentina
 
 #### Scenario: El logger por defecto no antepone ningún tag
 
-- **WHEN** el bot corre con su **logger por defecto** (sin `log` inyectado) y loguea un golpe
-- **THEN** la línea de consola empieza con `[HH:MM] ` (el `[HH:MM]` es el primer carácter de la línea) y **no** lleva ningún tag —como `[bot]`— delante
+- **WHEN** el runtime golpea con su logger por defecto
+- **THEN** la línea empieza con `[HH:MM] ` y no lleva ningún tag como `[bot]` delante
 
 #### Scenario: La hora es la de Argentina aunque el contenedor corra en otra zona
 
-- **WHEN** el proceso del bot corre con el reloj del sistema en una zona distinta a la de Argentina (por ejemplo UTC) en un instante conocido
-- **THEN** el prefijo `[HH:MM]` refleja la hora de Argentina de ese instante y no la de la zona del contenedor
-
-### Requirement: Aspecto del bot configurable por `BOT_SKIN`
-
-El bot SHALL tomar su aspecto de la variable de entorno `BOT_SKIN`, con `robot` como valor por defecto cuando la variable falte o esté vacía, y SHALL NOT restringir los valores a una whitelist propia: cualquier valor saneable se envía tal cual y el cliente decide cómo dibujarlo.
-
-#### Scenario: Default robot sin variable
-
-- **WHEN** el bot arranca sin `BOT_SKIN`
-- **THEN** se presenta con `skin: 'robot'` en su `hello`
-
-#### Scenario: La variable elige otro aspecto
-
-- **WHEN** el bot arranca con `BOT_SKIN=giant`
-- **THEN** se presenta con `skin: 'giant'` en su `hello` y los demás lo dibujan como gigante
-
-#### Scenario: Un valor desconocido no rompe el bot
-
-- **WHEN** el bot arranca con un `BOT_SKIN` que el cliente no conoce
-- **THEN** el bot se conecta y juega con normalidad, y el cliente lo dibuja con el aspecto humano por defecto
-
-#### Scenario: El aspecto se reenvía al reconectar
-
-- **WHEN** el bot pierde la conexión y se reconecta
-- **THEN** el nuevo `hello` vuelve a llevar el mismo aspecto configurado
-
-### Requirement: Declaración de bot en el hello
-
-El bot SHALL declarar `bot:true` en su mensaje `hello`, además de su `mode:'player'` y su aspecto, para que el servidor pueda excluirlo del quórum de sueño sin cambiar el resto de su contrato de jugador.
-
-#### Scenario: El bot se identifica como bot
-
-- **WHEN** el bot se conecta o se reconecta
-- **THEN** su `hello` incluye `bot:true` y el servidor lo registra como bot
-
-#### Scenario: Un cliente humano sigue siendo real
-
-- **WHEN** un cliente no envía `bot:true` en su `hello`
-- **THEN** el servidor lo trata como jugador real para el quórum de sueño
-
-#### Scenario: El bot no duerme ni bloquea
-
-- **WHEN** el bot está conectado durante la noche y hay jugadores reales durmiendo
-- **THEN** el bot no aparece en el contador de durmientes, no suma al total necesario y no impide el salto al amanecer
+- **WHEN** el proceso corre con el reloj del sistema en UTC y ocurre un golpe en un instante conocido
+- **THEN** el prefijo `[HH:MM]` refleja la hora de Argentina de ese instante
 
 ### Requirement: Vuelo libre sin colisión
 
-El bot SHALL moverse como un punto libre en tres dimensiones, sin colisión con bloques ni con el terreno, de forma permanente y sin interruptor: SHALL atravesar paredes, techos, pisos y construcciones cerradas, y SHALL NOT aplicar gravedad, auto-escalón ni resolución de suelo. La única restricción espacial SHALL ser el límite del mundo.
+El cazador SHALL volar como un punto libre en tres dimensiones cuando `flying:true`, atravesando paredes, techos y terreno, sin gravedad ni auto-escalón. Con `flying:false` SHALL caminar con colisión y gravedad.
 
 #### Scenario: Atraviesa una pared entre el bot y su presa
 
-- **WHEN** la presa está del otro lado de una pared o de un bloque sólido que antes bloqueaba el paso
-- **THEN** el bot la atraviesa, se acerca hasta el alcance de ataque y la golpea sin quedarse trabado
+- **WHEN** la presa está del otro lado de una pared y el cazador vuela
+- **THEN** la atraviesa y llega hasta ella sin quedarse trabado
 
 #### Scenario: Entra a una construcción cerrada o a una cueva
 
-- **WHEN** la presa se refugia dentro de una construcción sin puerta o en una cueva bajo tierra
-- **THEN** el bot llega hasta ella cruzando los bloques del perímetro o del techo
+- **WHEN** la presa se refugia en una construcción sin puerta y el cazador vuela
+- **THEN** llega hasta ella cruzando los bloques del perímetro
 
 #### Scenario: Persigue a una presa que está más alta o más baja
 
-- **WHEN** la presa está arriba de una torre o en un pozo por debajo del nivel del bot
-- **THEN** el bot ajusta su altura y la alcanza sin necesitar escaleras, rampas ni saltos
+- **WHEN** la presa está arriba de una torre o en un pozo y el cazador vuela
+- **THEN** ajusta su altura y la alcanza sin escaleras, rampas ni saltos
 
 #### Scenario: No hay gravedad ni tirón al suelo
 
-- **WHEN** el bot queda en el aire, sobre un techo o dentro de un bloque
-- **THEN** conserva su altura y no cae ni es devuelto al suelo por el terreno
+- **WHEN** el cazador volador queda en el aire, sobre un techo o dentro de un bloque
+- **THEN** conserva su altura y no cae ni es devuelto al suelo
 
 #### Scenario: Respeta el límite del mundo
 
-- **WHEN** el bot persigue a una presa y su trayectoria lo llevaría fuera del área jugable
-- **THEN** su posición horizontal queda contenida dentro de los límites del mundo, sin colisión con bloques internos
+- **WHEN** su trayectoria lo llevaría fuera del área jugable
+- **THEN** su posición queda contenida dentro de los límites del mundo
 
-### Requirement: Alineación vertical con la altura del objetivo
+#### Scenario: Cazador caminante
 
-El bot SHALL ajustar su altura (`y`) hacia la altura de su objetivo —presa, admin de SIGUEME o punto de aparición— más un offset seguro, con una banda muerta que evite oscilaciones. La alineación SHALL ocurrir también cuando ya está dentro de la distancia horizontal de detención, y en ESPERA SHALL conservar la altura congelada.
-
-#### Scenario: Se alinea con una presa en una torre
-
-- **WHEN** la presa está a 12 bloques por encima del bot y dentro del alcance horizontal
-- **THEN** la altura del bot converge a la altura de la presa más el offset seguro y el golpe se emite sin esperar a que baje la presa
-
-#### Scenario: Se alinea con una presa en una cueva
-
-- **WHEN** la presa está a 10 bloques por debajo del bot
-- **THEN** el bot desciende hasta la altura de la presa más el offset seguro y la ataca
-
-#### Scenario: Sin oscilación alrededor de la altura objetivo
-
-- **WHEN** la diferencia de altura con el objetivo es menor que la banda muerta
-- **THEN** el bot no corrige la altura en cada tick y su `y` se mantiene estable
-
-#### Scenario: ESPERA conserva la altura
-
-- **WHEN** el bot está en modo ESPERA con un objetivo a otra altura
-- **THEN** su `y` permanece igual a la del momento de la orden y no se alinea con nadie
-
-### Requirement: Velocidad seis veces la de un jugador
-
-El bot SHALL desplazarse a 28.8 unidades por segundo: tres veces su velocidad anterior de 9.6 u/s y seis veces la caminata de 4.8 u/s de un jugador. Esa rapidez SHALL aplicarse al desplazamiento horizontal y SHALL NOT depender de que el bot esté apoyado en el suelo.
-
-#### Scenario: Cierra distancia al triple de su velocidad anterior
-
-- **WHEN** el bot persigue a una presa y su desplazamiento horizontal se mide en el tiempo
-- **THEN** su rapidez es de aproximadamente 28.8 u/s, tres veces los 9.6 u/s que usaba antes de este cambio
-
-#### Scenario: Es seis veces la de un jugador
-
-- **WHEN** se compara su desplazamiento horizontal con el de un jugador de referencia que camina a 4.8 u/s
-- **THEN** el bot se desplaza a aproximadamente el sexto de esa referencia (600 %)
-
-#### Scenario: La rapidez no depende del vuelo
-
-- **WHEN** el bot avanza en horizontal mientras sube o baja para alinearse con un objetivo
-- **THEN** su rapidez horizontal sigue siendo aproximadamente 28.8 u/s y no se reduce por el movimiento vertical
-
-### Requirement: Conexión del bot con credencial de servicio
-
-El bot SHALL autenticarse con `Authorization: Bearer <BOT_TOKEN>` al abrir el WebSocket y MUST NOT depender de una cookie de usuario. El server SHALL comparar el token en tiempo constante y, si coincide, SHALL crear una conexión de servicio con `bot: true`, `mode: "player"` y sin privilegios de admin. Sin `BOT_TOKEN` configurado, el server MUST rechazar la conexión del bot.
-
-#### Scenario: Bot con token válido
-
-- **WHEN** el bot abre el WebSocket con el `BOT_TOKEN` correcto
-- **THEN** el upgrade se acepta, el bot entra al mundo y queda excluido del quórum de sueño
-
-#### Scenario: Token ausente o incorrecto
-
-- **WHEN** el bot no envía token o envía uno distinto
-- **THEN** el server rechaza el upgrade y no crea jugador
-
-#### Scenario: El bot conserva nombre y skin propios
-
-- **WHEN** el bot se conecta con `BOT_NAME=OPSX-bot` y `BOT_SKIN=giant`
-- **THEN** el resto lo ve como `OPSX-bot` con aspecto `giant`, saneados por el server
-
-#### Scenario: El token no se filtra en logs
-
-- **WHEN** el bot se conecta o es rechazado
-- **THEN** ni el `BOT_TOKEN` ni el header completo aparecen en la salida del server o del bot
-
-#### Scenario: Rotación del token
-
-- **WHEN** se cambia `BOT_TOKEN` en server y bot y se reinician ambos
-- **THEN** el bot vuelve a conectarse con el token nuevo y el anterior deja de servir
-
-### Requirement: El bot de servicio no usa cuentas ni HTTP
-
-La conexión del bot MUST NOT crear sesiones, usuarios ni cookies, y el bot MUST NOT poder llamar a las rutas de auth como si fuera un usuario. Su nombre y su skin SHALL venir de `BOT_NAME`/`BOT_SKIN` y no de un perfil.
-
-#### Scenario: El bot no obtiene sesión
-
-- **WHEN** el bot se conecta con `BOT_TOKEN`
-- **THEN** no se crea una fila en `sessions` ni se emite `Set-Cookie`
-
-#### Scenario: El bot no puede entrar al panel
-
-- **WHEN** el proceso del bot intenta `GET /api/me` o `PATCH /api/me`
-- **THEN** recibe `401` porque no tiene cookie de usuario
+- **WHEN** el cazador tiene `flying:false` y una pared separa al objetivo
+- **THEN** no atraviesa la pared y se desplaza por el terreno disponible
 
 ### Requirement: Exclusión actualizada por el roster y el frame perm
 
-El bot SHALL leer el flag `botIgnore` de las entradas de roster (`welcome.players` y `join`) y SHALL actualizar la exclusión al recibir el frame aditivo `perm`, de modo que un cambio de permisos en caliente se aplique sin reconectar. Un frame sin `botIgnore` SHALL interpretarse como no protegido.
+El cazador SHALL leer el estado vivo de los jugadores conectados en cada tick, de modo que un cambio de rol o de `bot_ignore` se aplique sin reconectar ni depender de frames del cliente. Un jugador sin el permiso SHALL considerarse no protegido.
 
 #### Scenario: Protegido presente al conectarse
 
-- **WHEN** el bot recibe un `welcome` con un jugador `botIgnore: true`
+- **WHEN** el cazador se lanza y ya hay un jugador con `bot_ignore`
 - **THEN** lo excluye de sus presas desde el primer tick
 
 #### Scenario: Se habilita bot_ignore durante la caza
 
-- **WHEN** el bot está persiguiendo a un jugador y llega `perm` con `botIgnore: true` para ese id
+- **WHEN** el cazador persigue a un jugador y un admin le habilita `bot_ignore`
 - **THEN** abandona esa presa en el siguiente tick y no le emite más golpes
 
 #### Scenario: Se revoca bot_ignore
 
-- **WHEN** llega `perm` con `botIgnore: false` para un jugador conectado
-- **THEN** el bot vuelve a considerarlo una presa válida si está vivo y no es admin
+- **WHEN** se revoca `bot_ignore` a un jugador conectado
+- **THEN** el cazador vuelve a considerarlo una presa válida si está vivo y no es admin
 
 #### Scenario: Un server viejo sin el flag
 
-- **WHEN** el bot recibe un roster o un `join` sin `botIgnore`
-- **THEN** trata al jugador como no protegido y conserva el comportamiento anterior
+- **WHEN** un jugador no tiene el permiso o el dato no está disponible
+- **THEN** el cazador lo trata como no protegido y conserva el comportamiento anterior
+
+### Requirement: Alineación vertical del cazador volador
+
+El cazador con `flying:true` SHALL ajustar su altura hacia la altura de su objetivo más un offset seguro, con banda muerta, y MUST NOT oscilar alrededor del valor objetivo. El cazador caminante SHALL usar el suelo disponible en lugar de alinearse con la altura del objetivo.
+
+#### Scenario: Se alinea con una presa en una torre
+
+- **WHEN** la presa está muy por encima del cazador volador y dentro del alcance horizontal
+- **THEN** su altura converge a la de la presa y el golpe se emite sin esperar a que baje
+
+#### Scenario: Se alinea con una presa en una cueva
+
+- **WHEN** la presa está muy por debajo del cazador volador
+- **THEN** el bot desciende hasta su altura y la ataca
+
+#### Scenario: Sin oscilación alrededor de la altura objetivo
+
+- **WHEN** la diferencia de altura es menor que la banda muerta
+- **THEN** el `y` del bot se mantiene estable
+
+#### Scenario: El cazador caminante sigue el suelo
+
+- **WHEN** el cazador tiene `flying:false`
+- **THEN** su altura la define el terreno y no la altura del objetivo

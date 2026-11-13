@@ -96,44 +96,6 @@ El server SHALL cerrar las conexiones WebSocket de un usuario cuando su sesión 
 - **WHEN** la sesión sigue activa y el jugador manda `mv` con normalidad
 - **THEN** la revalidación no cierra la conexión ni interrumpe el juego
 
-### Requirement: Credencial de servicio del bot
-
-El server SHALL aceptar un upgrade sin cookie cuando traiga `Authorization: Bearer <BOT_TOKEN>` y el token configurado coincida en tiempo constante. Esa conexión SHALL tratarse como bot de servicio: `bot: true`, `mode: "player"` y sin privilegios de admin, con nombre y skin saneados desde `BOT_NAME`/`BOT_SKIN`. Sin `BOT_TOKEN` configurado MUST rechazar el upgrade.
-
-#### Scenario: El bot se conecta con el token correcto
-
-- **WHEN** el bot envía `Authorization: Bearer` con el `BOT_TOKEN` configurado
-- **THEN** el upgrade se acepta, el jugador queda marcado `bot: true` y no aparece en el quórum de sueño
-
-#### Scenario: Token incorrecto o ausente
-
-- **WHEN** un cliente envía un token distinto o no envía token ni cookie
-- **THEN** el upgrade se rechaza con `401` y no se crea jugador
-
-#### Scenario: Sin BOT_TOKEN el bot no entra
-
-- **WHEN** el server arranca sin `BOT_TOKEN` y el bot intenta conectarse
-- **THEN** el upgrade se rechaza y el juego de los usuarios no se ve afectado
-
-#### Scenario: El bot nunca es admin
-
-- **WHEN** una conexión autenticada por `BOT_TOKEN` envía `mode: "admin"` o manda comandos de admin
-- **THEN** el server la mantiene como bot sin privilegios y no le reconoce autoridad de admin
-
-### Requirement: Un usuario de sesión no puede declararse bot
-
-El server SHALL ignorar `bot: true` en el `hello` de una conexión autenticada por cookie. Solo una conexión autenticada por `BOT_TOKEN` puede quedar marcada como bot.
-
-#### Scenario: Un usuario intenta saltear el quórum de sueño
-
-- **WHEN** un usuario autenticado por cookie envía `hello` con `bot: true`
-- **THEN** el server lo trata como jugador real y cuenta para el quórum de sueño
-
-#### Scenario: El bot de servicio sí se excluye
-
-- **WHEN** la conexión llega con `BOT_TOKEN` válido
-- **THEN** el server la marca como bot y la excluye del quórum
-
 ### Requirement: Rol admin autoritativo en los frames de chat
 
 El server SHALL agregar el campo aditivo `admin: true` a los frames `chat` emitidos por un jugador con rol admin, y MUST omitirlo o enviarlo `false` para el resto. Un consumidor SHALL poder autorizar comandos por ese campo sin confiar en el nombre.
@@ -223,3 +185,70 @@ El server SHALL difundir un frame aditivo `perm` con `id` y el objeto `permissio
 
 - **WHEN** un cliente que no conoce `perm` recibe el frame
 - **THEN** lo ignora y sigue jugando con el comportamiento anterior sin errores
+
+### Requirement: Bots como entradas de roster
+
+El server SHALL publicar cada bot activo en `welcome.players` y `join` con `bot:true`, un id negativo reservado, `name`, `skin`, `pos`, `yaw`, `hp`, `maxHp` y `dead`, y SHALL difundir `pm` con su posición y vida cuando cambian. Los clientes que no conocen esos campos MUST seguir funcionando sin errores.
+
+#### Scenario: Roster con bot
+
+- **WHEN** un jugador recibe el `welcome` con un bot activo
+- **THEN** la entrada del bot trae `bot:true`, id negativo, nombre, skin, vida y `maxHp`
+
+#### Scenario: Bot que aparece y desaparece
+
+- **WHEN** un admin lanza o detiene un bot
+- **THEN** los jugadores reciben el `join` o el `leave` correspondiente en el acto
+
+#### Scenario: Actualización de posición y vida
+
+- **WHEN** un bot se mueve o recibe daño
+- **THEN** los clientes reciben `pm` con su posición, `hp` y `dead` actuales
+
+#### Scenario: Los ids de bot no chocan con usuarios
+
+- **WHEN** conviven jugadores con ids positivos y bots con ids negativos
+- **THEN** el `hit`, el `pm` y el `leave` de cada uno se resuelven sin ambigüedad
+
+#### Scenario: Cliente viejo
+
+- **WHEN** un cliente no conoce `bot` ni `maxHp`
+- **THEN** dibuja al bot como un avatar normal y sigue jugando sin errores
+
+### Requirement: El upgrade solo acepta sesión de usuario
+
+El gate del WebSocket SHALL autenticar únicamente la cookie de sesión. Un upgrade con `Authorization: Bearer` MUST rechazarse con `401` aunque exista `BOT_TOKEN` en el entorno, sin crear jugador ni revelar el token.
+
+#### Scenario: Bearer legado
+
+- **WHEN** un cliente envía `Authorization: Bearer <token>` y no trae cookie de sesión
+- **THEN** el upgrade se rechaza con `401` y no aparece ningún jugador
+
+#### Scenario: Variable legada seteada
+
+- **WHEN** el server arranca con `BOT_TOKEN` en el entorno
+- **THEN** avisa una vez que la variable ya no se usa y no habilita ninguna conexión de servicio
+
+#### Scenario: El token no se filtra
+
+- **WHEN** se rechaza un upgrade con Bearer
+- **THEN** ni el token ni el header aparecen en logs
+
+### Requirement: Golpes del jugador a un bot
+
+El server SHALL resolver un `hit` cuyo `id` corresponde a un bot, validar alcance y cadencia, aplicar su propio daño y responder `hitok` con el daño efectivamente aplicado, sin retransmitir `phit` a un socket inexistente. Un bot inmune MUST responder con daño cero.
+
+#### Scenario: Golpe confirmado
+
+- **WHEN** un jugador golpea a un bot vulnerable dentro de alcance
+- **THEN** recibe `hitok` con el daño aplicado y los demás clientes ven la vida nueva por `pm`
+
+#### Scenario: Bot inmune
+
+- **WHEN** un jugador golpea a un bot con `takes_damage:false`
+- **THEN** recibe `hitok` con `dmg:0` y no aparece número de daño
+
+#### Scenario: Id inexistente
+
+- **WHEN** un jugador golpea a un id negativo que no corresponde a ningún bot activo
+- **THEN** el golpe se descarta sin error y sin efectos
