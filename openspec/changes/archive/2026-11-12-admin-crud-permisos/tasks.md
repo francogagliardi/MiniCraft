@@ -117,13 +117,13 @@
 
 ## 16. Verificación en Docker y aprobación explícita
 
-- [ ] 16.1 `ADMIN_PASSWORD=<clave> BOT_TOKEN=<token> docker compose up --build -d` y esperar healthchecks; confirmar que `http://localhost:3000` responde y que la migración 002 se aplicó en los logs.
-- [ ] 16.2 Probar el recorrido completo en el navegador: admin entra a `/admin` desde el lobby; un usuario común no ve el link y `/admin` lo redirige; alta de un usuario de prueba; edición de skin/rol/estado; activar/desactivar con cierre de sesión; reset de contraseña (login con la nueva); borrado con confirmación por username; guardas de self y último admin visibles; auditoría con todas las acciones y rechazos.
-- [ ] 16.3 Probar los permisos: usuario con `fly` vuela y sin `fly` no; con `instant_break` rompe al instante y sin el permiso pica normal; usuario con `bot_ignore` no es atacado por el bot ni pierde vida, y al revocar el permiso el bot vuelve a perseguirlo. Verificar también que el cambio se aplica sin relogin (`perm`).
-- [ ] 16.4 Revisar logs del server y del bot: sin contraseñas, hashes, tokens ni cookies; el descarte de `hit` del bot aparece rate-limited y no inunda la consola.
-- [ ] 16.5 Avisar al usuario **qué mirar** y pasar en la **misma línea** el link local y la cuenta admin de esa corrida (`http://localhost:3000 · admin: admin / <clave>`), o `admin deshabilitado` si la corrida no tuvo `ADMIN_PASSWORD` válida. La clave es solo dev local y no se commitea.
-- [ ] 16.6 **Esperar aprobación explícita del usuario.** No commitear, no pushear y no archivar antes de esa aprobación.
-- [ ] 16.7 Si el usuario pide cambios: corregir, volver a correr 15.1–15.2, levantar Docker otra vez y repetir 16.1–16.6.
+- [x] 16.1 `ADMIN_PASSWORD=<clave> BOT_TOKEN=<token> docker compose up --build -d` y esperar healthchecks; confirmar que `http://localhost:3000` responde y que la migración 002 se aplicó en los logs.
+- [x] 16.2 Probar el recorrido completo en el navegador: admin entra a `/admin` desde el lobby; un usuario común no ve el link y `/admin` lo redirige; alta de un usuario de prueba; edición de skin/rol/estado; activar/desactivar con cierre de sesión; reset de contraseña (login con la nueva); borrado con confirmación por username; guardas de self y último admin visibles; auditoría con todas las acciones y rechazos.
+- [x] 16.3 Probar los permisos: usuario con `fly` vuela y sin `fly` no; con `instant_break` rompe al instante y sin el permiso pica normal; usuario con `bot_ignore` no es atacado por el bot ni pierde vida, y al revocar el permiso el bot vuelve a perseguirlo. Verificar también que el cambio se aplica sin relogin (`perm`).
+- [x] 16.4 Revisar logs del server y del bot: sin contraseñas, hashes, tokens ni cookies; el descarte de `hit` del bot aparece rate-limited y no inunda la consola.
+- [x] 16.5 Avisar al usuario **qué mirar** y pasar en la **misma línea** el link local y la cuenta admin de esa corrida (`http://localhost:3000 · admin: admin / <clave>`), o `admin deshabilitado` si la corrida no tuvo `ADMIN_PASSWORD` válida. La clave es solo dev local y no se commitea.
+- [x] 16.6 **Esperar aprobación explícita del usuario.** No commitear, no pushear y no archivar antes de esa aprobación.
+- [x] 16.7 Si el usuario pide cambios: corregir, volver a correr 15.1–15.2, levantar Docker otra vez y repetir 16.1–16.6.
 
 ## 17. Feedback post-prueba de UI/UX (aplicado)
 
